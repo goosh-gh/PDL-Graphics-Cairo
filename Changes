@@ -1,0 +1,25 @@
+Revision history for PDL-Graphics-Cairo
+
+0.01  (first appear in Github, 2026-05-18)
+    - Initial release
+    - Backend: Cairo + Pango (PNG / PDF / SVG output)
+    - Plot types: line, scatter, bar, barh, hist, errorbar,
+                  fill_between, step, stem, imshow, contourf,
+                  pie, axhline, axvline, axvspan, axhspan,
+                  text, annotate, boxplot, violinplot, qqplot,
+                  hist_kde, heatmap, stackplot, eventplot, quiver
+    - Axes: autoscale, grid, legend, colorbar, twinx
+    - Scale: linear, log (semilog-x/y, log-log)
+    - Colormap: viridis, plasma, jet, hot, cool, gray, RdBu
+    - Subplot grid: subplots(rows, cols)
+    - Unicode text via Pango
+    - PGPLOT compatibility layer (PDL::Graphics::Cairo::PGPLOT)
+        - 53 functions fully implemented
+        - cpgbox / pgbox with A/N/S/T/B/C/G/V options
+        - cpgenv negative-up Y axis (ymin > ymax)
+        - PGPLOT_BACKGROUND=black support
+        - Multi-panel column-major layout (negative nxsub)
+        - cpgmtxt multi-line title (disp parameter)
+        - cpgsave / cpgunsa attribute stack
+        - cpgrnd / cpgrnge / cpgnumb (untested)
+    - Interactive display via gnuplot (aqua / wxt / x11)
