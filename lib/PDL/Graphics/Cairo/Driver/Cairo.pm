@@ -300,7 +300,7 @@ sub grid_line_h {
     my $cr = $self->{cr};
     $cr->save;
     $cr->set_source_rgba(@$color, $alpha);
-    $cr->set_line_width(0.5);
+    $cr->set_line_width(0.8);
     $cr->set_dash(0, 4, 4);
     $cr->move_to($x1, $yp); $cr->line_to($x2, $yp); $cr->stroke;
     $cr->restore;
@@ -313,7 +313,7 @@ sub grid_line_v {
     my $cr = $self->{cr};
     $cr->save;
     $cr->set_source_rgba(@$color, $alpha);
-    $cr->set_line_width(0.5);
+    $cr->set_line_width(0.8);
     $cr->set_dash(0, 4, 4);
     $cr->move_to($xp, $y1); $cr->line_to($xp, $y2); $cr->stroke;
     $cr->restore;

@@ -159,6 +159,20 @@ sub save {
 sub show {
     my ($self, %opt) = @_;
 
+    my $backend = lc($opt{backend} // $ENV{PDLCAIRO_BACKEND} // 'gnuplot');
+
+    if ($backend eq 'osx') {
+        require PDL::Graphics::Cairo::Driver::OSX;
+        my $driver = PDL::Graphics::Cairo::Driver::OSX->new(
+            width  => $self->width,
+            height => $self->height,
+            title  => $opt{title} // 'PDL::Graphics::Cairo',
+        );
+        $driver->show($self);
+        return;
+    }
+
+    # 従来通り gnuplot
     my $driver = PDL::Graphics::Cairo::Driver::Gnuplot->new(
         width    => $self->width,
         height   => $self->height,
@@ -167,6 +181,7 @@ sub show {
     );
     $driver->show($self);
 }
+
 
 # ------------------------------------------------------------------
 # add_axes($ax) — twinx  Axes 

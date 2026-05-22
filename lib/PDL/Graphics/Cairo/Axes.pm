@@ -78,7 +78,7 @@ has yscale => (is => 'rw', default => sub { 'linear' });
 
 # ------------------------------------------------------------------
 has grid        => (is => 'rw', default => sub { 0 });
-has grid_color  => (is => 'rw', default => sub { [0.85, 0.85, 0.85] });
+has grid_color  => (is => 'rw', default => sub { [0.60, 0.60, 0.60] });
 
 # ------------------------------------------------------------------
 #
@@ -1354,7 +1354,7 @@ sub _render_cmd {
         }
         #
 
-        $b->set_linewidth(0.8);
+        $b->set_linewidth(1.5);
         $b->line_seg($ml, $baseline_y, $mr, $baseline_y);
     }
 
@@ -1442,7 +1442,7 @@ sub _render_cmd {
     elsif ($type eq 'box_fliers') {
         my $xcp = $tr->x(pdl($cmd->{xc}))->at(0);
         $b->set_color(@{$cmd->{color}});
-        $b->set_linewidth(0.8);
+        $b->set_linewidth(1.5);
         for my $j (0..$cmd->{data}->nelem-1) {
             my $yp = $tr->y(pdl($cmd->{data}->at($j)))->at(0);
             $b->marker($xcp, $yp, 3, 'o', 0);
@@ -1852,7 +1852,7 @@ sub _draw_frame {
     my $yopt = $pb ? uc($pb->{yopt}) : 'BCNST';
     my @fc   = ($pb && $pb->{color}) ? @{$pb->{color}} : (_fg());
 
-    $b->set_linewidth(0.8);
+    $b->set_linewidth(1.5);
     $b->set_linestyle('solid');
 
     # ============================================================
@@ -2082,7 +2082,7 @@ sub _draw_legend {
     $b->set_color(1,1,1, 0.85);
     $b->rect_fill($lx, $ly, $box_w, $box_h);
     $b->set_color(0.6,0.6,0.6);
-    $b->set_linewidth(0.8);
+    $b->set_linewidth(1.5);
     $b->rect_stroke($lx, $ly, $box_w, $box_h);
 
     for my $i (0 .. $#legs) {
@@ -2159,7 +2159,7 @@ sub _draw_colorbar {
             $b->colored_rect($cx, $yp - $h/$n, $cw, $h/$n + 1, $r, $g, $bv);
         }
         $b->set_color(0,0,0);
-        $b->set_linewidth(0.8);
+        $b->set_linewidth(1.5);
         $b->rect_stroke($cx, $y0, $cw, $h);
 
         #
@@ -2204,7 +2204,7 @@ sub _draw_colorbar {
             $b->colored_rect($xp, $cy, $w/$n + 1, $cw, $r, $g, $bv);
         }
         $b->set_color(0,0,0);
-        $b->set_linewidth(0.8);
+        $b->set_linewidth(1.5);
         $b->rect_stroke($x0, $cy, $w, $cw);
 
         #
