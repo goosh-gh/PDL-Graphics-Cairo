@@ -9,6 +9,7 @@ Also includes a **PGPLOT compatibility layer** for migrating existing PGPLOT scr
 - matplotlib-style API (`figure`, `axes`, `line`, `scatter`, `hist`, ...)
 - PGPLOT-compatible API (`pgbegin`, `pgenv`, `pgline`, `pgbox`, ...)
 - PNG, PDF, SVG file output — no X11 or libgiza required
+- **macOS native Cocoa window display** (`$fig->show(backend => 'osx')`) — no gnuplot or AquaTerm required
 - Interactive display via gnuplot (aqua/wxt/x11)
 - Black background support (`PGPLOT_BACKGROUND=black`)
 - Negative-up Y axis support (`pgenv` with ymin > ymax)
@@ -32,7 +33,9 @@ $ax->line($x, sin($x), color => 'blue', label => 'sin(x)');
 $ax->set_xlabel('x');
 $ax->set_ylabel('y');
 $ax->legend();
-$fig->save('plot.png');
+$fig->save('plot.png');          # file output
+$fig->show();                    # interactive (gnuplot)
+$fig->show(backend => 'osx');   # macOS native Cocoa window
 ```
 
 ### PGPLOT compatibility layer
@@ -63,8 +66,12 @@ pgend();
 perl Makefile.PL
 make
 make test
-make install
+sudo make install
 ```
+
+On macOS, `make` automatically builds `pdlcairo_viewer` (the native Cocoa
+window viewer) using Xcode Command Line Tools. No additional dependencies
+beyond Cairo are required.
 
 ### Prerequisites
 
@@ -76,6 +83,8 @@ make install
 **macOS (MacPorts):**
 ```bash
 sudo port install p5-cairo p5-pango p5-moo
+# Xcode Command Line Tools (for pdlcairo_viewer):
+xcode-select --install
 ```
 
 **Ubuntu/Debian:**
@@ -83,9 +92,27 @@ sudo port install p5-cairo p5-pango p5-moo
 sudo apt install libcairo-perl libpango-perl libmoo-perl
 ```
 
-### Interactive Display (optional)
+### Interactive Display
 
-`$fig->show()` and interactive PGPLOT devices (`/XW`, `/AQT`) use gnuplot.
+#### macOS native (recommended on macOS)
+
+After `make install`, use the native Cocoa backend — no gnuplot or AquaTerm needed:
+
+```perl
+$fig->show(backend => 'osx');
+```
+
+Or set the environment variable to make it the default:
+
+```bash
+export PDLCAIRO_BACKEND=osx
+```
+
+Press `q`, `ESC`, or `Return` to close the window.
+
+#### gnuplot (cross-platform)
+
+`$fig->show()` uses gnuplot for interactive display.
 
 **macOS:**
 ```bash
@@ -98,6 +125,33 @@ sudo port install gnuplot +x11   # requires XQuartz
 ```bash
 sudo apt install gnuplot-x11
 ```
+
+---
+
+## macOS Native Backend
+
+`Driver::OSX` provides a native Cocoa window without gnuplot or AquaTerm:
+
+```
+Cairo image surface (software rendering)
+    ↓ PNG temporary file
+pdlcairo_viewer (standalone Cocoa app, built by make)
+    ↓ NSImage → NSWindow/NSView
+macOS native window
+```
+
+The architecture follows the same design as the
+[giza /osx driver](https://github.com/danieljprice/giza) —
+aspect-ratio-preserving scaling (letterbox/pillarbox) on resize,
+keyboard input to close the window.
+
+| Feature | Status |
+|---------|--------|
+| Native NSWindow display | ✅ |
+| Aspect-ratio resize | ✅ |
+| Close with q/ESC/Return | ✅ |
+| Retina/HiDPI | not yet |
+| Multiple windows | planned |
 
 ---
 
@@ -149,6 +203,8 @@ for the full function list and implementation status.
 |----------|-------------|
 | `PGPLOT_BACKGROUND` | `black` = dark background (default: white) |
 | `PGPLOT_DEV` | Default device string |
+| `PDLCAIRO_BACKEND` | `osx` = use macOS native backend for `show()` |
+| `PDLCAIRO_VIEWER` | Full path to `pdlcairo_viewer` binary (override) |
 
 ---
 
@@ -165,8 +221,10 @@ for the full function list and implementation status.
 ## Examples
 
 ```bash
-perl examples/example_png.pl     # basic PNG output
-perl examples/example_stats.pl   # statistical plots
+perl examples/example_png.pl          # basic PNG output
+perl examples/example_stats.pl        # statistical plots
+perl examples/pdlcairo_osx_demo.pl    # macOS native 4-panel demo
+perl examples/pdlcairo_osx_demo.pl gnuplot   # same via gnuplot
 ```
 
 ---
