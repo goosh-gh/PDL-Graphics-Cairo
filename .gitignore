@@ -5,3 +5,4 @@ pm_to_blib
 *.bs
 *.o
 .DS_Store
+bin/pdlcairo_viewer

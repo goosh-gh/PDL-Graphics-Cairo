@@ -2,9 +2,8 @@ use strict;
 use warnings;
 use ExtUtils::MakeMaker;
 
-# Cairo::GObject is required on macOS (MacPorts) but not on Ubuntu/Linux
-# where Pango initializes GObject internally.
-# Listed under optional_features, not PREREQ_PM.
+# macOSかどうか判定
+my $is_mac = ($^O eq 'darwin');
 
 WriteMakefile(
     NAME             => 'PDL::Graphics::Cairo',
@@ -12,31 +11,22 @@ WriteMakefile(
     VERSION_FROM     => 'lib/PDL/Graphics/Cairo.pm',
     ABSTRACT_FROM    => 'lib/PDL/Graphics/Cairo.pm',
     LICENSE          => 'perl_5',
-
     MIN_PERL_VERSION => '5.016',
-
     PREREQ_PM => {
-        'PDL'        => '2.0',   # Numerical computation engine
-        'Moo'        => '2.0',   # Object system
-        'Cairo'      => '1.0',   # Perl bindings for the Cairo C library
-        'Pango'      => '1.0',   # Unicode text rendering (Cairo alone is insufficient)
-        'Encode'     => '0',     # UTF-8 / byte string conversion
-        'File::Temp' => '0',     # Temporary files for show()
-        'IPC::Open3' => '0',     # gnuplot process management
+        'PDL'        => '2.0',
+        'Moo'        => '2.0',
+        'Cairo'      => '1.0',
+        'Pango'      => '1.0',
+        'Encode'     => '0',
+        'File::Temp' => '0',
+        'IPC::Open3' => '0',
         'POSIX'      => '0',
         'List::Util' => '0',
         'Exporter'   => '0',
     },
-
-    # Cairo::GObject is needed on macOS, not on Linux.
-    # Verify manually after perl Makefile.PL:
-    #   macOS:  sudo port install p5-cairo-gobject
-    #   Ubuntu: usually not needed (included in libpango-perl)
-
     TEST_REQUIRES => {
         'Test::More' => '0.98',
     },
-
     META_MERGE => {
         'meta-spec' => { version => 2 },
         resources => {
@@ -51,14 +41,44 @@ WriteMakefile(
                 recommends => {
                     'Cairo::GObject' => '0',  # required on macOS
                 },
-                suggests => {
-                    # For interactive display (show() method)
-                    # gnuplot is not on CPAN; install via OS package manager
-                },
             },
         },
     },
-
+    # macOSのみ: pdlcairo_viewerをINSTALLBINにインストール
+    ($is_mac ? (
+        EXE_FILES => ['bin/pdlcairo_viewer'],
+    ) : ()),
     dist  => { COMPRESS => 'gzip -9f', SUFFIX => 'gz' },
-    clean => { FILES    => 'PDL-Graphics-Cairo-*' },
+    clean => { FILES    => 'PDL-Graphics-Cairo-* bin/pdlcairo_viewer' },
 );
+
+# ------------------------------------------------------------------
+# postamble: macOSのみ pdlcairo_viewer をビルド
+# ------------------------------------------------------------------
+{
+    package MY;
+    sub postamble {
+    return '' unless $is_mac;
+
+    return <<'MAKE_FRAG';
+# pdlcairo_viewer: macOSネイティブCocoaビューア
+# src/osx/pdlcairo_viewer.m → bin/pdlcairo_viewer
+
+bin/pdlcairo_viewer: src/osx/pdlcairo_viewer.m
+	@echo "=== Building pdlcairo_viewer (macOS Cocoa) ==="
+	@mkdir -p bin
+	clang -fobjc-arc -framework Cocoa \
+	    -o bin/pdlcairo_viewer \
+	    src/osx/pdlcairo_viewer.m
+	@echo "=== pdlcairo_viewer built ==="
+
+all :: bin/pdlcairo_viewer
+
+pure_all :: bin/pdlcairo_viewer
+
+clean ::
+	rm -f bin/pdlcairo_viewer
+
+MAKE_FRAG
+    }
+}
