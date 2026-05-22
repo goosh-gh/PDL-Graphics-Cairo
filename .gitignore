@@ -6,3 +6,8 @@ pm_to_blib
 *.o
 .DS_Store
 bin/pdlcairo_viewer
+src/osx/libpdlcairo_osx.dylib
+src/osx/libpdlcairo-osx-main.dylib
+src/osx/pdlcairo_viewer
+Makefile.PL.old
+pdlcairo_viewer
