@@ -11,3 +11,6 @@ src/osx/libpdlcairo-osx-main.dylib
 src/osx/pdlcairo_viewer
 Makefile.PL.old
 pdlcairo_viewer
+src/osx/pdlcairo-osx.h
+src/osx/pdlcairo-osx.m
+src/osx/pdlcairo-osx-main.m
