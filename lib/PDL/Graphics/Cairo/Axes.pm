@@ -1133,7 +1133,7 @@ sub draw {
     if ($self->{_is_twin}) {
         # twinx: Y
         $self->_draw_twin_yaxis($backend, $tr, $ml,$mt,$mr,$mb);
-    } elsif ($self->{_pgenv_called}) {
+    } else {
         # pgenv  pgline 
         $self->_draw_frame($backend, $tr, $ml,$mt,$mr,$mb);
     }
@@ -1834,7 +1834,7 @@ sub _draw_twin_yaxis {
     }
     if (exists $self->{_right_ylabel} && $self->{_right_ylabel} ne '') {
         $b->set_font(size => 11);
-        $b->text($mr + 42, ($mt+$mb)/2, $self->{_right_ylabel},
+        $b->text($mr + 20, ($mt+$mb)/2, $self->{_right_ylabel},
             align=>'center', valign=>'bottom', angle=>-90);
     }
 }
@@ -1929,7 +1929,8 @@ sub _draw_frame {
             # X(mb)xp 
             # X(mb)
             # 8px + 2px = 10px → mb+10
-            $b->text($xp, $mb + 10, $xlbs[$i],
+            # $b->text($xp, $mb + 14, $xlbs[$i],
+            $b->text($xp, $mb + 16, $xlbs[$i],
                 align=>'center', valign=>'top', angle=>$rot);
         }
         $prev_xp = $xp;
@@ -1981,7 +1982,7 @@ sub _draw_frame {
             my $txt_y = $yp;
             # y=0 : 
             if (abs($v) < ($yhi - $ylo) * 0.001 + 0.001) {
-                $txt_y = $yp - 2;
+#                $txt_y = $yp - 2;
             }
             $b->text($ml - 2, $txt_y, $ylbs[$i],
                 align=>'right', valign=>'middle');
@@ -2039,7 +2040,7 @@ sub _draw_labels {
     # Y 90
     if ($self->ylabel ne '') {
         $b->set_font(size => 11);
-        $b->text($ml - 52, ($mt+$mb)/2, $self->ylabel,
+        $b->text($ml - 30, ($mt+$mb)/2, $self->ylabel,
             align=>'center', valign=>'bottom', angle=>90);
     }
 }

@@ -3,17 +3,19 @@ package PDL::Graphics::Cairo::Driver::OSX;
 # =============================================================
 # Driver::OSX — macOSネイティブCocoaウィンドウ表示
 #
-# 方式: Driver::Gnuplotと同じ「PNG経由」アプローチ
-#   1. Cairo::ImageSurface → PNG一時ファイル
-#   2. pdlcairo_viewer（独立Cocoaアプリ）をexecして表示
-#
-# gnuplot・AquaTerm・X11・FFI不要
-# NSAppはpdlcairo_viewerプロセス内のメインスレッドで動くので
-# macOS 15のスレッド制約に抵触しない
+# 方式:
+#   show()呼び出しごとにPNGを生成してキューに積む。
+#   wait_all()で全PNGをまとめてpdlcairo_viewerに渡す。
+#   → 1プロセス内でタブとして表示される。
 #
 # 使い方:
+#   # 即時表示（ブロッキング）
 #   $fig->show(backend => 'osx');
-#   $fig->show(backend => 'osx', title => 'My Plot', keep => 1);
+#
+#   # 複数図をタブで同時表示
+#   $fig1->show(backend => 'osx', nowait => 1, title => 'Demo 1');
+#   $fig2->show(backend => 'osx', nowait => 1, title => 'Demo 2');
+#   PDL::Graphics::Cairo::Driver::OSX->wait_all();
 # =============================================================
 
 use strict;
@@ -26,51 +28,45 @@ has width  => (is => 'ro', required => 1);
 has height => (is => 'ro', required => 1);
 has title  => (is => 'ro', default  => sub { 'PDL::Graphics::Cairo' });
 has keep   => (is => 'ro', default  => sub { 0 });
+has nowait => (is => 'ro', default  => sub { 0 });
 
-# pdlcairo_viewerのパスを探す
+my @_queue;
 my $VIEWER = _find_viewer();
 
 sub _find_viewer {
-    # 1. 環境変数で上書き
-    return $ENV{PDLCAIRO_VIEWER} if $ENV{PDLCAIRO_VIEWER} && -x $ENV{PDLCAIRO_VIEWER};
+    return $ENV{PDLCAIRO_VIEWER}
+        if $ENV{PDLCAIRO_VIEWER} && -x $ENV{PDLCAIRO_VIEWER};
 
-    # 2. このpmファイルからの相対パス（開発時）
-    #    lib/PDL/Graphics/Cairo/Driver/OSX.pm → src/osx/pdlcairo_viewer
     use File::Basename qw(dirname);
-    my $base = dirname(__FILE__);          # .../Driver/
+    my $base = dirname(__FILE__);
     my $dev  = "$base/../../../../../src/osx/pdlcairo_viewer";
-    # パスを正規化
     if (-x $dev) {
         require Cwd;
         return Cwd::realpath($dev);
     }
 
-    # 3. インストール先
     for my $p (qw(/usr/local/bin/pdlcairo_viewer
                   /opt/local/bin/pdlcairo_viewer)) {
         return $p if -x $p;
     }
-
     return undef;
 }
 
-# ------------------------------------------------------------------
-# show($figure)
-# ------------------------------------------------------------------
-sub show {
-    my ($self, $figure) = @_;
-
+sub _check_viewer {
     die "Driver::OSX: pdlcairo_viewer が見つかりません。\n"
-      . "  ビルド: cd src/osx && bash build.sh\n"
+      . "  ビルド: make\n"
       . "  または: PDLCAIRO_VIEWER=/path/to/pdlcairo_viewer を設定\n"
       unless defined $VIEWER && -x $VIEWER;
+}
 
-    # 1. PNG一時ファイルに描画
+sub _render_to_png {
+    my ($self, $figure) = @_;
+
     my ($fh, $tmpfile) = tempfile(
         'pdlcairo_osx_XXXXXX',
         SUFFIX => '.png',
         TMPDIR => 1,
-        UNLINK => $self->keep ? 0 : 1,
+        UNLINK => 0,
     );
     close $fh;
 
@@ -80,11 +76,38 @@ sub show {
         file   => $tmpfile,
     );
     $figure->_render_to($png);
-
-    # 2. pdlcairo_viewerを起動して表示（ウィンドウが閉じられるまで待機）
-    my $title = $self->title;
-    system($VIEWER, $tmpfile, $title);
+    return $tmpfile;
 }
+
+sub show {
+    my ($self, $figure) = @_;
+    _check_viewer();
+
+    my $tmpfile = $self->_render_to_png($figure);
+
+    if ($self->nowait) {
+        push @_queue, { file => $tmpfile, title => $self->title };
+    } else {
+        system($VIEWER, $tmpfile, $self->title);
+        unlink $tmpfile unless $self->keep;
+    }
+}
+
+sub wait_all {
+    my $class = shift;
+    return unless @_queue;
+    _check_viewer();
+
+    my @args  = map { ($_->{file}, $_->{title}) } @_queue;
+    my @files = map { $_->{file} } @_queue;
+
+    system($VIEWER, @args);
+
+    unlink $_ for @files;
+    @_queue = ();
+}
+
+sub clear_queue { @_queue = () }
 
 1;
 
@@ -96,13 +119,13 @@ PDL::Graphics::Cairo::Driver::OSX - macOS native Cocoa window display
 
 =head1 SYNOPSIS
 
+  # ブロッキング
   $fig->show(backend => 'osx');
-  $fig->show(backend => 'osx', title => 'My Plot');
 
-=head1 DESCRIPTION
-
-PNG一時ファイル経由でpdlcairo_viewerに表示を委譲します。
-gnuplot・AquaTerm・X11不要。
+  # 複数図をタブで同時表示
+  $fig1->show(backend => 'osx', nowait => 1, title => 'Demo 1');
+  $fig2->show(backend => 'osx', nowait => 1, title => 'Demo 2');
+  PDL::Graphics::Cairo::Driver::OSX->wait_all();
 
 =head1 ENVIRONMENT
 

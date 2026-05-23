@@ -153,8 +153,9 @@ sub save {
     $self->_render_to($driver);
 }
 
+
 # ------------------------------------------------------------------
-# show(%opts) — gnuplot 
+# show(%opts) — gnuplot または OSX ネイティブ
 # ------------------------------------------------------------------
 sub show {
     my ($self, %opt) = @_;
@@ -167,6 +168,8 @@ sub show {
             width  => $self->width,
             height => $self->height,
             title  => $opt{title} // 'PDL::Graphics::Cairo',
+            nowait => $opt{nowait} // 0,
+            keep   => $opt{keep}   // 0,
         );
         $driver->show($self);
         return;
@@ -181,6 +184,7 @@ sub show {
     );
     $driver->show($self);
 }
+
 
 
 # ------------------------------------------------------------------
@@ -265,10 +269,11 @@ sub tight_layout {
 
         # : Y
         my $ml = $col == 0 ? 68 : 52;
+        $ml = 80 if $ax->ylabel ne "";
         $ml = 80 if $ax->ylabel ne '';
 
         # : 
-        my $mr = $ax->_colorbar ? 72 : 16;
+        my $mr = $ax->_colorbar ? 72 : (exists $ax->{_right_ylabel} && $ax->{_right_ylabel} ne "") ? 110 : 16;
 
         # : X
         my $mb = $row == $nrows-1 ? 56 : 36;

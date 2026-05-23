@@ -10,10 +10,13 @@ Also includes a **PGPLOT compatibility layer** for migrating existing PGPLOT scr
 - PGPLOT-compatible API (`pgbegin`, `pgenv`, `pgline`, `pgbox`, ...)
 - PNG, PDF, SVG file output — no X11 or libgiza required
 - **macOS native Cocoa window display** (`$fig->show(backend => 'osx')`) — no gnuplot or AquaTerm required
+- **Multiple plots in tabbed window** on macOS native backend
 - Interactive display via gnuplot (aqua/wxt/x11)
+- Axes frame, ticks, and tick labels rendered by Cairo (no gnuplot coordinate system overlay)
+- Dual Y axis support (`twinx`) with independent tick labels on both axes
 - Black background support (`PGPLOT_BACKGROUND=black`)
 - Negative-up Y axis support (`pgenv` with ymin > ymax)
-- Multi-panel subplots with minimal margins
+- Multi-panel subplots with `tight_layout()`
 - 6×6 multi-panel (36 subplots) layout tested
 
 ---
@@ -24,7 +27,7 @@ Also includes a **PGPLOT compatibility layer** for migrating existing PGPLOT scr
 
 ```perl
 use PDL;
-use PDL::Graphics::Cairo qw(figure);
+use PDL::Graphics::Cairo qw(figure subplots);
 
 my $x   = sequence(200) / 10;
 my $fig = figure(width => 800, height => 500);
@@ -32,10 +35,17 @@ my $ax  = $fig->axes();
 $ax->line($x, sin($x), color => 'blue', label => 'sin(x)');
 $ax->set_xlabel('x');
 $ax->set_ylabel('y');
+$ax->set_grid(1);
 $ax->legend();
+$fig->tight_layout();
 $fig->save('plot.png');          # file output
 $fig->show();                    # interactive (gnuplot)
 $fig->show(backend => 'osx');   # macOS native Cocoa window
+
+# Multiple plots in one tabbed window (macOS)
+$fig1->show(backend => 'osx', nowait => 1, title => 'Plot 1');
+$fig2->show(backend => 'osx', nowait => 1, title => 'Plot 2');
+PDL::Graphics::Cairo::Driver::OSX->wait_all();
 ```
 
 ### PGPLOT compatibility layer
@@ -110,6 +120,14 @@ export PDLCAIRO_BACKEND=osx
 
 Press `q`, `ESC`, or `Return` to close the window.
 
+Multiple figures open as tabs in a single window:
+
+```perl
+$fig1->show(backend => 'osx', nowait => 1, title => 'Demo 1');
+$fig2->show(backend => 'osx', nowait => 1, title => 'Demo 2');
+PDL::Graphics::Cairo::Driver::OSX->wait_all();
+```
+
 #### gnuplot (cross-platform)
 
 `$fig->show()` uses gnuplot for interactive display.
@@ -136,22 +154,33 @@ sudo apt install gnuplot-x11
 Cairo image surface (software rendering)
     ↓ PNG temporary file
 pdlcairo_viewer (standalone Cocoa app, built by make)
-    ↓ NSImage → NSWindow/NSView
+    ↓ NSImage → NSWindow/NSView (tabbed)
 macOS native window
 ```
 
 The architecture follows the same design as the
 [giza /osx driver](https://github.com/danieljprice/giza) —
-aspect-ratio-preserving scaling (letterbox/pillarbox) on resize,
-keyboard input to close the window.
+letterbox display (white background) on resize, keyboard input to close.
 
 | Feature | Status |
 |---------|--------|
 | Native NSWindow display | ✅ |
-| Aspect-ratio resize | ✅ |
+| Multiple figures as tabs | ✅ |
+| Letterbox resize (white background) | ✅ |
 | Close with q/ESC/Return | ✅ |
 | Retina/HiDPI | not yet |
-| Multiple windows | planned |
+
+---
+
+## Important: always call tight_layout()
+
+Call `$fig->tight_layout()` before `$fig->show()` or `$fig->save()` to
+ensure correct margins, axis label placement, and tick rendering:
+
+```perl
+$fig->tight_layout();
+$fig->show(backend => 'osx');
+```
 
 ---
 
@@ -179,7 +208,7 @@ keyboard input to close the window.
 | `axhline` / `axvline` | Reference lines |
 | `axvspan` / `axhspan` | Shaded regions |
 | `annotate` | Arrow annotation |
-| `twinx` | Dual Y axis |
+| `twinx` | Dual Y axis (independent ticks on both axes) |
 
 ---
 
@@ -221,10 +250,12 @@ for the full function list and implementation status.
 ## Examples
 
 ```bash
-perl examples/example_png.pl          # basic PNG output
-perl examples/example_stats.pl        # statistical plots
-perl examples/pdlcairo_osx_demo.pl    # macOS native 4-panel demo
-perl examples/pdlcairo_osx_demo.pl gnuplot   # same via gnuplot
+perl examples/example_png.pl               # basic PNG output
+perl examples/example_stats.pl             # statistical plots
+perl examples/example_show.pl osx          # interactive demo (macOS native)
+perl examples/example_show.pl aqua         # interactive demo (gnuplot/AquaTerm)
+perl examples/pdlcairo_osx_demo.pl         # macOS native 4-panel demo
+perl examples/pdlcairo_osx_demo.pl gnuplot # same via gnuplot
 ```
 
 ---

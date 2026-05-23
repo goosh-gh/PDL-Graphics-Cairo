@@ -4,15 +4,17 @@
 #
 # Run from PDL-Graphics-Cairo/ root:
 #   perl -I./lib examples/example_show.pl              # auto-detect terminal
-#   perl -I./lib examples/example_show.pl aqua         # macOS Aquaterm
+#   perl -I./lib examples/example_show.pl aqua         # macOS AquaTerm
 #   perl -I./lib examples/example_show.pl x11          # X11 / XQuartz
 #   perl -I./lib examples/example_show.pl wxt          # wxWidgets
+#   perl -I./lib examples/example_show.pl osx          # macOS native Cocoa (no gnuplot)
 #
 # Also demonstrates the PGPLOT compatibility layer with /xw device:
 #   perl -I./lib examples/example_show.pl pgplot_xw
 #
 # Requirements:
-#   gnuplot  (installed separately via OS package manager)
+#   gnuplot  (installed separately via OS package manager)  -- for aqua/x11/wxt
+#   pdlcairo_viewer (built by make)                         -- for osx
 #
 #   macOS (MacPorts):
 #     sudo port install gnuplot +aquaterm
@@ -23,13 +25,11 @@
 #
 # How it works:
 #   $fig->show() writes a temporary PNG to /tmp/pdlcairo_XXXXXX.png
-#   and passes it to gnuplot for display.
-#   The file is removed when the Perl process exits.
-#   Use show(keep=>1) to retain the temporary file for debugging.
+#   and passes it to gnuplot (or pdlcairo_viewer) for display.
 #
 # Device strings for PGPLOT layer:
 #   "/xw"   -> gnuplot x11   (X11 / XQuartz)
-#   "/AQT"  -> gnuplot aqua  (macOS Aquaterm)
+#   "/AQT"  -> gnuplot aqua  (macOS AquaTerm)
 #   "/wxt"  -> gnuplot wxt
 #   "/PNG"  -> Cairo PNG file output (no gnuplot)
 # =============================================================
@@ -42,43 +42,34 @@ use PDL::Graphics::Cairo::PGPLOT qw(:all);
 
 my $PI = 3.14159265358979;
 
-# Ensure white background for this example regardless of PGPLOT_BACKGROUND setting.
-# Remove this line if you prefer a black background:
-#   PGPLOT_BACKGROUND=black perl -I./lib examples/example_show.pl
 $ENV{PGPLOT_BACKGROUND} //= 'white';
 
-# Terminal selection
-# argv[0]: 'aqua' | 'x11' | 'wxt' | 'pgplot_xw' | (empty = auto)
 my $term_arg = $ARGV[0] // '';
 
 # =============================================================
-# Helper: show() wrapper that passes terminal if specified
+# Helper: show() wrapper
 # =============================================================
+
 sub show_fig {
-    my ($fig) = @_;
-    if ($term_arg ne '') {
-        # Pass user-specified terminal unconditionally.
-        # Driver::Gnuplot will warn if it falls back to another terminal.
+    my ($fig, %opt) = @_;
+    if ($term_arg eq 'osx') {
+        $fig->show(backend => 'osx', nowait => 1, keep => 1);
+    } elsif ($term_arg ne '' && $term_arg ne 'pgplot_xw') {
         $fig->show(terminal => lc($term_arg));
     } else {
-        $fig->show();   # auto-detect
+        $fig->show();
     }
 }
 
 # =============================================================
-# PGPLOT /xw demo (run with: perl example_show.pl pgplot_xw)
+# PGPLOT /xw demo
 # =============================================================
 if ($term_arg eq 'pgplot_xw') {
     print "PGPLOT layer -- interactive display via /xw (X11)\n";
     print "Requires gnuplot with x11 terminal.\n\n";
 
-    # Device strings:
-    #   "/xw"  or "/XW"   -> gnuplot x11
-    #   "/AQT"            -> gnuplot aqua (macOS)
-    #   "/wxt"            -> gnuplot wxt
-    my $dev = "/xw";   # change to "/AQT" on macOS with Aquaterm
+    my $dev = "/xw";
 
-    # --- Demo A: basic line + pgbox ---
     {
         print "Demo A: line + pgbox via $dev ...\n";
         pgbegin(0, $dev, 1, 1);
@@ -99,7 +90,6 @@ if ($term_arg eq 'pgplot_xw') {
         sleep 1;
     }
 
-    # --- Demo B: 2x3 subpanels ---
     {
         print "Demo B: 2x3 subpanels via $dev ...\n";
         pgbegin(0, $dev, -2, 3);
@@ -141,7 +131,9 @@ if ($term_arg eq 'pgplot_xw') {
 # =============================================================
 
 print "PDL::Graphics::Cairo -- interactive display demo\n";
-if ($term_arg) {
+if ($term_arg eq 'osx') {
+    print "Backend: macOS native Cocoa (pdlcairo_viewer)\n\n";
+} elsif ($term_arg) {
     print "Terminal: $term_arg\n\n";
 } else {
     print "Terminal: auto-detect (aqua -> wxt -> x11 -> qt)\n\n";
@@ -167,9 +159,9 @@ if ($term_arg) {
     $ax->axhline(0, color=>'gray', lw=>0.8, ls=>'dotted');
     $ax->legend(loc=>'upper right');
 
+    $fig->tight_layout();
     show_fig($fig);
     print "  -> window opened\n";
-    sleep 1;
 }
 
 # =============================================================
@@ -192,11 +184,12 @@ if ($term_arg) {
     $ax->axhline(0, color=>'gray', lw=>0.5, ls=>'dotted');
     $ax->axvline(0, color=>'gray', lw=>0.5, ls=>'dotted');
     $ax->set_grid(1);
-    $ax->xlabel("x"); $ax->ylabel("y");
+    $ax->xlabel("x");
+    $ax->ylabel("y");
 
+    $fig->tight_layout();
     show_fig($fig);
     print "  -> window opened\n";
-    sleep 1;
 }
 
 # =============================================================
@@ -228,9 +221,9 @@ if ($term_arg) {
     $ax2->legend(loc=>'upper right');
     $ax2->ylim(40, 100);
 
+    $fig->tight_layout();
     show_fig($fig);
     print "  -> window opened\n";
-    sleep 1;
 }
 
 # =============================================================
@@ -251,7 +244,8 @@ if ($term_arg) {
     $ax1->line($t, $y, color=>'blue', lw=>2);
     $ax1->axhline(0, color=>'gray', lw=>0.5, ls=>'dotted');
     $ax1->set_grid(1);
-    $ax1->xlabel("t"); $ax1->ylabel("y");
+    $ax1->xlabel("t");
+    $ax1->ylabel("y");
 
     # [1,2] Histogram
     my $data = grandom(600);
@@ -259,7 +253,8 @@ if ($term_arg) {
     $ax2->hist($data, bins=>25, color=>'steelblue', alpha=>0.8);
     $ax2->axvline(0, color=>'red', lw=>1.2, ls=>'dashed');
     $ax2->set_grid(1);
-    $ax2->xlabel("value"); $ax2->ylabel("count");
+    $ax2->xlabel("value");
+    $ax2->ylabel("count");
 
     # [2,1] Bar chart
     my @cats = (1..6);
@@ -267,8 +262,10 @@ if ($term_arg) {
     $ax3->title("Bar chart");
     $ax3->bar(pdl(@cats), pdl(@vals), width=>0.6, color=>'coral', alpha=>0.85);
     $ax3->xticks(\@cats, [qw(Jan Feb Mar Apr May Jun)]);
-    $ax3->ylim(0, 7); $ax3->set_grid(1);
-    $ax3->xlabel("Month"); $ax3->ylabel("Value");
+    $ax3->ylim(0, 7);
+    $ax3->set_grid(1);
+    $ax3->xlabel("Month");
+    $ax3->ylabel("Value");
 
     # [2,2] Pie chart
     $ax4->title("Pie chart");
@@ -278,9 +275,15 @@ if ($term_arg) {
         explode => [0.06, 0, 0, 0, 0],
     );
 
+    $fig->tight_layout();
     show_fig($fig);
     print "  -> window opened\n";
 }
 
+PDL::Graphics::Cairo::Driver::OSX->wait_all() if $term_arg eq 'osx';
+
+if ($term_arg eq 'osx') {
+    print "全ウィンドウを閉じると終了します...\n";
+    PDL::Graphics::Cairo::Driver::OSX->wait_all();
+}
 print "\nAll demos done.\n";
-print "Close the windows or press Ctrl-C to exit.\n";

@@ -222,9 +222,12 @@ sub _gnuplot_show {
     # whatever the startup file set.
     open my $gp, '|-', $self->gnuplot
         or die "Driver::Gnuplot: cannot start gnuplot: $!\n";
-
     print $gp "$term_cmd\n";
-    print $gp "plot '$tmpfile' binary filetype=png with rgbimage\n";
+    print $gp "unset key\n";
+    print $gp "unset border\n";
+    print $gp "unset tics\n";
+    print $gp "set margins 0,0,0,0\n";
+    print $gp "plot '$tmpfile' binary filetype=png with rgbimage notitle\n";
 
     # For wxt/qt: "persist" option may not work on all systems.
     # Send "pause mouse close" so the window stays until the user closes it.
