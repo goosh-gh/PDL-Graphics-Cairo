@@ -289,7 +289,7 @@ sub _parse_device {
     #
 
     my %term_map = (
-        OSX  => 'aqua', AQUA => 'aqua', AQT => 'aqua',
+        OSX  => 'osx',  AQUA => 'aqua', AQT => 'aqua',
         X11  => 'x11',  XWIN => 'x11', XW  => 'x11', XSERVE => 'x11',
         WXT  => 'wxt',  QT   => 'qt',
     );
@@ -337,10 +337,13 @@ sub _flush {
     my $has_content = grep { defined $_->xmin } @{ $fig->axes_list };
     return unless $has_content;
     if ($_state{interactive}) {
+     if ($_state{terminal} eq 'osx') {
+        $fig->tight_layout();
+        $fig->show(backend => 'osx');
+     } else {
         $fig->show(terminal => $_state{terminal});
-    } else {
-        $fig->save($_state{outfile});
-    }
+     }
+   }
 }
 
 sub _new_figure {

@@ -4,7 +4,8 @@
 
 `PDL::Graphics::Cairo::PGPLOT` is a drop-in compatibility layer that renders
 existing PGPLOT code using PDL::Graphics::Cairo (Cairo/Pango backend).
-It produces PNG, PDF, and SVG output without requiring libgiza or X11.
+It produces PNG, PDF, SVG output and native macOS window display,
+without requiring libgiza or X11.
 
 ---
 
@@ -13,8 +14,16 @@ It produces PNG, PDF, and SVG output without requiring libgiza or X11.
 ```perl
 use PDL::Graphics::Cairo::PGPLOT qw(:all);
 
-pgbegin(0, "output.png/PNG", 1, 1);
-pgenv(-100, 899, 10, -10, 0, -2);   # negative up supported
+my @x = (-100 .. 899);
+my @y = map { 10 + $_ * (-20 / 999) } (0 .. 999);
+my $n = scalar @x;
+
+pgbegin(0, "/osx", 1, 1);          # macOS native window
+# pgbegin(0, "output.png/PNG", 1, 1);  # PNG file
+# pgbegin(0, "/xw", 1, 1);             # X11 via gnuplot
+# pgbegin(0, "/aqua", 1, 1);           # AquaTerm via gnuplot
+
+pgenv(-100, 899, 10, -10, 0, -2);  # negative up supported
 pgsci(3);
 pgline($n, \@x, \@y);
 pgsci(1);
@@ -22,6 +31,8 @@ pgbox("ANST", 0.0, 1, "ANTV", 5.0, 2);
 pgmtxt("TR", -1, 0.1, 1.0, "Ch1");
 pgend();
 ```
+
+**Note:** `$n` must be defined as `scalar @x`. An undefined `$n` produces no output.
 
 ## Device Strings
 
@@ -32,9 +43,21 @@ pgend();
 | `/PDF` | pgplot.pdf |
 | `/SVG` | pgplot.svg |
 | `/PS` `/CPS` | pgplot.pdf (PDF substitute) |
+| `/OSX` `/osx` | **macOS native Cocoa window** (no gnuplot required) |
 | `/XW` `/XWIN` `/X11` | Interactive via gnuplot x11 |
-| `/AQT` `/OSX` `/AQUA` | Interactive via gnuplot aqua (macOS) |
+| `/AQT` `/AQUA` | Interactive via gnuplot aqua (AquaTerm, macOS) |
 | `/WXT` | Interactive via gnuplot wxt |
+
+### macOS Native Window (`/osx`)
+
+`/osx` uses `pdlcairo_viewer` (built by `make`) directly — no gnuplot or
+AquaTerm required. `tight_layout()` is called automatically.
+
+```perl
+pgbegin(0, "/osx", 1, 1);
+# ... plot commands ...
+pgend();   # displays native Cocoa window, blocks until closed
+```
 
 ## Environment Variables
 
@@ -43,6 +66,7 @@ pgend();
 | `PGPLOT_BACKGROUND` | `black` = black background, white foreground (default: white) |
 | `PGPLOT_DEV` | Default device when pgbegin device is empty |
 | `PGPLOT_XW_WINDOW` | Window geometry string (gnuplot interactive) |
+| `PDLCAIRO_VIEWER` | Full path to `pdlcairo_viewer` binary (override) |
 
 ## Fonts
 
@@ -254,8 +278,8 @@ matching original PGPLOT behavior when `nxsub` is negative.
 
 - `cpgconb/cons`: delegated to `cpgcont` (full marching-squares not implemented)
 - `cpgwedg`: shown as color bar (detailed style options not supported)
-- Interactive display requires gnuplot installed separately
-- macOS native window (`/OSXCOCOA` via libgiza) not supported (Phase 2 planned)
+- Interactive display via gnuplot requires gnuplot installed separately
+- `/osx` requires `pdlcairo_viewer` built by `make` (macOS only)
 - `cpgsah` arrowhead style is recorded but not yet applied to arrow drawing
 
 ## Dependencies
@@ -265,5 +289,43 @@ Cairo          # required
 Pango          # required (text rendering)
 Moo            # required
 PDL            # required
-gnuplot        # optional (interactive display only)
+gnuplot        # optional (for /XW /AQT /WXT interactive display)
+pdlcairo_viewer # optional (for /OSX native display, macOS only)
 ```
+
+---
+
+## Cairo API Equivalent
+
+The same plot can be written using the Cairo API (matplotlib-style).
+When `ylim(lo, hi)` is called with `lo > hi`, the Y axis is automatically
+reversed (negative up).
+
+```perl
+use PDL;
+use PDL::Graphics::Cairo qw(figure);
+
+my $x = pdl(-100 .. 899);
+my $y = 10 + $x * (-20 / 999);
+
+my $fig = figure(width => 800, height => 500);
+my $ax  = $fig->axes();
+
+$ax->line($x, $y, color => 'green', lw => 1.5);
+$ax->xlim(-100, 899);
+$ax->ylim(10, -10);   # lo > hi → negative up (Y axis auto-reversed)
+
+$fig->tight_layout();
+$fig->show(backend => 'osx');   # macOS native
+# $fig->show();                 # via gnuplot
+# $fig->save('output.png');     # PNG file
+```
+
+Device switching via `show()` arguments:
+
+| Display | Code |
+|---------|------|
+| macOS native | `$fig->show(backend => 'osx')` |
+| gnuplot/AquaTerm | `$fig->show(terminal => 'aqua')` |
+| gnuplot/X11 | `$fig->show(terminal => 'x11')` |
+| PNG file | `$fig->save('output.png')` |

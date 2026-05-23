@@ -1015,11 +1015,27 @@ sub xlim {
     return $self;
 }
 
+
 sub ylim {
     my ($self, $lo, $hi) = @_;
-    $self->ymin($lo); $self->ymax($hi);
+    if ($lo > $hi) {
+        # negative up: ymin > ymax → Y軸反転
+        $self->{_y_reversed} = 1;
+        $self->ymin($hi); $self->ymax($lo);
+    } else {
+        $self->{_y_reversed} = 0;
+        $self->ymin($lo); $self->ymax($hi);
+    }
     return $self;
 }
+
+
+
+#sub ylim {
+#    my ($self, $lo, $hi) = @_;
+#    $self->ymin($lo); $self->ymax($hi);
+#    return $self;
+#}
 
 sub set_limits {
     my ($self, $xmin, $xmax, $ymin, $ymax) = @_;
@@ -2359,7 +2375,7 @@ sub colorbar {
 # ==================================================================
 sub invert_yaxis {
     my ($self) = @_;
-    $self->{_invert_y} = 1;
+    $self->{_y_reversed} = 1;
     return $self;
 }
 

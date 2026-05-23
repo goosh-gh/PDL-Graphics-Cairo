@@ -15,7 +15,7 @@ Also includes a **PGPLOT compatibility layer** for migrating existing PGPLOT scr
 - Axes frame, ticks, and tick labels rendered by Cairo (no gnuplot coordinate system overlay)
 - Dual Y axis support (`twinx`) with independent tick labels on both axes
 - Black background support (`PGPLOT_BACKGROUND=black`)
-- Negative-up Y axis support (`pgenv` with ymin > ymax)
+- Negative-up Y axis support: `pgenv` with ymin > ymax, and `$ax->ylim(lo, hi)` with lo > hi auto-reverses Y axis
 - Multi-panel subplots with `tight_layout()`
 - 6×6 multi-panel (36 subplots) layout tested
 
@@ -41,6 +41,9 @@ $fig->tight_layout();
 $fig->save('plot.png');          # file output
 $fig->show();                    # interactive (gnuplot)
 $fig->show(backend => 'osx');   # macOS native Cocoa window
+
+# Negative-up Y axis (lo > hi auto-reverses)
+$ax->ylim(10, -10);
 
 # Multiple plots in one tabbed window (macOS)
 $fig1->show(backend => 'osx', nowait => 1, title => 'Plot 1');

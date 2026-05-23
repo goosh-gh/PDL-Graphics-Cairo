@@ -4,7 +4,7 @@
 
 `PDL::Graphics::Cairo::PGPLOT` は既存の PGPLOT コードを
 PDL::Graphics::Cairo（Cairo/Pango ベース）で描画するための互換レイヤーです。
-libgiza / X11 なしで PNG・PDF・SVG に出力できます。
+libgiza / X11 なしで PNG・PDF・SVG 出力および macOS ネイティブウィンドウ表示ができます。
 
 ---
 
@@ -13,7 +13,15 @@ libgiza / X11 なしで PNG・PDF・SVG に出力できます。
 ```perl
 use PDL::Graphics::Cairo::PGPLOT qw(:all);
 
-pgbegin(0, "output.png/PNG", 1, 1);
+my @x = (-100 .. 899);
+my @y = map { 10 + $_ * (-20 / 999) } (0 .. 999);
+my $n = scalar @x;   # ← $n は必ず定義すること（未定義だと描画されない）
+
+pgbegin(0, "/osx", 1, 1);           # macOS ネイティブウィンドウ
+# pgbegin(0, "output.png/PNG", 1, 1);  # PNG ファイル出力
+# pgbegin(0, "/xw", 1, 1);             # X11 経由（gnuplot）
+# pgbegin(0, "/aqua", 1, 1);           # AquaTerm 経由（gnuplot）
+
 pgenv(-100, 899, 10, -10, 0, -2);   # negative up 対応
 pgsci(3);
 pgline($n, \@x, \@y);
@@ -27,14 +35,26 @@ pgend();
 
 | 指定 | 出力先 |
 |------|--------|
+| `/OSX` `/osx` | **macOS ネイティブ Cocoa ウィンドウ**（gnuplot 不要） |
 | `/PNG` | pgplot.png |
 | `file.png/PNG` | file.png |
 | `/PDF` | pgplot.pdf |
 | `/SVG` | pgplot.svg |
 | `/PS` `/CPS` | pgplot.pdf（PDF で代替） |
 | `/XW` `/XWIN` `/X11` | gnuplot x11 経由（インタラクティブ） |
-| `/AQT` `/OSX` `/AQUA` | gnuplot aqua 経由（macOS） |
+| `/AQT` `/AQUA` | gnuplot aqua 経由（AquaTerm、macOS） |
 | `/WXT` | gnuplot wxt 経由 |
+
+### macOS ネイティブウィンドウ（`/osx`）
+
+`/osx` は `pdlcairo_viewer`（`make` でビルド）を直接使用します。
+gnuplot・AquaTerm は不要で、`tight_layout()` も自動的に呼ばれます。
+
+```perl
+pgbegin(0, "/osx", 1, 1);
+# ... 描画コマンド ...
+pgend();   # ネイティブ Cocoa ウィンドウを表示、閉じるまでブロック
+```
 
 ## 環境変数
 
@@ -43,12 +63,13 @@ pgend();
 | `PGPLOT_BACKGROUND` | `black` で黒背景・白前景（デフォルト: white） |
 | `PGPLOT_DEV` | デフォルトデバイス（pgbegin のデバイス未指定時） |
 | `PGPLOT_XW_WINDOW` | ウィンドウ geometry（gnuplot 経由時） |
+| `PDLCAIRO_VIEWER` | `pdlcairo_viewer` バイナリのフルパスを指定（上書き） |
 
 ## フォントについて
 
-描画フォントは Pango のデフォルト（通常 DejaVu Sans）を使用します。  
+描画フォントは Pango のデフォルト（通常 DejaVu Sans）を使用します。
 変更するには `lib/PDL/Graphics/Cairo/Driver/Cairo.pm` の
-`set_font()` 内の `Pango::FontDescription` のフォント名を変更してください。  
+`set_font()` 内の `Pango::FontDescription` のフォント名を変更してください。
 将来的には環境変数 `PGPLOT_FONT_FAMILY` での指定に対応予定です。
 
 ---
@@ -74,7 +95,6 @@ pgend();
 - `cpgswin` / `pgswin` — 座標窓のみ設定
 - `cpgsvp` / `pgsvp` — ビューポート設定
 - `cpgvstd` / `pgvstd` — 標準ビューポート
-- `cpgpap` / `pgpap` — ページサイズ
 
 **テキスト**
 - `cpglab` / `pglab` / `pglabel` — X/Y/タイトルラベル
@@ -181,10 +201,10 @@ pgend();
 
 使用例:
 ```perl
-pgsave();          # 現在の属性を保存
+pgsave();            # 現在の属性を保存
 pgsci(2); pgslw(3);  # 一時的に変更
 pgline(...);
-pgunsa();          # 保存した属性に戻す
+pgunsa();            # 保存した属性に戻す
 
 my $nice = cpgrnd(157.3, 5);  # → 200
 
@@ -201,7 +221,6 @@ cpgrnge(-3.7, 8.2, \$xlo, \$xhi);  # → xlo=-4, xhi=9
 | 関数 | 説明 |
 |------|------|
 | `cpgask` | 確認プロンプト（no-op） |
-| `cpgrnd/rnge/numb` | → 上記「新規実装」参照 |
 | `cpgiden` | ID ラベル（no-op） |
 | `cpgscrl` | スクロール（no-op） |
 | `cpgband/curs/ncur/lcur` | マウスカーソル入力（常に 0 を返す） |
@@ -220,8 +239,8 @@ pgenv($xmin, $xmax, $ymin, $ymax, 0, -2);
 pgsci(3);  # green
 pgline($n, \@x, \@y);
 
-# 軸装飾を追加（pgsci($BC) の色で描画）
-pgsci(1);  # white (黒背景時)
+# 軸装飾を追加
+pgsci(1);
 pgbox("ANST", 0.0, 1, "ANTV", 5.0, 2);
 #      XOPT  xtick nxsub YOPT  ytick nysub
 
@@ -240,14 +259,25 @@ pgenv(-100, 899, 10, -10, 0, -2);
 #                  ymin  ymax  (10 > -10 → negative up)
 ```
 
+## 多段パネル（列優先レイアウト）
+
+```perl
+pgbegin(0, "/XW", -6, 6);   # 6×6 パネル、列優先
+pgpap(13, 0.75);             # 13インチ幅、アスペクト比 0.75
+```
+
+`nxsub` が負のとき列優先（上→下→次の列）で埋めます。
+元の PGPLOT の動作と一致します。
+
 ---
 
 ## 制限事項
 
 - `cpgconb/cons` は `cpgcont` で代替（完全な等値線アルゴリズム未実装）
 - `cpgwedg` はカラーバーとして表示（詳細スタイル指定は未対応）
-- インタラクティブ表示は gnuplot 経由（aqua/x11/wxt）
-- macOS native ウィンドウ（libgiza `/OSXCOCOA`）は未対応（Phase 2 予定）
+- gnuplot 経由のインタラクティブ表示は gnuplot が別途必要
+- `/osx` は `pdlcairo_viewer`（`make` でビルド）が必要（macOS のみ）
+- `cpgsah` arrowhead スタイルは記録されるが描画には未反映
 
 ---
 
@@ -258,6 +288,42 @@ Cairo          # 必須
 Pango          # 必須（テキスト描画）
 Moo            # 必須
 PDL            # 必須
+gnuplot        # 任意（/XW /AQT /WXT インタラクティブ表示）
+pdlcairo_viewer # 任意（/OSX ネイティブ表示、macOS のみ）
 ```
 
-インタラクティブ表示には gnuplot が別途必要です。
+---
+
+## Cairo API による等価な書き方
+
+PGPLOT 互換レイヤーの代わりに Cairo API（matplotlib 風）で同じ図を描くこともできます。
+`ylim(lo, hi)` で `lo > hi` のとき自動的に Y 軸が反転します（negative up）。
+
+```perl
+use PDL;
+use PDL::Graphics::Cairo qw(figure);
+
+my $x = pdl(-100 .. 899);
+my $y = 10 + $x * (-20 / 999);
+
+my $fig = figure(width => 800, height => 500);
+my $ax  = $fig->axes();
+
+$ax->line($x, $y, color => 'green', lw => 1.5);
+$ax->xlim(-100, 899);
+$ax->ylim(10, -10);   # lo > hi → negative up（Y 軸自動反転）
+
+$fig->tight_layout();
+$fig->show(backend => 'osx');   # macOS ネイティブ表示
+# $fig->show();                 # gnuplot 経由
+# $fig->save('output.png');     # PNG 保存
+```
+
+デバイスの切り替えは `show()` の引数で行います：
+
+| 表示方法 | 書き方 |
+|----------|--------|
+| macOS ネイティブ | `$fig->show(backend => 'osx')` |
+| gnuplot/AquaTerm | `$fig->show(terminal => 'aqua')` |
+| gnuplot/X11 | `$fig->show(terminal => 'x11')` |
+| PNG 保存 | `$fig->save('output.png')` |
