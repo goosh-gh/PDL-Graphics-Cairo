@@ -4,6 +4,8 @@ A matplotlib-inspired 2D plotting library for PDL (Perl Data Language),
 using Cairo and Pango as the rendering backend.
 Also includes a **PGPLOT compatibility layer** for migrating existing PGPLOT scripts.
 
+Runs on **macOS and Linux (Ubuntu/Debian)**.
+
 ## Features
 
 - matplotlib-style API (`figure`, `axes`, `line`, `scatter`, `hist`, ...)
@@ -11,7 +13,8 @@ Also includes a **PGPLOT compatibility layer** for migrating existing PGPLOT scr
 - PNG, PDF, SVG file output — no X11 or libgiza required
 - **macOS native Cocoa window display** (`$fig->show(backend => 'osx')`) — no gnuplot or AquaTerm required
 - **Multiple plots in tabbed window** on macOS native backend
-- Interactive display via gnuplot (aqua/wxt/x11)
+- Interactive display via gnuplot (aqua/wxt/x11) — cross-platform
+- On non-macOS systems, `backend => 'osx'` automatically falls back to gnuplot
 - Axes frame, ticks, and tick labels rendered by Cairo (no gnuplot coordinate system overlay)
 - Dual Y axis support (`twinx`) with independent tick labels on both axes
 - Black background support (`PGPLOT_BACKGROUND=black`)
@@ -103,6 +106,8 @@ xcode-select --install
 **Ubuntu/Debian:**
 ```bash
 sudo apt install libcairo-perl libpango-perl libmoo-perl
+# For interactive display via gnuplot:
+sudo apt install gnuplot-x11
 ```
 
 ### Interactive Display
@@ -253,12 +258,21 @@ for the full function list and implementation status.
 ## Examples
 
 ```bash
+# Cross-platform (macOS and Linux)
 perl examples/example_png.pl               # basic PNG output
 perl examples/example_stats.pl             # statistical plots
-perl examples/example_show.pl osx          # interactive demo (macOS native)
-perl examples/example_show.pl aqua         # interactive demo (gnuplot/AquaTerm)
-perl examples/pdlcairo_osx_demo.pl         # macOS native 4-panel demo
-perl examples/pdlcairo_osx_demo.pl gnuplot # same via gnuplot
+perl examples/example_cairo_api.pl         # Cairo API with negative-up Y axis
+perl examples/example_pgplot.pl            # PGPLOT-style API equivalent
+
+# Interactive display
+perl examples/example_show.pl              # auto-detect terminal
+perl examples/example_show.pl osx          # macOS native (macOS only)
+perl examples/example_show.pl aqua         # gnuplot/AquaTerm (macOS)
+perl examples/example_show.pl x11          # gnuplot/X11 (Linux/XQuartz)
+
+# macOS 4-panel demo
+perl examples/pdlcairo_osx_demo.pl         # macOS native
+perl examples/pdlcairo_osx_demo.pl gnuplot # via gnuplot
 ```
 
 ---
