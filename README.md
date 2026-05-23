@@ -1,24 +1,28 @@
 # PDL::Graphics::Cairo
 
-A matplotlib-inspired 2D plotting library for PDL (Perl Data Language),
+A 2D plotting library for PDL (Perl Data Language),
 using Cairo and Pango as the rendering backend.
-Also includes a **PGPLOT compatibility layer** for migrating existing PGPLOT scripts.
 
 Runs on **macOS and Linux (Ubuntu/Debian)**.
+
+You can write plots in whichever style you are familiar with —
+matplotlib, PGPLOT, or gnuplot.
+PDL::Graphics::Cairo handles the rendering.
 
 ## Features
 
 - matplotlib-style API (`figure`, `axes`, `line`, `scatter`, `hist`, ...)
-- PGPLOT-compatible API (`pgbegin`, `pgenv`, `pgline`, `pgbox`, ...)
+- PGPLOT compatibility layer (`pgbegin`, `pgenv`, `pgline`, `pgbox`, ...)
+- gnuplot-style API via matplotlib layer (familiar command mapping)
 - PNG, PDF, SVG file output — no X11 or libgiza required
 - **macOS native Cocoa window display** (`$fig->show(backend => 'osx')`) — no gnuplot or AquaTerm required
 - **Multiple plots in tabbed window** on macOS native backend
 - Interactive display via gnuplot (aqua/wxt/x11) — cross-platform
 - On non-macOS systems, `backend => 'osx'` automatically falls back to gnuplot
-- Axes frame, ticks, and tick labels rendered by Cairo (no gnuplot coordinate system overlay)
+- Axes frame, ticks, and tick labels rendered by Cairo
 - Dual Y axis support (`twinx`) with independent tick labels on both axes
 - Black background support (`PGPLOT_BACKGROUND=black`)
-- Negative-up Y axis support: `pgenv` with ymin > ymax, and `$ax->ylim(lo, hi)` with lo > hi auto-reverses Y axis
+- Negative-up Y axis: `pgenv` with ymin > ymax, or `$ax->ylim(lo, hi)` with lo > hi
 - Multi-panel subplots with `tight_layout()`
 - 6×6 multi-panel (36 subplots) layout tested
 
@@ -26,53 +30,71 @@ Runs on **macOS and Linux (Ubuntu/Debian)**.
 
 ## Synopsis
 
-### matplotlib-style API
+### If you write matplotlib-style
 
 ```perl
 use PDL;
-use PDL::Graphics::Cairo qw(figure subplots);
+use PDL::Graphics::Cairo qw(figure);
 
 my $x   = sequence(200) / 10;
 my $fig = figure(width => 800, height => 500);
 my $ax  = $fig->axes();
 $ax->line($x, sin($x), color => 'blue', label => 'sin(x)');
-$ax->set_xlabel('x');
-$ax->set_ylabel('y');
+$ax->xlabel('x');
+$ax->ylabel('y');
 $ax->set_grid(1);
 $ax->legend();
 $fig->tight_layout();
-$fig->save('plot.png');          # file output
-$fig->show();                    # interactive (gnuplot)
-$fig->show(backend => 'osx');   # macOS native Cocoa window
-
-# Negative-up Y axis (lo > hi auto-reverses)
-$ax->ylim(10, -10);
-
-# Multiple plots in one tabbed window (macOS)
-$fig1->show(backend => 'osx', nowait => 1, title => 'Plot 1');
-$fig2->show(backend => 'osx', nowait => 1, title => 'Plot 2');
-PDL::Graphics::Cairo::Driver::OSX->wait_all();
+$fig->save('plot.png');         # PNG file
+$fig->show(backend => 'osx');  # macOS native window
+$fig->show();                  # gnuplot (Linux/macOS)
 ```
 
-### PGPLOT compatibility layer
+### If you write PGPLOT-style
+
+```perl
+use PDL::Graphics::Cairo::PGPLOT qw(:all);
+
+my @x = (-100 .. 899);
+my @y = map { 10 + $_ * (-20 / 999) } (0 .. 999);
+my $n = scalar @x;
+
+pgbegin(0, "/osx", 1, 1);              # macOS native
+# pgbegin(0, "/xw",  1, 1);            # X11 via gnuplot
+# pgbegin(0, "/aqua", 1, 1);           # AquaTerm via gnuplot
+# pgbegin(0, "output.png/PNG", 1, 1);  # PNG file
+
+pgenv(-100, 899, 10, -10, 0, -2);      # negative up (ymin > ymax)
+pgsci(3);                               # green
+pgline($n, \@x, \@y);
+pgsci(1);
+pgbox("ANST", 0.0, 1, "ANTV", 5.0, 2);
+pgmtxt("TR", -1, 0.1, 1.0, "Ch1");
+pgend();
+```
+
+### If you write gnuplot-style
 
 ```perl
 use PDL;
-use PDL::Graphics::Cairo::PGPLOT qw(:all);
+use PDL::Graphics::Cairo qw(figure);
 
-pgbegin(0, "output.png/PNG", -6, 6);  # 6x6 subpanels
-pgpap(13, 0.75);                        # 13-inch wide
+my $x = pdl(-100 .. 899);
+my $y = 10 + $x * (-20 / 999);
 
-pgenv(-100, 899, 10, -10, 0, -2);      # negative up
-pgsci(3);                               # green
-pgline($n, \@time, \@data);
-pgsci(1);                               # foreground color
-pgbox("ANST", 0.0, 1, "ANTV", 5.0, 2);
-pgmtxt("TR", -1, 0.1, 1.0, "Fz");
-pgpage();
-
-pgend();
+my $fig = figure(width => 800, height => 500);
+my $ax  = $fig->axes();
+$ax->line($x, $y, color => 'green', lw => 1.5);  # plot ... with lines lc "green"
+$ax->xlim(-100, 899);                              # set xrange [-100:899]
+$ax->ylim(10, -10);                                # set yrange [10:-10] (negative up)
+$ax->text(870, 9.5, "Ch1", color => 'black');      # set label "Ch1" at ...
+$fig->tight_layout();
+$fig->show(backend => 'osx');   # macOS native
+$fig->show();                   # gnuplot (Linux/macOS)
+$fig->save('output.png');       # PNG file
 ```
+
+For details of each API, see the [Documentation](#documentation) section below.
 
 ---
 
@@ -85,9 +107,8 @@ make test
 sudo make install
 ```
 
-On macOS, `make` automatically builds `pdlcairo_viewer` (the native Cocoa
-window viewer) using Xcode Command Line Tools. No additional dependencies
-beyond Cairo are required.
+On macOS, `make` automatically builds `pdlcairo_viewer` (native Cocoa viewer)
+using Xcode Command Line Tools.
 
 ### Prerequisites
 
@@ -99,36 +120,24 @@ beyond Cairo are required.
 **macOS (MacPorts):**
 ```bash
 sudo port install p5-cairo p5-pango p5-moo
-# Xcode Command Line Tools (for pdlcairo_viewer):
-xcode-select --install
+xcode-select --install   # for pdlcairo_viewer
 ```
 
 **Ubuntu/Debian:**
 ```bash
 sudo apt install libcairo-perl libpango-perl libmoo-perl
-# For interactive display via gnuplot:
-sudo apt install gnuplot-x11
+sudo apt install gnuplot-x11   # for interactive display
 ```
 
 ### Interactive Display
 
 #### macOS native (recommended on macOS)
 
-After `make install`, use the native Cocoa backend — no gnuplot or AquaTerm needed:
-
 ```perl
 $fig->show(backend => 'osx');
 ```
 
-Or set the environment variable to make it the default:
-
-```bash
-export PDLCAIRO_BACKEND=osx
-```
-
-Press `q`, `ESC`, or `Return` to close the window.
-
-Multiple figures open as tabs in a single window:
+Press `q`, `ESC`, or `Return` to close. Multiple figures open as tabs:
 
 ```perl
 $fig1->show(backend => 'osx', nowait => 1, title => 'Demo 1');
@@ -138,25 +147,66 @@ PDL::Graphics::Cairo::Driver::OSX->wait_all();
 
 #### gnuplot (cross-platform)
 
-`$fig->show()` uses gnuplot for interactive display.
-
-**macOS:**
 ```bash
-sudo port install gnuplot +aquaterm
-# or
-sudo port install gnuplot +x11   # requires XQuartz
-```
+# macOS
+sudo port install gnuplot +aquaterm   # or +x11
 
-**Ubuntu:**
-```bash
+# Ubuntu/Debian
 sudo apt install gnuplot-x11
 ```
 
 ---
 
-## macOS Native Backend
+## Directory Structure
 
-`Driver::OSX` provides a native Cocoa window without gnuplot or AquaTerm:
+```
+PDL-Graphics-Cairo/
+├── lib/PDL/Graphics/Cairo/
+│   ├── Cairo.pm          # Main entry point: figure(), subplots()
+│   ├── Figure.pm         # Figure class: save(), show(), tight_layout()
+│   ├── Axes.pm           # Axes class: line(), scatter(), xlim(), ylim(), ...
+│   ├── PGPLOT.pm         # PGPLOT compatibility layer: pgbegin/pgline/pgend/...
+│   ├── Driver/
+│   │   ├── Cairo.pm      # Cairo/Pango rendering backend (PNG/PDF/SVG output)
+│   │   ├── OSX.pm        # macOS native Cocoa backend (via pdlcairo_viewer)
+│   │   └── Gnuplot.pm    # gnuplot display backend (aqua/wxt/x11)
+│   ├── Transform/        # Coordinate transforms (linear, log)
+│   ├── ColorMap.pm       # Colormaps (viridis, plasma, ...)
+│   └── Tick.pm           # Tick mark calculation
+├── src/osx/
+│   ├── pdlcairo_viewer.m # Standalone Cocoa viewer app (macOS only)
+│   └── build.sh          # Build script for pdlcairo_viewer
+├── docs/
+│   ├── PGPLOT_compatibility_en.md
+│   ├── PGPLOT_compatibility_ja.md
+│   ├── gnuplot_compatibility.md
+│   └── matplotlib_comparison.md
+└── examples/
+```
+
+### Role of the two Cairo.pm files
+
+There are two files named `Cairo.pm` with distinct roles:
+
+| File | Role |
+|------|------|
+| `lib/PDL/Graphics/Cairo.pm` | Public API entry point. Exports `figure()` and `subplots()`. The file a user loads with `use PDL::Graphics::Cairo`. |
+| `lib/PDL/Graphics/Cairo/Driver/Cairo.pm` | Internal rendering driver. Uses the Cairo/Pango C libraries to draw lines, text, and shapes onto an image surface, and saves it as PNG/PDF/SVG. Never loaded directly by users. |
+
+---
+
+## Important: always call tight_layout()
+
+Call `$fig->tight_layout()` before `$fig->show()` or `$fig->save()`:
+
+```perl
+$fig->tight_layout();
+$fig->show(backend => 'osx');
+```
+
+---
+
+## macOS Native Backend
 
 ```
 Cairo image surface (software rendering)
@@ -165,10 +215,6 @@ pdlcairo_viewer (standalone Cocoa app, built by make)
     ↓ NSImage → NSWindow/NSView (tabbed)
 macOS native window
 ```
-
-The architecture follows the same design as the
-[giza /osx driver](https://github.com/danieljprice/giza) —
-letterbox display (white background) on resize, keyboard input to close.
 
 | Feature | Status |
 |---------|--------|
@@ -180,15 +226,14 @@ letterbox display (white background) on resize, keyboard input to close.
 
 ---
 
-## Important: always call tight_layout()
+## Environment Variables
 
-Call `$fig->tight_layout()` before `$fig->show()` or `$fig->save()` to
-ensure correct margins, axis label placement, and tick rendering:
-
-```perl
-$fig->tight_layout();
-$fig->show(backend => 'osx');
-```
+| Variable | Description |
+|----------|-------------|
+| `PGPLOT_BACKGROUND` | `black` = dark background (default: white) |
+| `PGPLOT_DEV` | Default device for `pgbegin`. Accepted values: `/OSX` `/XW` `/XWIN` `/X11` `/XSERVE` `/AQT` `/AQUA` `/WXT` `/QT` `/PNG` `/PDF` `/SVG` `/PS` `/CPS` |
+| `PDLCAIRO_BACKEND` | `osx` = use macOS native backend for `show()` |
+| `PDLCAIRO_VIEWER` | Full path to `pdlcairo_viewer` binary (override auto-detection) |
 
 ---
 
@@ -220,37 +265,13 @@ $fig->show(backend => 'osx');
 
 ---
 
-## PGPLOT Compatibility
-
-See [`docs/PGPLOT_compatibility_en.md`](docs/PGPLOT_compatibility_en.md)
-for the full function list and implementation status.
-
-### Implementation summary
-
-| Status | Count | Description |
-|--------|-------|-------------|
-| ✅ Full | 53 | All functions used in typical EEG scripts |
-| ⚠️ Partial | 19 | Working with limitations |
-| 🆕 New (untested) | 5 | `pgrnd`, `pgrnge`, `pgnumb`, `pgsave`, `pgunsa` |
-| 🔲 Stub | 10 | Interactive/cursor functions (not needed for file output) |
-
-### Environment variables
-
-| Variable | Description |
-|----------|-------------|
-| `PGPLOT_BACKGROUND` | `black` = dark background (default: white) |
-| `PGPLOT_DEV` | Default device string |
-| `PDLCAIRO_BACKEND` | `osx` = use macOS native backend for `show()` |
-| `PDLCAIRO_VIEWER` | Full path to `pdlcairo_viewer` binary (override) |
-
----
-
 ## Documentation
 
 | File | Description |
 |------|-------------|
-| `docs/PGPLOT_compatibility_ja.md` | PGPLOT compatibility layer details (Japanese) |
-| `docs/PGPLOT_compatibility_en.md` | PGPLOT compatibility layer (English) |
+| `docs/PGPLOT_compatibility_en.md` | PGPLOT compatibility layer — full function list and device strings |
+| `docs/PGPLOT_compatibility_ja.md` | Same in Japanese |
+| `docs/gnuplot_compatibility.md` | gnuplot-style API mapping and comparison |
 | `docs/matplotlib_comparison.md` | matplotlib vs PDL::Graphics::Cairo comparison |
 
 ---
@@ -261,8 +282,8 @@ for the full function list and implementation status.
 # Cross-platform (macOS and Linux)
 perl examples/example_png.pl               # basic PNG output
 perl examples/example_stats.pl             # statistical plots
-perl examples/example_cairo_api.pl         # Cairo API with negative-up Y axis
-perl examples/example_pgplot.pl            # PGPLOT-style API equivalent
+perl examples/example_cairo_api.pl         # matplotlib-style with negative-up Y axis
+perl examples/example_pgplot.pl            # PGPLOT-style API
 
 # Interactive display
 perl examples/example_show.pl              # auto-detect terminal
