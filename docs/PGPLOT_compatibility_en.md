@@ -73,7 +73,7 @@ pgend();   # displays native Cocoa window, blocks until closed
 The rendering font is Pango default (typically DejaVu Sans).
 To change it, modify `lib/PDL/Graphics/Cairo/Driver/Cairo.pm`,
 specifically the `Pango::FontDescription` in `set_font()`.
-Support for a `PGPLOT_FONT_FAMILY` environment variable is planned.
+Support for a `PGPLOT_FONT_FAMILY` environment variable may be added in the future.
 
 ---
 

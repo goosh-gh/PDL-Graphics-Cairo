@@ -70,7 +70,7 @@ pgend();   # ネイティブ Cocoa ウィンドウを表示、閉じるまでブ
 描画フォントは Pango のデフォルト（通常 DejaVu Sans）を使用します。
 変更するには `lib/PDL/Graphics/Cairo/Driver/Cairo.pm` の
 `set_font()` 内の `Pango::FontDescription` のフォント名を変更してください。
-将来的には環境変数 `PGPLOT_FONT_FAMILY` での指定に対応予定です。
+将来的には環境変数 `PGPLOT_FONT_FAMILY` での指定に対応できるかもしれません。
 
 ---
 
