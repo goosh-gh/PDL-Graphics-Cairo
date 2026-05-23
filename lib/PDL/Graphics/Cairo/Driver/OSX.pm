@@ -34,6 +34,7 @@ my @_queue;
 my $VIEWER = _find_viewer();
 
 sub _find_viewer {
+    return undef unless $^O eq 'darwin';  # macOS only, fallback to gnuplot on linux
     return $ENV{PDLCAIRO_VIEWER}
         if $ENV{PDLCAIRO_VIEWER} && -x $ENV{PDLCAIRO_VIEWER};
 
@@ -53,9 +54,9 @@ sub _find_viewer {
 }
 
 sub _check_viewer {
-    die "Driver::OSX: pdlcairo_viewer が見つかりません。\n"
-      . "  ビルド: make\n"
-      . "  または: PDLCAIRO_VIEWER=/path/to/pdlcairo_viewer を設定\n"
+    die "Driver::OSX: pdlcairo_viewer not found.\n"
+      . "  Build: make\n"
+      . "  Or set: PDLCAIRO_VIEWER=/path/to/pdlcairo_viewer\n"
       unless defined $VIEWER && -x $VIEWER;
 }
 
@@ -81,7 +82,17 @@ sub _render_to_png {
 
 sub show {
     my ($self, $figure) = @_;
-    _check_viewer();
+
+    # pdlcairo_viewer が見つからない場合は gnuplot にフォールバック
+    unless (defined $VIEWER && -x $VIEWER) {
+        require PDL::Graphics::Cairo::Driver::Gnuplot;
+        my $driver = PDL::Graphics::Cairo::Driver::Gnuplot->new(
+            width  => $self->width,
+            height => $self->height,
+        );
+        $driver->show($figure);
+        return;
+    }
 
     my $tmpfile = $self->_render_to_png($figure);
 
@@ -93,16 +104,28 @@ sub show {
     }
 }
 
+
 sub wait_all {
     my $class = shift;
     return unless @_queue;
-    _check_viewer();
+
+    unless (defined $VIEWER && -x $VIEWER) {
+        # Fallback: show each queued figure via gnuplot
+        require PDL::Graphics::Cairo::Driver::Gnuplot;
+        for my $item (@_queue) {
+            my $driver = PDL::Graphics::Cairo::Driver::Gnuplot->new(
+                width  => 800, height => 600,
+            );
+            system($driver->gnuplot, $item->{file});
+        }
+        unlink $_->{file} for @_queue;
+        @_queue = ();
+        return;
+    }
 
     my @args  = map { ($_->{file}, $_->{title}) } @_queue;
     my @files = map { $_->{file} } @_queue;
-
     system($VIEWER, @args);
-
     unlink $_ for @files;
     @_queue = ();
 }

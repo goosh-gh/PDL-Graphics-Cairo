@@ -343,7 +343,10 @@ sub _flush {
      } else {
         $fig->show(terminal => $_state{terminal});
      }
-   }
+
+    } else {
+        $fig->save($_state{outfile});
+    }
 }
 
 sub _new_figure {
