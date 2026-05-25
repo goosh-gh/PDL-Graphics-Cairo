@@ -558,7 +558,7 @@ sub imshow {
         vmin  => $vmin,
         vmax  => $vmax,
         alpha => $opt{alpha} // 1.0,
-        origin => $opt{origin} // 'upper',
+        origin => $opt{origin} // 'lower',
     };
 
     # axes  shape 
@@ -1329,7 +1329,8 @@ sub _render_cmd {
         my $ndims = scalar @dims;
         my $pw = ($mr - $ml) / $dims[1];
         my $ph = ($mb - $mt) / $dims[0];
-        my $upper  = ($cmd->{origin} // 'upper') eq 'upper';
+#        my $upper  = ($cmd->{origin} // 'upper') eq 'upper';
+        my $upper  = ($cmd->{origin} // 'lower') eq 'upper';
         my $rows   = $dims[0];
         my $cols   = $dims[1];
 
