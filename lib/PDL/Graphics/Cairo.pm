@@ -6,7 +6,7 @@ use warnings;
 our $VERSION = '0.01';
 
 use Exporter 'import';
-our @EXPORT_OK = qw(figure subplots);
+our @EXPORT_OK = qw(figure subplots imread);
 
 use PDL::Graphics::Cairo::Figure;
 
@@ -32,6 +32,30 @@ sub subplots {
     my @axes = $fig->subplots($nrows, $ncols);
     return ($fig, @axes);
 }
+
+# ==================================================================
+# imread — 画像ファイルをimshow()用のPDL ndarrayとして読み込む
+# PDL::IO::Image（高速）が使えればそちらを優先、なければrpicにフォールバック
+# ==================================================================
+sub imread {
+    my ($path) = @_;
+    die "imread: file not found: $path\n" unless -f $path;
+
+    if (eval { require PDL::IO::Image; 1 }) {
+        # PDL::IO::Image: [W,H,3], row=0が上端
+        # reorder(1,0,2) → [H,W,3], row=0が上端のまま
+        my $img = PDL::IO::Image->new_from_file($path);
+        return $img->pixels_to_pdl->reorder(1,0,2)->float / 255.0;
+    } else {
+        # rpic: [3,W,H], row=0が下端
+        # reorder(2,1,0) → [H,W,3], row=0が下端のまま
+        # → slice("-1:0,:,:")でH軸を反転してrow=0を上端に揃える
+        require PDL::IO::Pic;
+        my $hwc = PDL::IO::Pic::rpic($path)->reorder(2,1,0)->float / 255.0;
+        return $hwc->slice("-1:0,:,:");
+    }
+}
+
 
 1;
 
