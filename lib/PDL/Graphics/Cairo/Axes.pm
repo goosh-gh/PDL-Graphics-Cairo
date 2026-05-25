@@ -558,6 +558,7 @@ sub imshow {
         vmin  => $vmin,
         vmax  => $vmax,
         alpha => $opt{alpha} // 1.0,
+        origin => $opt{origin} // 'upper',
     };
 
     # axes  shape 
@@ -566,9 +567,11 @@ sub imshow {
     $self->xmin(0); $self->xmax($cols);
     $self->ymin(0); $self->ymax($rows);
 
-    #
+    # RGB画像（3次元）はカラーバー不要
+    unless (scalar @dims == 3 && $dims[2] == 3) {
+        $self->_colorbar({ cmap => $cmap, vmin => $vmin, vmax => $vmax });
+    }
 
-    $self->_colorbar({ cmap => $cmap, vmin => $vmin, vmax => $vmax });
     return $self;
 }
 
@@ -1131,6 +1134,10 @@ sub draw {
     }
 
     # ---  ---
+#    $self->_draw_grid($backend, $tr, $ml,$mt,$mr,$mb) if $self->grid;  # change 2026/5/25 for Axis(off)
+    $self->_draw_grid($backend, $tr, $ml,$mt,$mr,$mb) if $self->grid && !$self->{_axis_off};
+
+
     $self->_draw_grid($backend, $tr, $ml,$mt,$mr,$mb) if $self->grid;
 
     # --- ---
@@ -1151,19 +1158,21 @@ sub draw {
         $self->_draw_twin_yaxis($backend, $tr, $ml,$mt,$mr,$mb);
     } else {
         # pgenv  pgline 
-        $self->_draw_frame($backend, $tr, $ml,$mt,$mr,$mb);
+#        $self->_draw_frame($backend, $tr, $ml,$mt,$mr,$mb); ## modified for Axis(off) 2026/5/25
+        $self->_draw_frame($backend, $tr, $ml,$mt,$mr,$mb) unless $self->{_axis_off};
     }
 
     # ---  ---
-    $self->_draw_labels($backend, $ml,$mt,$mr,$mb);
+#    $self->_draw_labels($backend, $ml,$mt,$mr,$mb); ## modified for Axis(off) 2026/5/25
+     $self->_draw_labels($backend, $ml,$mt,$mr,$mb) unless $self->{_axis_off};
 
     # ---  ---
     $self->_draw_legend($backend, $ml,$mt,$mr,$mb)
-        if $self->{_show_legend} && @{ $self->_legends };
+        if $self->{_show_legend} && @{ $self->_legends } && !$self->{_axis_off};
 
     # ---  ---
     $self->_draw_colorbar($backend, $ml,$mr,$mt,$mb)
-        if $self->_colorbar;
+        if $self->_colorbar && !$self->{_axis_off};
 }
 
 # ------------------------------------------------------------------
@@ -1313,21 +1322,44 @@ sub _render_cmd {
         $b->filled_polygon($xd, $yd);
     }
 
+
     elsif ($type eq 'imshow') {
         my $data = $cmd->{data};
         my @dims = $data->dims;
-        my ($rows, $cols) = @dims;
-        my $pw = ($mr - $ml) / $cols;
-        my $ph = ($mb - $mt) / $rows;
+        my $ndims = scalar @dims;
+        my $pw = ($mr - $ml) / $dims[1];
+        my $ph = ($mb - $mt) / $dims[0];
+        my $upper  = ($cmd->{origin} // 'upper') eq 'upper';
+        my $rows   = $dims[0];
+        my $cols   = $dims[1];
 
-        for my $r (0 .. $rows-1) {
-            for my $c (0 .. $cols-1) {
-                my $v = $data->at($r,$c);
-                my ($rv,$gv,$bv) = $cmd->{cmap}->rgb_norm($v, $cmd->{vmin}, $cmd->{vmax});
-                $b->colored_rect(
-                    $ml + $c*$pw, $mt + $r*$ph, $pw+0.5, $ph+0.5,
-                    $rv,$gv,$bv, $cmd->{alpha}
-                );
+        if ($ndims == 3 && $dims[2] == 3) {
+            # RGB画像 [H, W, 3]
+            for my $r (0 .. $rows-1) {
+                my $rd = $upper ? $r : $rows-1-$r;
+                for my $c (0 .. $cols-1) {
+                    my $rv = $data->at($rd,$c,0);
+                    my $gv = $data->at($rd,$c,1);
+                    my $bv = $data->at($rd,$c,2);
+                    $b->colored_rect(
+                        $ml + $c*$pw, $mt + $r*$ph, $pw+0.5, $ph+0.5,
+                        $rv, $gv, $bv, $cmd->{alpha}
+                    );
+                }
+            }
+
+        } else {
+            # グレースケール [H, W]
+            for my $r (0 .. $rows-1) {
+                my $rd = $upper ? $r : $rows-1-$r;
+                for my $c (0 .. $cols-1) {
+                    my $v = $data->at($rd,$c);
+                    my ($rv,$gv,$bv) = $cmd->{cmap}->rgb_norm($v, $cmd->{vmin}, $cmd->{vmax});
+                    $b->colored_rect(
+                        $ml + $c*$pw, $mt + $r*$ph, $pw+0.5, $ph+0.5,
+                        $rv,$gv,$bv, $cmd->{alpha}
+                    );
+                }
             }
         }
     }
@@ -2373,6 +2405,21 @@ sub colorbar {
 # ==================================================================
 # invert_yaxis() / invert_xaxis()
 # ==================================================================
+
+# ==================================================================
+# axis() — matplotlib axis('off') / axis('on')
+# axis('off'): 枠・目盛り・ラベル・グリッドを全て非表示
+# axis('on') : 通常表示に戻す
+# ==================================================================
+sub axis {
+    my ($self, $arg) = @_;
+    if (defined $arg) {
+        $self->{_axis_off} = (lc($arg) eq 'off') ? 1 : 0;
+    }
+    return $self;
+}
+
+
 sub invert_yaxis {
     my ($self) = @_;
     $self->{_y_reversed} = 1;
