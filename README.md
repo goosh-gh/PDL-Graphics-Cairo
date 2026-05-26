@@ -129,6 +129,19 @@ sudo apt install libcairo-perl libpango-perl libmoo-perl
 sudo apt install gnuplot-x11   # for interactive display
 ```
 
+### Optional: PDL::IO::Image (recommended for image display)
+
+`imread()` uses `PDL::IO::Image` if available, falling back to `rpic`.
+`PDL::IO::Image` is **28x faster** than `rpic` (0.2 ms vs 5.7 ms per image).
+
+```bash
+# macOS (requires Alien::FreeImage — see docs/image_io.md for build notes)
+cpan Alien::FreeImage
+cpan PDL::IO::Image
+```
+
+Without `PDL::IO::Image`, `imread()` falls back to `PDL::IO::Pic` (rpic) automatically.
+
 ### Interactive Display
 
 #### macOS native (recommended on macOS)
@@ -154,6 +167,30 @@ sudo port install gnuplot +aquaterm   # or +x11
 # Ubuntu/Debian
 sudo apt install gnuplot-x11
 ```
+
+---
+
+## Image Display with imread()
+
+Use `imread()` to load images for `imshow()`. It automatically selects the
+fastest available backend and normalizes the array to `[H,W,3]` float32:
+
+```perl
+use PDL::Graphics::Cairo qw(figure imread);
+
+my $img = imread("photo.png");   # [H,W,3] float32, row=0 = top
+my $fig = figure(width => 800, height => 600);
+my $ax  = $fig->axes();
+$ax->imshow($img);
+$ax->axis('off');                # hide frame, ticks, labels
+$fig->tight_layout();
+$fig->show(backend => 'osx');
+```
+
+| Backend | Speed | Install |
+|---------|-------|---------|
+| `PDL::IO::Image` (FreeImage) | 0.2 ms/image ✅ | `cpan Alien::FreeImage PDL::IO::Image` |
+| `PDL::IO::Pic` (rpic, fallback) | 5.7 ms/image | included with PDL |
 
 ---
 
@@ -249,7 +286,7 @@ macOS native window
 | `fill_between` | Filled confidence band |
 | `step` | Step function |
 | `stem` | Stem plot |
-| `imshow` | 2D image with colorbar |
+| `imshow` | 2D image or RGB image [H,W,3] with colorbar; use `imread()` to load |
 | `contourf` | Filled contour |
 | `pie` | Pie chart |
 | `boxplot` | Box-and-whisker |
