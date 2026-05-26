@@ -153,14 +153,22 @@ sub save {
     $self->_render_to($driver);
 }
 
+sub _default_backend {
+    if ($^O eq 'darwin') {
+        require PDL::Graphics::Cairo::Driver::OSX;
+        my $viewer = PDL::Graphics::Cairo::Driver::OSX->_find_viewer();
+        return 'osx' if defined $viewer;
+    }
+    return 'gnuplot';
+}
 
 # ------------------------------------------------------------------
 # show(%opts) — gnuplot または OSX ネイティブ
 # ------------------------------------------------------------------
 sub show {
     my ($self, %opt) = @_;
-
-    my $backend = lc($opt{backend} // $ENV{PDLCAIRO_BACKEND} // 'gnuplot');
+#     my $backend = lc($opt{backend} // $ENV{PDLCAIRO_BACKEND} // 'gnuplot');
+    my $backend = lc($opt{backend} // $ENV{PDLCAIRO_BACKEND} // _default_backend());
 
     if ($backend eq 'osx') {
         require PDL::Graphics::Cairo::Driver::OSX;
