@@ -1103,11 +1103,34 @@ sub draw {
     }
 
     #
-
     my $ml = $self->fig_x + $self->margin_left;
     my $mt = $self->fig_y + $self->margin_top;
     my $mr = $self->fig_x + $self->width  - $self->margin_right;
     my $mb = $self->fig_y + $self->height - $self->margin_bottom;
+
+# set_aspect('equal') — データ座標の縦横比を保つ
+    if (defined $self->{_aspect} && $self->{_aspect} eq 'equal') {
+        my $data_w = $self->xmax - $self->xmin;
+        my $data_h = $self->ymax - $self->ymin;
+        my $pix_w  = $mr - $ml;
+        my $pix_h  = $mb - $mt;
+        # データ座標1単位あたりのピクセル数を揃える
+        my $scale_x = $pix_w / $data_w;
+        my $scale_y = $pix_h / $data_h;
+        if ($scale_x > $scale_y) {
+            # x方向が広すぎる → 左右マージンを増やして縮める
+            my $new_pix_w = $pix_h * $data_w / $data_h;
+            my $diff = ($pix_w - $new_pix_w) / 2;
+            $ml += $diff;
+            $mr -= $diff;
+        } else {
+            # y方向が広すぎる → 上下マージンを増やして縮める
+            my $new_pix_h = $pix_w * $data_h / $data_w;
+            my $diff = ($pix_h - $new_pix_h) / 2;
+            $mt += $diff;
+            $mb -= $diff;
+        }
+    }
 
     # xscale/yscale  Transform 
     # _y_reversed PGPLOT  negative up: ymin>ymax
