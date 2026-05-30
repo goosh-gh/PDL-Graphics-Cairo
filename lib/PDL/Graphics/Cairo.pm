@@ -135,37 +135,29 @@ Options: C<width>, C<height>, C<dpi>.
 
 Creates a Figure with a grid of Axes and returns C<($fig, @axes)>.
 
-  my ($fig, $ax1, $ax2) = subplots(1, 2, width => 1200, height => 500);
+B<1×N or N×1 (single row/column):>
 
-For a 2D grid, axes are returned row-by-row as array refs:
+  my ($fig, $ax1, $ax2, $ax3) = subplots(1, 3, width => 1200, height => 400);
+
+B<2D grid — axes returned row-by-row as array refs:>
 
   my ($fig, @rows) = subplots(2, 2);
-  my ($ax1, $ax2) = @{ $rows[0] };
-  my ($ax3, $ax4) = @{ $rows[1] };
+  # Access by row/column index:
+  my $ax = $rows[$r][$c];       # row $r, column $c (0-based)
+  # Or unpack explicitly:
+  my ($ax00, $ax01) = @{ $rows[0] };   # top row
+  my ($ax10, $ax11) = @{ $rows[1] };   # bottom row
 
-=head1 PREREQUISITES
+B<Flatten all axes:>
 
-  PDL           >= 2.0
-  Cairo         (Perl binding, libcairo-perl)
-  Cairo::GObject (libgtk3-perl)
-  Pango         (Perl binding, libpango-perl)
-  Moo           >= 2.0
+  my ($fig, @rows) = subplots(3, 4);
+  my @all_axes = map { @$_ } @rows;    # 12 axes in row-major order
 
-On macOS with MacPorts:
+B<Common options:>
 
-  sudo port install p5-cairo p5-pango p5-moo
-
-On Ubuntu/Debian:
-
-  sudo apt install libcairo-perl libpango-perl libmoo-perl libgtk3-perl
-
-=head1 AUTHOR
-
-Your Name E<lt>you@example.comE<gt>
-
-=head1 LICENSE
-
-This library is free software; you can redistribute it and/or modify it
-under the same terms as Perl itself.
+  width    => 1200   # figure width in pixels (default: 800)
+  height   => 600    # figure height in pixels (default: 600)
+  figsize  => [1200, 600]  # alternative to width/height
 
 =cut
+
