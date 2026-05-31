@@ -16,6 +16,7 @@ PDL::Graphics::Cairo handles the rendering.
 - gnuplot-style API via matplotlib layer (familiar command mapping)
 - PNG, PDF, SVG file output — no X11 or libgiza required
 - **macOS native Cocoa window display** (`$fig->show(backend => 'osx')`) — no gnuplot or AquaTerm required
+- **Persistent windows via giza_server** (`$fig->show(backend => 'gs')`) — in-memory PNG over a socket, windows outlive the program, shared with giza/PGPLOT C programs, works on Linux too
 - **Multiple plots in tabbed window** on macOS native backend
 - Interactive display via gnuplot (aqua/wxt/x11) — cross-platform
 - On non-macOS systems, `backend => 'osx'` automatically falls back to gnuplot
@@ -157,6 +158,37 @@ $fig1->show(backend => 'osx', nowait => 1, title => 'Demo 1');
 $fig2->show(backend => 'osx', nowait => 1, title => 'Demo 2');
 PDL::Graphics::Cairo::Driver::OSX->wait_all();
 ```
+
+#### giza_server (persistent windows, cross-platform)
+
+```perl
+$fig->show(backend => 'gs');                 # auto-launches giza_server
+$fig->show(backend => 'gs', start => 'connect');  # connect only
+```
+
+Renders the figure to an in-memory PNG and sends it to a `giza_server`
+process over a Unix-domain socket — no temporary files. The server owns
+the window, so it persists after the program exits, and the same server
+is shared by giza/PGPLOT C/Fortran programs using the `/gs` device.
+Requires the `giza_server` binary (found via `$GIZA_SERVER` or `$PATH`).
+See https://github.com/goosh-gh/giza-server.
+
+#### Which backend? (`osx` vs `gs`)
+
+Both display native windows on macOS; they differ in what they depend on
+and how long the window lives:
+
+| | `backend => 'osx'` | `backend => 'gs'` |
+|---|---|---|
+| Helper needed | `pdlcairo_viewer` (bundled) | `giza_server` (separate) |
+| Temp files | yes | no (in-memory PNG) |
+| Window lifetime | tied to the session | persists after exit |
+| Linux | falls back to gnuplot | yes (GTK3 server) |
+| Shared with C/Fortran giza | no | yes (`/gs` device) |
+
+Use `osx` for a self-contained P:G:Cairo setup with no extra server.
+Use `gs` if you also run giza/PGPLOT programs and want persistent windows
+shared across processes (and on Linux).
 
 #### gnuplot (cross-platform)
 
