@@ -57,3 +57,10 @@ test_viewer.m.2.bin
 download/
 bin/
 test_imshow_corners/
+
+# Inline::C build cache
+_Inline/
+
+# test outputs
+*_test.png
+aspect_equal_test.png
