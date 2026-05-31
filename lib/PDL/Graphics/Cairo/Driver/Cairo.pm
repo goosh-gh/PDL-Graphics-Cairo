@@ -35,7 +35,9 @@ sub BUILD {
     my ($self) = @_;
 
     my $surface;
-    if ($self->file =~ /\.png$/i) {
+    if ($self->file eq ':memory:' || $self->file =~ /\.png$/i) {
+        # :memory: — render to an in-memory ARGB32 surface; PNG bytes are
+        # later extracted via png_bytes() with no temp file (used by Driver::GS).
         $surface = Cairo::ImageSurface->create(
             'argb32', $self->width, $self->height);
     }
@@ -375,10 +377,34 @@ sub colored_rect {
 # -------------------------------------------------------------
 sub finish {
     my ($self) = @_;
+    if ($self->file eq ':memory:') {
+        # In-memory mode: keep the surface alive; do NOT finish() it
+        # (write_to_png_stream needs a live surface). png_bytes() reads it.
+        $self->{surface}->flush;
+        return;
+    }
     if ($self->file =~ /\.png$/i) {
         $self->{surface}->write_to_png($self->file);
     }
     $self->{surface}->finish if $self->{surface}->can('finish');
+}
+
+# -------------------------------------------------------------
+# png_bytes — return PNG as an in-memory scalar (no temp file).
+# Only valid when constructed with file => ':memory:'.
+# -------------------------------------------------------------
+sub png_bytes {
+    my ($self) = @_;
+    die "png_bytes: driver not in :memory: mode (file=" . $self->file . ")\n"
+        unless $self->file eq ':memory:';
+    $self->{surface}->flush;
+    my $png = '';
+    $self->{surface}->write_to_png_stream(sub {
+        my (undef, $chunk) = @_;
+        $png .= $chunk;
+        return 'success';
+    });
+    return $png;
 }
 
 1;

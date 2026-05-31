@@ -170,6 +170,18 @@ sub show {
 #     my $backend = lc($opt{backend} // $ENV{PDLCAIRO_BACKEND} // 'gnuplot');
     my $backend = lc($opt{backend} // $ENV{PDLCAIRO_BACKEND} // _default_backend());
 
+    if ($backend eq 'gs') {
+        require PDL::Graphics::Cairo::Driver::GS;
+        my $driver = PDL::Graphics::Cairo::Driver::GS->new(
+            width  => $self->width,
+            height => $self->height,
+            title  => $opt{title} // 'PDL::Graphics::Cairo',
+            start  => $opt{start} // 'auto',
+        );
+        $driver->show($self);
+        return;
+    }
+
     if ($backend eq 'osx') {
         require PDL::Graphics::Cairo::Driver::OSX;
         my $driver = PDL::Graphics::Cairo::Driver::OSX->new(
