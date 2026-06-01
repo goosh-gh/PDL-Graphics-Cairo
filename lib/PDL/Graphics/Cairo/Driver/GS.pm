@@ -48,6 +48,7 @@ use constant {
     GSP_MSG_CLOSE  => 0x20,
     GSP_MSG_ACK    => 0x21,
     GSP_MSG_ERR    => 0xFF,
+    GSP_MSG_SLIDER => 0x13,
 };
 
 sub _sock_path { "/tmp/giza_server_$<.sock" }
@@ -168,6 +169,159 @@ sub _recv_ack {
     die "Driver::GS: $what expected ACK, got type 0x" . sprintf('%02X', $type) . "\n"
         unless $type == GSP_MSG_ACK;
 }
+
+# ---- interactive 経路は sysread 専用（バッファ混在を避ける）----
+sub _sysread_exact {
+    my ($self, $sock, $n) = @_;
+    my $buf = '';
+    while (length($buf) < $n) {
+        my $r = sysread($sock, my $c, $n - length($buf));
+        return undef unless $r;          # 0=EOF, undef=error → 窓クローズで抜ける
+        $buf .= $c;
+    }
+    return $buf;
+}
+
+# ACK を待つ。待つ間に届いた SLIDER は捨てずに $state に最新値で吸収する。
+# （ドラッグ中、PNG送信〜ACK受信の隙間に SLIDER が割り込むため。）
+# 戻り値: 待つ間に SLIDER を1つ以上見たら 1（=要再描画）、無ければ 0。
+sub _recv_ack_sys {
+    my ($self, $sock, $what, $state) = @_;
+    my $saw_slider = 0;
+    while (1) {
+        my $hdr = $self->_sysread_exact($sock, 16);
+        die "Driver::GS: connection closed waiting for $what ACK\n"
+            unless defined $hdr;
+        my ($magic, $ver, $type, $flags, $len) = unpack('L C C S L', $hdr);
+        die "Driver::GS: bad magic\n" unless $magic == GSP_MAGIC;
+        my $payload = $len ? $self->_sysread_exact($sock, $len) : '';
+        die "Driver::GS: connection closed reading $what ACK payload\n"
+            if $len && !defined $payload;
+
+        if ($type == GSP_MSG_ACK) {
+            return $saw_slider;                 # 本命。割り込みSLIDERの有無を返す
+        }
+        elsif ($type == GSP_MSG_SLIDER && $state) {
+            my ($id, $val) = unpack('C f<', $payload);
+            $state->{$id} = $val;               # 最新値で上書き（中間は捨てる）
+            $saw_slider = 1;
+        }
+        elsif ($type == GSP_MSG_ERR) {
+            warn "Driver::GS: server error: $payload\n";
+            return $saw_slider;
+        }
+        # その他の型は読み捨てて ACK を待ち続ける
+    }
+}
+
+
+# Figure → :memory: Cairo → メモリPNG（show() のロジックを再利用）
+sub _figure_to_png {
+    my ($self, $figure) = @_;
+    my $cairo = PDL::Graphics::Cairo::Driver::Cairo->new(
+        width => $self->width, height => $self->height, file => ':memory:');
+    $figure->_render_to($cairo);
+    return $cairo->png_bytes;
+}
+
+# ------------------------------------------------------------------
+# show_interactive — 描画後もソケットを保持し、サーバー発スライダで
+# render コールバックを呼んで再描画し続ける（窓クローズ/EOF で return）。
+#   render => sub { my ($state) = @_; ...; return $figure }   必須
+#   init   => { 0 => k0, 1 => A0 }   初期スライダ値（任意）
+# ------------------------------------------------------------------
+sub show_interactive {
+    my ($self, %opt) = @_;
+    my $render = $opt{render}
+        or die "Driver::GS: show_interactive needs render => sub {...}\n";
+    my $state  = $opt{init} // {};
+
+    $self->_ensure_server;
+
+    my $sock = IO::Socket::UNIX->new(
+        Type => SOCK_STREAM(), Peer => _sock_path())
+        or die "Driver::GS: connect " . _sock_path() . ": $!\n";
+    $sock->autoflush(1);
+    binmode($sock);                       # バイナリ確実（crlf/encoding 層を排除）
+
+    my $seq = 0;
+    _send_msg($sock, GSP_MSG_NEWWIN, pack('L L', $self->width, $self->height), $seq++);
+    $self->_recv_ack_sys($sock, 'NEWWIN');
+    _send_msg($sock, GSP_MSG_TITLE, $self->title, $seq++);   # fire-and-forget
+
+    # 初期フレーム
+
+    _send_msg($sock, GSP_MSG_PNG, $self->_figure_to_png($render->($state)), $seq++);
+    $self->_recv_ack_sys($sock, 'PNG', $state);
+
+    $seq = $self->run($sock, $render, $state, $seq);
+    # CLOSE は送らない（窓を残す）— ループ終了後にソケットだけ閉じる
+    $sock->close;
+    return;
+}
+
+# ------------------------------------------------------------------
+# run — 受信ループ（C の client_slider.c main() と等価）
+# ------------------------------------------------------------------
+sub run {
+    my ($self, $sock, $render, $state, $seq) = @_;
+    require IO::Select;
+    my $sel = IO::Select->new($sock);
+    $seq //= 100;
+
+    while (1) {
+        my $hdr = $self->_sysread_exact($sock, 16);
+        last unless defined $hdr;                     # EOF = 窓クローズ/サーバ消失
+        my ($magic, $ver, $type, $flags, $len, $sq) = unpack('L C C S L L', $hdr);
+        die "Driver::GS: bad magic in run loop\n" unless $magic == GSP_MAGIC;
+
+        if ($type == GSP_MSG_SLIDER) {
+            my $p = $self->_sysread_exact($sock, $len);
+            last unless defined $p;
+            my ($id, $val) = unpack('C f<', $p);
+            $state->{$id} = $val;
+
+            # --- coalescing: 溜まった SLIDER を全部吸って id ごと最新値で上書き ---
+            my $eof = 0;
+            while ($sel->can_read(0)) {
+                my $h2 = $self->_sysread_exact($sock, 16);
+                if (!defined $h2) { $eof = 1; last }
+                my ($m2, undef, $t2, undef, $l2) = unpack('L C C S L', $h2);
+                my $p2 = $l2 ? $self->_sysread_exact($sock, $l2) : '';
+                if (!defined $p2) { $eof = 1; last }
+                if ($t2 == GSP_MSG_SLIDER) {
+                    my ($i, $v) = unpack('C f<', $p2);
+                    $state->{$i} = $v;
+                } elsif ($t2 == GSP_MSG_ERR) {
+                    warn "Driver::GS: server error: $p2\n";
+                    last;
+                } else {
+                    last;                              # 想定外型: 消費済みで desync なし、drain 終了
+                }
+            }
+            last if $eof;
+
+            # 再計算 → 再描画 → 送信 → ACK（ACK待ち中に割り込んだ SLIDER も吸収）
+            while (1) {
+                _send_msg($sock, GSP_MSG_PNG,
+                          $self->_figure_to_png($render->($state)), $seq++);
+                my $more = $self->_recv_ack_sys($sock, 'PNG', $state);
+                last unless $more;     # ACK待ち中にSLIDERが来ていたら最新値で再描画
+            }
+
+        }
+        elsif ($type == GSP_MSG_ERR) {
+            my $msg = $len ? $self->_sysread_exact($sock, $len) : '';
+            warn "Driver::GS: server error: " . ($msg // '') . "\n";
+        }
+        else {
+            $self->_sysread_exact($sock, $len) if $len;   # 未知型はペイロード読み飛ばし
+        }
+    }
+    return $seq;
+}
+
+
 
 # ------------------------------------------------------------------
 # show($figure) — メモリPNGを作って giza_server に送る
