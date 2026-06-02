@@ -1179,11 +1179,35 @@ sub draw {
     if ($self->{_is_twin}) {
         # twinx: Y
         $self->_draw_twin_yaxis($backend, $tr, $ml,$mt,$mr,$mb);
+
     } else {
-        # pgenv  pgline 
-#        $self->_draw_frame($backend, $tr, $ml,$mt,$mr,$mb); ## modified for Axis(off) 2026/5/25
-        $self->_draw_frame($backend, $tr, $ml,$mt,$mr,$mb) unless $self->{_axis_off};
+
+
+        my $has_plot = grep {
+            $_->{type} =~ /^(line|scatter|bar|barh|hist|errorbar|
+                              fill_between|step|stem|imshow|contourf|
+                              pie|hline|vline|vspan|hspan|quiver|
+                              boxplot_item|box_fliers|violin_item|
+                              eventplot|annotate)$/x
+        } @{ $self->_queue };
+        my $has_content = $has_plot || $self->{_pgbox};
+
+#        my $has_content = @{ $self->_queue } || $self->{_pgbox};
+#        my $has_content = @{ $self->_queue } || $self->{_pgenv_called};
+#        my $has_content = @{ $self->_queue } || $self->{_pgenv_called} || $self->{_pgbox};
+
+        $self->_draw_frame($backend, $tr, $ml,$mt,$mr,$mb)
+            unless $self->{_axis_off} || !$has_content;
+        $self->_draw_labels($backend, $ml,$mt,$mr,$mb)
+            unless $self->{_axis_off} || !$has_content;
     }
+
+
+#    } else {
+#        # pgenv  pgline 
+#        $self->_draw_frame($backend, $tr, $ml,$mt,$mr,$mb); ## modified for Axis(off) 2026/5/25
+#        $self->_draw_frame($backend, $tr, $ml,$mt,$mr,$mb) unless $self->{_axis_off};
+#    }
 
     # ---  ---
 #    $self->_draw_labels($backend, $ml,$mt,$mr,$mb); ## modified for Axis(off) 2026/5/25

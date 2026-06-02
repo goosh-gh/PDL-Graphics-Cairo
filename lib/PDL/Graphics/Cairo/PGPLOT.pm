@@ -1145,23 +1145,11 @@ sub cpgqndt { }
 # =============================================================
 
 sub cpgbox {
-    # PGPLOT pgbox: 
-    # xopt: A=0 B= C= G= I= N= S= T=
-    # yopt:  + V=
-    # xtick: 0=
-    # nxsub: 
     my ($xopt, $xtick, $nxsub, $yopt, $ytick, $nysub) = @_;
     $xopt //= ''; $yopt //= '';
     my $ax = _ax();
-
-    # pgenv 
-    return unless $ax->{_pgenv_called};
-
-    #
-
+    return unless $ax->{_pgenv_called};  # ← 元に戻す
     $ax->set_grid(1) if $xopt =~ /G/i || $yopt =~ /G/i;
-
-    # pgbox  Axes _draw_frame 
     $ax->{_pgbox} = {
         xopt  => uc($xopt), yopt  => uc($yopt),
         xtick => $xtick // 0, ytick => $ytick // 0,
@@ -1169,6 +1157,7 @@ sub cpgbox {
         color => _current_color(),
     };
 }
+
 *pgbox = \&cpgbox;
 
 sub cpgask  { my ($f) = @_; $_state{ask} = $f }
