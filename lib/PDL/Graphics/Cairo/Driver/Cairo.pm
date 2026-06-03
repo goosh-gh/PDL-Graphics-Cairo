@@ -16,7 +16,10 @@ use Cairo;
 use Cairo::GObject;
 use Pango;
 use POSIX qw(floor ceil);
-use List::Util qw(min max);
+# use List::Util qw(min max);
+use List::Util ();
+use PDL;
+use PDL::IO::PNG qw(wpng);
 
 # -------------------------------------------------------------
 #
@@ -78,9 +81,9 @@ sub BUILD {
     $self->{cr}      = $cr;
     $self->{surface} = $surface;
 
-    # Pango 
+    # Pango — デフォルトフォント: Helvetica Neue (macOS) / Arial / Sans フォールバック
     $self->{pango}   = Pango::Cairo::create_layout($cr);
-    $self->{font_family} = 'Sans';
+    $self->{font_family} = 'Helvetica Neue';
     $self->{font_size}   = 11;
     $self->{font_weight} = 'normal';
     $self->{font_slant}  = 'normal';
@@ -89,8 +92,14 @@ sub BUILD {
 
 sub _update_pango_font {
     my ($self) = @_;
-    my $w = $self->{font_weight} eq 'bold' ? 'Bold ' : '';
+    my $w = $self->{font_weight} eq 'bold'   ? 'Bold '   : '';
     my $i = $self->{font_slant}  eq 'italic' ? 'Italic ' : '';
+
+    # fontconfig/Pangoはシステムに存在しないフォント名を指定しても
+    # 自動フォールバックするが、明示的にフォールバックチェーンを
+    # コメントで示しておく:
+    #   Helvetica Neue (macOS native) → Helvetica → Arial → Sans
+    # Pangoはfontconfigを通じてこの順で解決する。
     my $desc_str = $self->{font_family} . ' ' . $w . $i . $self->{font_size};
     my $fd = Pango::FontDescription->from_string($desc_str);
     $self->{pango}->set_font_description($fd);
@@ -378,33 +387,75 @@ sub colored_rect {
 sub finish {
     my ($self) = @_;
     if ($self->file eq ':memory:') {
-        # In-memory mode: keep the surface alive; do NOT finish() it
-        # (write_to_png_stream needs a live surface). png_bytes() reads it.
+        # In-memory mode: keep the surface alive; do NOT finish() it.
+        # png_bytes() reads it.
         $self->{surface}->flush;
         return;
     }
     if ($self->file =~ /\.png$/i) {
-        $self->{surface}->write_to_png($self->file);
+        _argb32_surface_to_png_file($self->{surface}, $self->file);
+        return;
     }
     $self->{surface}->finish if $self->{surface}->can('finish');
 }
 
 # -------------------------------------------------------------
+# _argb32_surface_to_png_file — Cairo ARGB32 surface を wpng で高速書き出し
+#
+# Cairo ARGB32 メモリレイアウト (little-endian 32bit = 0xAARRGGBB):
+#   byte[0]=B, byte[1]=G, byte[2]=R, byte[3]=A  (1ピクセル4バイト)
+#
+# wpng 要求フォーマット: PDL [H,W,3] float32, 値 0.0–1.0
+#   PDL内部 (column-major) では [3,W,H] と等価
+#
+# 変換手順:
+#   1. get_data() → スカラー W*H*4 bytes
+#   2. PDL::byte [4,W,H] に詰める (index 0=B,1=G,2=R,3=A)
+#   3. slice('2:0:-1,:,:') で [R,G,B] = [3,W,H] を取り出す
+#   4. ->float / 255.0 で正規化
+#   5. wpng($rgb, $filename)
+# -------------------------------------------------------------
+sub _argb32_surface_to_png_file {
+    my ($surface, $filename) = @_;
+
+    $surface->flush;
+    my $raw = $surface->get_data;   # スカラー: W*H*4 bytes
+    my $W   = $surface->get_width;
+    my $H   = $surface->get_height;
+
+    # PDL [4, W, H] uint8
+    my $pdl = PDL->zeroes(PDL::byte, 4, $W, $H);
+    ${ $pdl->get_dataref } = $raw;
+    $pdl->upd_data;
+
+    # BGRA → RGB: slice index 2=R, 1=G, 0=B → [3,W,H] float32
+    my $rgb = $pdl->slice('2:0:-1,:,:')->float / 255.0;
+
+    wpng($rgb, $filename);
+}
+
+# -------------------------------------------------------------
 # png_bytes — return PNG as an in-memory scalar (no temp file).
 # Only valid when constructed with file => ':memory:'.
+# wpng経由 (tmpファイル) で高速化。
 # -------------------------------------------------------------
 sub png_bytes {
     my ($self) = @_;
     die "png_bytes: driver not in :memory: mode (file=" . $self->file . ")\n"
         unless $self->file eq ':memory:';
-    $self->{surface}->flush;
-    my $png = '';
-    $self->{surface}->write_to_png_stream(sub {
-        my (undef, $chunk) = @_;
-        $png .= $chunk;
-        return 'success';
-    });
-    return $png;
+
+    require File::Temp;
+    my $tmp = File::Temp->new(SUFFIX => '.png', UNLINK => 1);
+    my $tmpname = $tmp->filename;
+    _argb32_surface_to_png_file($self->{surface}, $tmpname);
+    $tmp->close;
+
+    open my $fh, '<:raw', $tmpname
+        or die "png_bytes: cannot read tmp PNG $tmpname: $!";
+    local $/;
+    my $bytes = <$fh>;
+    close $fh;
+    return $bytes;
 }
 
 1;
