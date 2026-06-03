@@ -22,7 +22,7 @@
 #     sudo apt install gnuplot-x11
 #
 # 動作の仕組み:
-#   $fig->show() は一時 PNG を /tmp/pdlcairo_XXXXXX.png に書き出し、
+#   ->show(nowait => 1) は一時 PNG を /tmp/pdlcairo_XXXXXX.png に書き出し、
 #   gnuplot に渡して表示します。
 #   一時ファイルは Perl プロセス終了時に削除されます。
 #   show(keep=>1) でデバッグ用に一時ファイルを保持できます。
@@ -61,7 +61,7 @@ sub show_fig {
         # フォールバックが発生した場合は Driver::Gnuplot が警告を出す。
         $fig->show(terminal => lc($term_arg));
     } else {
-        $fig->show();   # 自動検出
+        $fig->show(nowait => 1);   # 自動検出
     }
 }
 
@@ -282,5 +282,6 @@ if ($term_arg) {
     print "  → ウィンドウが開きました\n";
 }
 
+PDL::Graphics::Cairo::Driver::OSX->wait_all();
 print "\nAll demos done.\n";
 print "Close the windows or press Ctrl-C to exit.\n";

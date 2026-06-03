@@ -93,6 +93,9 @@
 @implementation PDLCairoViewerDelegate
 
 - (void)applicationDidFinishLaunching:(NSNotification *)n {
+    /* .appバンドルなし起動時のAutomaticTermination無効化 */
+    [[NSProcessInfo processInfo] disableAutomaticTermination:@"pdlcairo_viewer running"];
+
     NSScreen *screen = [NSScreen mainScreen];
     NSRect sr = screen ? screen.visibleFrame : NSMakeRect(0, 0, 1440, 900);
 
@@ -168,6 +171,7 @@
 /* ------------------------------------------------------------------ */
 /* main                                                                 */
 /* ------------------------------------------------------------------ */
+
 int main(int argc, const char *argv[]) {
     if (argc < 2) {
         fprintf(stderr,
@@ -175,11 +179,14 @@ int main(int argc, const char *argv[]) {
         return 1;
     }
 
+    /* tabs と delegate を static にしてautoreleasepool外でも生存させる */
+    static PDLCairoViewerDelegate *delegate;
+    static NSMutableArray<PDLCairoTab *> *tabs;
+
     @autoreleasepool {
         [NSApplication sharedApplication];
         [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
-
-        NSMutableArray<PDLCairoTab *> *tabs = [NSMutableArray array];
+        tabs = [NSMutableArray array];
         int i = 1;
         while (i < argc) {
             PDLCairoTab *tab  = [[PDLCairoTab alloc] init];
@@ -189,11 +196,14 @@ int main(int argc, const char *argv[]) {
                 : @"PDL::Graphics::Cairo";
             [tabs addObject:tab];
         }
-
-        PDLCairoViewerDelegate *delegate = [[PDLCairoViewerDelegate alloc] init];
+        delegate = [[PDLCairoViewerDelegate alloc] init];
         delegate.tabs = tabs;
         [NSApp setDelegate:delegate];
+    }   /* pool終了 — でもstatic変数なので解放されない */
+
+    @autoreleasepool {
         [NSApp run];
     }
+
     return 0;
 }

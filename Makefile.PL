@@ -67,7 +67,7 @@ WriteMakefile(
 bin/pdlcairo_viewer: src/osx/pdlcairo_viewer.m
 	@echo "=== Building pdlcairo_viewer (macOS Cocoa) ==="
 	@mkdir -p bin
-	clang -fobjc-arc -framework Cocoa \
+	clang -framework Cocoa \
 	    -o bin/pdlcairo_viewer \
 	    src/osx/pdlcairo_viewer.m
 	@echo "=== pdlcairo_viewer built ==="
