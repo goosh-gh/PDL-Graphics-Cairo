@@ -49,6 +49,10 @@ use constant {
     GSP_MSG_ACK    => 0x21,
     GSP_MSG_ERR    => 0xFF,
     GSP_MSG_SLIDER => 0x13,
+    GSP_MSG_SAVEREQ  => 0x14,   # server→client: render & return vector
+    GSP_MSG_SAVEDATA => 0x15,   # client→server: vector bytes for pending save
+    GSP_SAVE_FMT_PDF => 0,
+    GSP_SAVE_FMT_SVG => 1,
 };
 
 sub _sock_path { "/tmp/giza_server_$<.sock" }
@@ -67,6 +71,12 @@ sub _find_server {
         require Cwd;
         return Cwd::realpath($dev);
     }
+    # PATH上を探す（execlp("giza_server")と同じ挙動）
+    for my $dir (split /:/, $ENV{PATH} // "") {
+        my $p = "$dir/giza_server";
+        return $p if -x $p;
+    }
+    # フォールバック: 既知のprefixをハードコード
     for my $p (qw(/usr/local/bin/giza_server /opt/local/bin/giza_server)) {
         return $p if -x $p;
     }
@@ -206,6 +216,13 @@ sub _recv_ack_sys {
             $state->{$id} = $val;               # 最新値で上書き（中間は捨てる）
             $saw_slider = 1;
         }
+        elsif ($type == GSP_MSG_SAVEREQ) {
+            # ドラッグ中に File>Save が押されると PNG送信〜ACK の隙間に
+            # SAVEREQ が割り込む。ここで畳まず処理（再描画→SAVEDATA返送）
+            # して ACK を待ち続ける。$saw_slider は変えない（画面再描画不要）。
+            my ($f) = unpack('C', $payload);
+            $self->_handle_savereq($f);
+        }
         elsif ($type == GSP_MSG_ERR) {
             warn "Driver::GS: server error: $payload\n";
             return $saw_slider;
@@ -222,6 +239,42 @@ sub _figure_to_png {
         width => $self->width, height => $self->height, file => ':memory:');
     $figure->_render_to($cairo);
     return $cairo->png_bytes;
+}
+
+# Figure → PDF/SVG ベクタバイト列。
+# Cairo の Pdf/SvgSurface はファイルパス必須なので、tempファイルに
+# 出力 → slurp → unlink で取り出す（Transpiler と同じ隔離方針）。
+#   $ext: 'pdf' または 'svg'
+sub _figure_to_vector {
+    my ($self, $figure, $ext) = @_;
+    require File::Temp;
+    my ($fh, $path) = File::Temp::tempfile(
+        "giza_gs_save_XXXXXX", TMPDIR => 1, SUFFIX => ".$ext");
+    close $fh;                            # Cairo はパス指定で書く
+    # Figure::save が拡張子から PdfSurface/SvgSurface を選び、_render_to で
+    # finish() まで完了する（= ファイルが閉じて完成する）。
+    $figure->save($path);
+    open my $in, '<:raw', $path
+        or die "Driver::GS: cannot read vector temp $path: $!\n";
+    local $/;
+    my $bytes = <$in>;
+    close $in;
+    unlink $path;
+    return $bytes // '';
+}
+
+# サーバー発 SAVEREQ への応答。現在の $state で図を再描画し、PDF/SVG に
+# 変換して SAVEDATA で返送する（撃ちっぱなし、ACK は待たない）。
+# interactive セッション中のみ有効（$self->{_ix} が無ければ何もしない）。
+sub _handle_savereq {
+    my ($self, $fmt) = @_;
+    my $ix = $self->{_ix} or return;     # interactive 外なら無視
+    my $ext = ($fmt == GSP_SAVE_FMT_SVG) ? 'svg' : 'pdf';
+    my $figure = $ix->{render}->($ix->{state});
+    my $bytes  = $self->_figure_to_vector($figure, $ext);
+    # payload = [uint8 fmt][vector bytes]
+    _send_msg($ix->{sock}, GSP_MSG_SAVEDATA,
+              pack('C', $fmt) . $bytes, $ix->{save_seq}++);
 }
 
 # ------------------------------------------------------------------
@@ -249,12 +302,19 @@ sub show_interactive {
     $self->_recv_ack_sys($sock, 'NEWWIN');
     _send_msg($sock, GSP_MSG_TITLE, $self->title, $seq++);   # fire-and-forget
 
+    # SAVEREQ（File>Save as PDF/SVG）への応答に必要なコンテキスト。
+    # save_seq は SAVEDATA 専用の連番（サーバーは seq を順序判定に使わない）。
+    $self->{_ix} = {
+        sock => $sock, render => $render, state => $state, save_seq => 900000,
+    };
+
     # 初期フレーム
 
     _send_msg($sock, GSP_MSG_PNG, $self->_figure_to_png($render->($state)), $seq++);
     $self->_recv_ack_sys($sock, 'PNG', $state);
 
     $seq = $self->run($sock, $render, $state, $seq);
+    delete $self->{_ix};
     # CLOSE は送らない（窓を残す）— ループ終了後にソケットだけ閉じる
     $sock->close;
     return;
@@ -292,6 +352,9 @@ sub run {
                 if ($t2 == GSP_MSG_SLIDER) {
                     my ($i, $v) = unpack('C f<', $p2);
                     $state->{$i} = $v;
+                } elsif ($t2 == GSP_MSG_SAVEREQ) {
+                    my ($f) = unpack('C', $p2);
+                    $self->_handle_savereq($f);    # ドラッグ中の保存要求も取りこぼさない
                 } elsif ($t2 == GSP_MSG_ERR) {
                     warn "Driver::GS: server error: $p2\n";
                     last;
@@ -309,6 +372,12 @@ sub run {
                 last unless $more;     # ACK待ち中にSLIDERが来ていたら最新値で再描画
             }
 
+        }
+        elsif ($type == GSP_MSG_SAVEREQ) {
+            my $p = $len ? $self->_sysread_exact($sock, $len) : '';
+            last if $len && !defined $p;
+            my ($f) = unpack('C', $p);
+            $self->_handle_savereq($f);           # 再描画→PDF/SVG→SAVEDATA返送
         }
         elsif ($type == GSP_MSG_ERR) {
             my $msg = $len ? $self->_sysread_exact($sock, $len) : '';
