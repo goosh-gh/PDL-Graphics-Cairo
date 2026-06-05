@@ -1,7 +1,15 @@
 package PDL::Graphics::Cairo::Driver::OSX;
 
 # =============================================================
-# Driver::OSX — macOSネイティブCocoaウィンドウ表示
+# Driver::OSX — macOSネイティブCocoaウィンドウ表示【DEPRECATED】
+#
+# ★ 退役済み（ドライバ一本化）★
+#   macOS ネイティブ表示は giza_server バックエンド (Driver::GS, 'gs') に
+#   一本化された。'gs' は giza_server を auto-spawn し、メモリソケットで
+#   PNG を送る（temp ファイル不要）うえ、show_interactive ではスライダ・
+#   ベクタ保存(PDF/SVG)も使える。本モジュールは可逆性のため残置するが、
+#   既定では使われない。明示的に使うには backend => 'osx'（または
+#   PDLCAIRO_BACKEND=osx）。将来削除予定。
 #
 # 方式:
 #   show()呼び出しごとにPNGを生成してキューに積む。
@@ -32,6 +40,20 @@ has nowait => (is => 'ro', default  => sub { 0 });
 
 my @_queue;
 my $VIEWER = _find_viewer();
+
+# 退役通知: 実際に表示用オブジェクトを生成した時だけ一度警告する。
+# wait_all() はクラスメソッド（オブジェクト非生成）なので、gs 既定下で
+# 残骸の wait_all() 呼び出しが警告を出すことはない（純粋 no-op のまま）。
+my $_warned_deprecated = 0;
+sub BUILD {
+    return if $_warned_deprecated++;
+    warn <<'EOW';
+[deprecated] PDL::Graphics::Cairo::Driver::OSX は退役しました。
+macOS ネイティブ表示は giza_server バックエンド ('gs') に一本化されています。
+backend を省略する（darwin では既定で 'gs'）か backend => 'gs' を使ってください。
+このレガシー経路を明示的に使うには PDLCAIRO_BACKEND=osx を設定します。
+EOW
+}
 
 sub _find_viewer {
     return undef unless $^O eq 'darwin';  # macOS only, fallback to gnuplot on linux
@@ -107,6 +129,9 @@ sub show {
 
 sub wait_all {
     my $class = shift;
+    # gs 既定下では OSX キューは空なので、ここで黙って返る = 完全な no-op。
+    # （旧 nowait+wait_all スクリプトは show ごとに即永続窓になり、wait_all は
+    #  不要になる。呼んでも壊れない。）
     return unless @_queue;
 
     unless (defined $VIEWER && -x $VIEWER) {
@@ -138,7 +163,18 @@ __END__
 
 =head1 NAME
 
-PDL::Graphics::Cairo::Driver::OSX - macOS native Cocoa window display
+PDL::Graphics::Cairo::Driver::OSX - macOS native Cocoa window display (DEPRECATED)
+
+=head1 DEPRECATION
+
+This driver is B<deprecated>. macOS native display is now unified on the
+giza_server backend (L<PDL::Graphics::Cairo::Driver::GS>, C<'gs'>), which
+auto-spawns the server, streams PNG over a memory socket (no temp files),
+and supports interactive sliders and vector (PDF/SVG) save via
+C<show_interactive>. On darwin C<'gs'> is the default backend; just omit
+C<backend> or pass C<< backend => 'gs' >>. This module is kept only for
+reversibility and may be removed. To force the legacy path, set
+C<PDLCAIRO_BACKEND=osx>.
 
 =head1 SYNOPSIS
 

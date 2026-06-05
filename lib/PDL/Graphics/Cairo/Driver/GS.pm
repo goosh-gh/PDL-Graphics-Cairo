@@ -69,11 +69,16 @@ sub _find_server {
         if $ENV{GIZA_SERVER} && -x $ENV{GIZA_SERVER};
     use File::Basename qw(dirname);
     my $base = dirname(__FILE__);
-    # リポジトリ同梱のビルド済みバイナリ（開発時）
-    my $dev = "$base/../../../../../giza-server/giza_server";
-    if (-x $dev) {
-        require Cwd;
-        return Cwd::realpath($dev);
+    # リポジトリ同梱のビルド済みバイナリ（開発時）。
+    # よくある2レイアウトを両方見る:
+    #   (a) <pgc>/giza-server/giza_server        … サブディレクトリ同梱
+    #   (b) <pgc>/../giza-server/giza_server      … ~/src 下の兄弟チェックアウト
+    for my $rel ("$base/../../../../../giza-server/giza_server",
+                 "$base/../../../../../../giza-server/giza_server") {
+        if (-x $rel) {
+            require Cwd;
+            return Cwd::realpath($rel);
+        }
     }
     # PATH上を探す（execlp("giza_server")と同じ挙動）
     for my $dir (split /:/, $ENV{PATH} // "") {
@@ -85,6 +90,17 @@ sub _find_server {
         return $p if -x $p;
     }
     return undef;
+}
+
+# ------------------------------------------------------------------
+# _available — このホストで 'gs' バックエンドが使えるか。
+# 既に起動中、またはバイナリが見つかれば真。Figure::_default_backend が
+# darwin で 'gs' を既定に採るかどうかの判定に使う。socket 接続を1回試す
+# だけ（+ PATH 走査）なので軽量。クラスメソッド/関数どちらで呼んでも可。
+# ------------------------------------------------------------------
+sub _available {
+    return 1 if _server_alive();
+    return defined _find_server();
 }
 
 # ------------------------------------------------------------------

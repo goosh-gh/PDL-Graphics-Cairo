@@ -290,6 +290,7 @@ sub _parse_device {
 
     my %term_map = (
         OSX  => 'osx',  AQUA => 'aqua', AQT => 'aqua',
+        GS   => 'gs',   GW   => 'gs',   GIZA => 'gs',
         X11  => 'x11',  XWIN => 'x11', XW  => 'x11', XSERVE => 'x11',
         WXT  => 'wxt',  QT   => 'qt',
     );
@@ -337,11 +338,14 @@ sub _flush {
     my $has_content = grep { defined $_->xmin } @{ $fig->axes_list };
     return unless $has_content;
     if ($_state{interactive}) {
-     if ($_state{terminal} eq 'osx') {
+     my $t = $_state{terminal};
+     if ($t eq 'osx' || $t eq 'gs') {
+        # ドライバ一本化: レガシーな /osx デバイスと新規 /gs デバイスは
+        # どちらも giza_server 経由で表示する（Driver::GS が auto-spawn）。
         $fig->tight_layout();
-        $fig->show(backend => 'osx');
+        $fig->show(backend => 'gs');
      } else {
-        $fig->show(terminal => $_state{terminal});
+        $fig->show(terminal => $t);
      }
 
     } else {

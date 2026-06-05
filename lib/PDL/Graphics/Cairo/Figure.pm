@@ -155,9 +155,13 @@ sub save {
 
 sub _default_backend {
     if ($^O eq 'darwin') {
-        require PDL::Graphics::Cairo::Driver::OSX;
-        my $viewer = PDL::Graphics::Cairo::Driver::OSX->_find_viewer();
-        return 'osx' if defined $viewer;
+        # ドライバ一本化: macOS ネイティブ表示は giza_server (/gs) に集約。
+        # Driver::GS が giza_server を auto-spawn するので viewer 探索は不要。
+        # 退役した Driver::OSX/pdlcairo_viewer は既定では使わない。
+        # giza_server が起動中でもバイナリも見つからない時だけ gnuplot に
+        # 退避する（giza-server 未ビルドの素のチェックアウトでも描けるよう保険）。
+        require PDL::Graphics::Cairo::Driver::GS;
+        return 'gs' if PDL::Graphics::Cairo::Driver::GS->_available;
     }
     return 'gnuplot';
 }

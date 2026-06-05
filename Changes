@@ -1,5 +1,23 @@
 Revision history for PDL-Graphics-Cairo
 
+{{NEXT}}
+    - Driver unification: macOS native display is now the giza_server
+      backend ('gs'). _default_backend() returns 'gs' on darwin (falling
+      back to 'gnuplot' only when giza_server is neither running nor
+      installed). Driver::GS->_available() added for that probe.
+    - Driver::OSX / pdlcairo_viewer are DEPRECATED. They are no longer
+      built or installed (Makefile.PL postamble/EXE_FILES disabled); the
+      source is kept under src/osx/ for reversibility. Constructing an OSX
+      driver now warns once. 'osx' remains selectable (PDLCAIRO_BACKEND=osx
+      or backend => 'osx') as a legacy fallback.
+    - PGPLOT layer: the /osx device (legacy) and the new /gs, /gw devices
+      now display through giza_server (Driver::GS).
+    - wait_all() is a harmless no-op under the gs path (empty OSX queue;
+      no warning), so existing nowait+wait_all scripts keep working.
+    - examples/regress_gs.pl: regression harness for the unified path
+      (matplotlib-style, PGPLOT-style, show_interactive, wait_all no-op,
+      gnuplot fallback).
+
 0.01  (first appear in Github, 2026-05-18)
     - Initial release
     - Backend: Cairo + Pango (PNG / PDF / SVG output)

@@ -44,41 +44,36 @@ WriteMakefile(
             },
         },
     },
-    # macOSのみ: pdlcairo_viewerをINSTALLBINにインストール
-    ($is_mac ? (
-        EXE_FILES => ['bin/pdlcairo_viewer'],
-    ) : ()),
+    # macOS ネイティブビューア pdlcairo_viewer は退役（ドライバ一本化）。
+    # 表示は giza_server バックエンド (Driver::GS, 'gs') に集約したため、
+    # インストールしない。ソースは src/osx/ に残置（可逆）。
+    # 復活させたい場合は次行のコメントを外す:
+    #   ($is_mac ? ( EXE_FILES => ['bin/pdlcairo_viewer'] ) : ()),
     dist  => { COMPRESS => 'gzip -9f', SUFFIX => 'gz' },
     clean => { FILES    => 'PDL-Graphics-Cairo-* bin/pdlcairo_viewer' },
 );
 
 # ------------------------------------------------------------------
-# postamble: macOSのみ pdlcairo_viewer をビルド
+# postamble: pdlcairo_viewer のビルドは退役（ドライバ一本化）。
+# macOS ネイティブ表示は giza_server ('gs') に集約したため、ここでは
+# 何もビルドしない。src/osx/pdlcairo_viewer.m は可逆性のため残置。
+# 復活させたい場合は下のヒアドキュメント本体を return すればよい。
 # ------------------------------------------------------------------
 {
     package MY;
     sub postamble {
-    return '' unless $is_mac;
+    return '';   # retired: no pdlcairo_viewer build
 
-    return <<'MAKE_FRAG';
-# pdlcairo_viewer: macOSネイティブCocoaビューア
-# src/osx/pdlcairo_viewer.m → bin/pdlcairo_viewer
-
-bin/pdlcairo_viewer: src/osx/pdlcairo_viewer.m
-	@echo "=== Building pdlcairo_viewer (macOS Cocoa) ==="
-	@mkdir -p bin
-	clang -framework Cocoa \
-	    -o bin/pdlcairo_viewer \
-	    src/osx/pdlcairo_viewer.m
-	@echo "=== pdlcairo_viewer built ==="
-
-all :: bin/pdlcairo_viewer
-
-pure_all :: bin/pdlcairo_viewer
-
-clean ::
-	rm -f bin/pdlcairo_viewer
-
-MAKE_FRAG
+    # --- 旧ビルドフラグメント（復活用に保存） ---------------------------
+    # return '' unless $is_mac;
+    # return <<'MAKE_FRAG';
+    # bin/pdlcairo_viewer: src/osx/pdlcairo_viewer.m
+    # 	@mkdir -p bin
+    # 	clang -framework Cocoa -o bin/pdlcairo_viewer src/osx/pdlcairo_viewer.m
+    # all :: bin/pdlcairo_viewer
+    # pure_all :: bin/pdlcairo_viewer
+    # clean ::
+    # 	rm -f bin/pdlcairo_viewer
+    # MAKE_FRAG
     }
 }
