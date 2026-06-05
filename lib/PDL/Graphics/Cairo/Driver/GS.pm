@@ -55,7 +55,11 @@ use constant {
     GSP_SAVE_FMT_SVG => 1,
 };
 
-sub _sock_path { "/tmp/giza_server_$<.sock" }
+sub _sock_path {
+    my $env = $ENV{GIZA_SERVER_SOCK};
+    return $env if defined $env && length $env;   # isolated/parallel servers, tests
+    return "/tmp/giza_server_$<.sock";            # default: one server per user
+}
 
 # ------------------------------------------------------------------
 # サーバーバイナリ探索
