@@ -24,6 +24,7 @@ t/03_tick.t
 t/04_gnuplot_driver.t
 t/05_pgplot.t
 t/06_aliases.t
+t/07_png_fallback.t
 examples/example.pl
 examples/example_png.pl
 examples/example_png.ja.pl

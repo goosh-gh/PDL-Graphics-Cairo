@@ -1,6 +1,14 @@
 Revision history for PDL-Graphics-Cairo
 
 {{NEXT}}
+    - PDL::IO::PNG is now optional, not a hard dependency. Driver::Cairo
+      previously did an unconditional `use PDL::IO::PNG qw(wpng)`, so the
+      module failed to load on systems without it. It now loads PDL::IO::PNG
+      lazily (our $HAVE_WPNG) and, when absent, writes PNG via Cairo's own
+      write_to_png (~9.2ms vs ~3.4ms with wpng). This matches imread()'s
+      existing PNG -> Image -> rpic fallback. Makefile.PL keeps it out of
+      PREREQ_PM, lists it under runtime `recommends`, and prints a one-time
+      advisory when it is not installed. New test t/07_png_fallback.t.
     - Driver unification: macOS native display is now the giza_server
       backend ('gs'). _default_backend() returns 'gs' on darwin (falling
       back to 'gnuplot' only when giza_server is neither running nor

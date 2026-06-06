@@ -19,7 +19,11 @@ use POSIX qw(floor ceil);
 # use List::Util qw(min max);
 use List::Util ();
 use PDL;
-use PDL::IO::PNG qw(wpng);
+# PDL::IO::PNG (wpng) is optional: it makes PNG writing faster (~3.4ms vs
+# ~9.2ms), but is not required. When absent we fall back to Cairo's own
+# write_to_png. This mirrors imread()'s PNG -> Image -> rpic fallback, so the
+# module loads and builds with or without PDL::IO::PNG installed.
+our $HAVE_WPNG = eval { require PDL::IO::PNG; PDL::IO::PNG->import('wpng'); 1 };
 
 # -------------------------------------------------------------
 #
@@ -419,6 +423,14 @@ sub _argb32_surface_to_png_file {
     my ($surface, $filename) = @_;
 
     $surface->flush;
+
+    unless ($HAVE_WPNG) {
+        # PDL::IO::PNG absent: use Cairo's own PNG writer (~9.2ms). The
+        # surface is already ARGB32, so Cairo writes it directly.
+        $surface->write_to_png($filename);
+        return;
+    }
+
     my $raw = $surface->get_data;   # スカラー: W*H*4 bytes
     my $W   = $surface->get_width;
     my $H   = $surface->get_height;
