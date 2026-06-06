@@ -17,6 +17,20 @@ Revision history for PDL-Graphics-Cairo
     - examples/regress_gs.pl: regression harness for the unified path
       (matplotlib-style, PGPLOT-style, show_interactive, wait_all no-op,
       gnuplot fallback).
+    - API tidy-up (additive, non-breaking): added matplotlib Axes-method
+      aliases set_xlim / set_ylim (set_ylim inherits the lo>hi negative-up
+      reversal), set_xticks / set_yticks, and plot (alias of line). The
+      existing short forms xlim / ylim / xticks / yticks remain the canonical
+      implementation and are unchanged; no deprecation. set_xlim/set_ylim were
+      previously missing. Removed a duplicate no-op set_tight_layout definition
+      and dead commented-out ylim code in Axes.pm. New test t/06_aliases.t.
+    - Added PDL::Graphics::Cairo->new(%opts) as a constructor-style alias for
+      figure(); figure() remains the primary entry point.
+    - README / README.ja / docs: corrected unification drift — giza_server
+      ('gs') is documented as the macOS default for show(); the legacy
+      osx/pdlcairo_viewer path is shown as deprecated (not the default, not
+      built by make); wait_all() noted as a gs no-op; imread() fallback order
+      corrected to PDL::IO::PNG -> PDL::IO::Image -> PDL::IO::Pic(rpic).
 
 0.01  (first appear in Github, 2026-05-18)
     - Initial release

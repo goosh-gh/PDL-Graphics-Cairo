@@ -15,6 +15,15 @@ sub figure {
     return PDL::Graphics::Cairo::Figure->new(%args);
 }
 
+# new(%opts) — figure() の別名（OO 風の入口）。
+# 主入口はあくまで figure()（matplotlib の plt.figure() 相当）だが、
+# PDL::Graphics::Cairo->new(...) と書けるよう、先頭のクラス名を捨てて
+# figure() に委譲する。返り値は PDL::Graphics::Cairo::Figure。
+sub new {
+    my $class = shift;
+    return figure(@_);
+}
+
 sub subplots {
     my ($nrows, $ncols, %args) = @_;
     $nrows //= 1;
@@ -130,6 +139,15 @@ Creates and returns a Figure object.
   my $fig = figure(width => 800, height => 600);
 
 Options: C<width>, C<height>, C<dpi>.
+
+=head2 PDL::Graphics::Cairo->new(%opts)
+
+Alias for C<figure()>, provided as an object-style entry point. Takes the
+same options and returns a Figure object. C<figure()> remains the primary,
+idiomatic entry point (mirroring matplotlib's C<plt.figure()>); C<new()> is
+offered only as a convenience for callers who prefer a constructor form.
+
+  my $fig = PDL::Graphics::Cairo->new(width => 800, height => 600);
 
 =head2 subplots($nrows, $ncols, %opts)
 

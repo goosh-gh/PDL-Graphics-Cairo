@@ -14,10 +14,10 @@ PDL::Graphics::Cairo がレンダリングを担います。
 - PGPLOT互換レイヤー（`pgbegin`、`pgenv`、`pgline`、`pgbox` など）
 - gnuplot風のコマンド対応（matplotlib APIにマッピング）
 - PNG・PDF・SVGファイル出力 — X11・libgiza 不要
-- **macOSネイティブCocoaウィンドウ表示**（`$fig->show(backend => 'osx')`）— gnuplot・AquaTerm 不要
-- **複数プロットをタブで1ウィンドウ表示**（macOSネイティブバックエンド）
-- gnuplot経由のインタラクティブ表示（aqua/wxt/x11）— クロスプラットフォーム
-- macOS以外では `backend => 'osx'` が自動的にgnuplotへフォールバック
+- **giza_server による macOS ネイティブ表示** — macOS の既定。素の `$fig->show()` でネイティブウィンドウが開きます。Unix ドメインソケット経由のオンメモリ PNG 転送、プログラム終了後も残る永続タブウィンドウ、giza/PGPLOT の C プログラムと共有。Linux でも動作（GTK3/Xlib サーバ）
+- **複数プロットをタブで1ウィンドウ表示**（giza_server）
+- gnuplot経由のインタラクティブ表示（aqua/wxt/x11）— クロスプラットフォーム。giza_server が無い場合の自動フォールバック
+- レガシー macOS Cocoa ビューア（`backend => 'osx'`、`pdlcairo_viewer`）は **deprecated** なオプトインのフォールバックとしてのみ残置 — 既定ではなく、`make` でもビルドされません
 - CairoによるAxes枠・目盛り・数値ラベルの描画
 - Dual Y軸サポート（`twinx`）— 両軸独立した目盛り・ラベル
 - 黒背景サポート（`PGPLOT_BACKGROUND=black`）
@@ -41,14 +41,13 @@ my $x   = sequence(200) / 10;
 my $fig = figure(width => 800, height => 500);
 my $ax  = $fig->axes();
 $ax->line($x, sin($x), color => 'blue', label => 'sin(x)');
-$ax->xlabel('x');
-$ax->ylabel('y');
+$ax->set_xlabel('x');
+$ax->set_ylabel('y');
 $ax->set_grid(1);
 $ax->legend();
 $fig->tight_layout();
 $fig->save('plot.png');          # PNGファイル
-$fig->show(backend => 'osx');   # macOSネイティブウィンドウ
-$fig->show();                   # gnuplot経由（Linux/macOS）
+$fig->show();                   # macOS: giza_server ウィンドウ（既定）／ Linux: gnuplot
 $fig->show(terminal => 'aqua'); # AquaTerm経由（macOS）
 ```
 
@@ -87,16 +86,25 @@ my $y = 10 + $x * (-20 / 999);
 my $fig = figure(width => 800, height => 500);
 my $ax  = $fig->axes();
 $ax->line($x, $y, color => 'green', lw => 1.5);  # plot ... with lines lc "green"
-$ax->xlim(-100, 899);                              # set xrange [-100:899]
-$ax->ylim(10, -10);                                # set yrange [10:-10]（negative up）
+$ax->set_xlim(-100, 899);                          # set xrange [-100:899]
+$ax->set_ylim(10, -10);                            # set yrange [10:-10]（negative up）
 $ax->text(870, 9.5, "Ch1", color => 'black');      # set label "Ch1" at ...
 $fig->tight_layout();
-$fig->show(backend => 'osx');   # macOSネイティブ
-$fig->show();                   # gnuplot経由（Linux/macOS）
+$fig->show();                   # macOS: giza_server（既定）／ Linux: gnuplot
 $fig->save('output.png');       # PNGファイル
 ```
 
 各APIの詳細は[ドキュメント](#ドキュメント)セクションを参照してください。
+
+### メソッド命名
+
+setter は matplotlib の Axes-method 名を正準とします:
+`set_xlim` / `set_ylim` / `set_xlabel` / `set_ylabel` / `set_title` /
+`set_xticks` / `set_yticks`、および `plot`（`line` のエイリアス）。
+短縮形の `xlim` / `ylim` / `xticks` / `yticks` は恒久エイリアスとして残し
+（deprecated にはしません）、既存スクリプトと matplotlib の手癖の両方が
+そのまま動きます。入口は `figure()` 関数で、`PDL::Graphics::Cairo->new()` は
+同等のコンストラクタ風エイリアスです。
 
 ---
 
@@ -109,8 +117,9 @@ make test
 sudo make install
 ```
 
-macOSでは `make` 時に Xcode Command Line Tools を使って
-`pdlcairo_viewer`（ネイティブCocoaビューア）が自動ビルドされます。
+macOS のネイティブウィンドウ表示には `giza_server`（別バイナリ。下記
+「インタラクティブ表示」参照）を使います。`make` が Cocoa ビューアを
+ビルドすることはありません。
 
 ### 必要モジュール
 
@@ -122,7 +131,6 @@ macOSでは `make` 時に Xcode Command Line Tools を使って
 **macOS（MacPorts）:**
 ```bash
 sudo port install p5-cairo p5-pango p5-moo
-xcode-select --install   # pdlcairo_viewer のビルドに必要
 ```
 
 **Ubuntu/Debian:**
@@ -133,21 +141,30 @@ sudo apt install gnuplot-x11   # インタラクティブ表示用
 
 ### インタラクティブ表示
 
-#### macOSネイティブ（macOSで推奨）
+#### giza_server — macOS の既定（Linux でも動作）
+
+macOS では素の `$fig->show()` が `giza_server` 経由でネイティブウィンドウを
+開きます。通常 backend を指定する必要はありません：
 
 ```perl
-$fig->show(backend => 'osx');
+$fig->show();                                     # macOS 既定: giza_server
+$fig->show(backend => 'gs');                      # 明示。サーバを自動起動
+$fig->show(backend => 'gs', start => 'connect');  # 起動中のサーバへ接続のみ
 ```
 
-`q`・`ESC`・`Return` でウィンドウを閉じます。複数figureをタブで表示：
+図をオンメモリ PNG にレンダリングし、Unix ドメインソケット経由で
+`giza_server` プロセスへ送ります（テンポラリファイル不要）。ウィンドウは
+サーバが所有するためプログラム終了後も残り、タブ表示され、`/gs` デバイスを
+使う giza/PGPLOT の C/Fortran プログラムと共有されます。バイナリは
+`$GIZA_SERVER`、兄弟 `../giza-server` チェックアウト、または `$PATH` から
+検出されます。https://github.com/goosh-gh/giza-server を参照。
 
-```perl
-$fig1->show(backend => 'osx', nowait => 1, title => 'Demo 1');
-$fig2->show(backend => 'osx', nowait => 1, title => 'Demo 2');
-PDL::Graphics::Cairo::Driver::OSX->wait_all();
-```
+`giza_server` が無い場合、`show()` は gnuplot へフォールバックします
+（レガシー Cocoa ビューアへは行きません）。`wait_all()` は `gs` 経路では
+no-op です（ウィンドウは既に永続）。従来の `nowait` + `wait_all` スクリプトは
+そのまま動きます。
 
-#### gnuplot経由（クロスプラットフォーム）
+#### gnuplot経由（クロスプラットフォームのフォールバック）
 
 ```bash
 # macOS
@@ -156,6 +173,12 @@ sudo port install gnuplot +aquaterm   # または +x11
 # Ubuntu/Debian
 sudo apt install gnuplot-x11
 ```
+
+#### レガシー Cocoa ビューア（deprecated）
+
+`backend => 'osx'`（スタンドアロンの `pdlcairo_viewer` Cocoa アプリ）は退役し、
+deprecated なオプトインのフォールバックとしてのみ残しています。既定ではなく、
+`make` でもビルドされません。新規コードは既定の `giza_server` 経路を使ってください。
 
 ---
 
@@ -170,12 +193,13 @@ PDL-Graphics-Cairo/
 │   ├── PGPLOT.pm         # PGPLOT互換レイヤー: pgbegin/pgline/pgend/...
 │   ├── Driver/
 │   │   ├── Cairo.pm      # Cairo/Pangoレンダリングバックエンド（PNG/PDF/SVG出力）
-│   │   ├── OSX.pm        # macOSネイティブCocoaバックエンド（pdlcairo_viewer経由）
+│   │   ├── GS.pm         # giza_serverバックエンド（macOSネイティブ表示の既定。Linuxも）
+│   │   ├── OSX.pm        # レガシーCocoaバックエンド（deprecated; pdlcairo_viewer経由）
 │   │   └── Gnuplot.pm    # gnuplot表示バックエンド（aqua/wxt/x11）
 │   ├── Transform/        # 座標変換（linear, log）
 │   ├── ColorMap.pm       # カラーマップ（viridis, plasma, ...）
 │   └── Tick.pm           # 目盛り計算
-├── src/osx/
+├── src/osx/              # レガシーCocoaビューア（deprecated; make でビルドしない）
 │   ├── pdlcairo_viewer.m # スタンドアロンCocoaビューアアプリ（macOSのみ）
 │   └── build.sh          # pdlcairo_viewer のビルドスクリプト
 ├── docs/
@@ -203,28 +227,27 @@ PDL-Graphics-Cairo/
 
 ```perl
 $fig->tight_layout();
-$fig->show(backend => 'osx');
+$fig->show();
 ```
 
 ---
 
 ## macOSネイティブバックエンド
 
+macOS のネイティブ表示は `giza_server`（既定）が担当します。図をオンメモリ
+PNG にレンダリングし、Unix ドメインソケット経由でサーバへストリームします。
+サーバがタブ表示の永続ネイティブウィンドウを所有します：
+
 ```
 Cairo image surface（ソフトウェアレンダリング）
-    ↓ PNGテンポラリファイル
-pdlcairo_viewer（スタンドアロンCocoaアプリ、make でビルド）
-    ↓ NSImage → NSWindow/NSView（タブ表示）
-macOSネイティブウィンドウ
+    ↓ Unix ドメインソケット経由のオンメモリ PNG（テンポラリファイル不要）
+giza_server（別プロセス — macOS は Cocoa、Linux は GTK3/Xlib）
+    ↓ NSImage / GTK → ネイティブウィンドウ（タブ・永続）
+ネイティブウィンドウ
 ```
 
-| 機能 | 状態 |
-|------|------|
-| NSWindowネイティブ表示 | ✅ |
-| 複数figureのタブ表示 | ✅ |
-| letterboxリサイズ（白背景） | ✅ |
-| q/ESC/Returnで閉じる | ✅ |
-| Retina/HiDPI | 未対応 |
+レガシーのスタンドアロン `pdlcairo_viewer` Cocoa アプリ（`backend => 'osx'`）は
+deprecated で、`make` でもビルドされません。
 
 ---
 
@@ -234,8 +257,9 @@ macOSネイティブウィンドウ
 |------|------|
 | `PGPLOT_BACKGROUND` | `black` で黒背景（デフォルト: white） |
 | `PGPLOT_DEV` | `pgbegin`のデフォルトデバイス。指定可能な値: `/OSX` `/XW` `/XWIN` `/X11` `/XSERVE` `/AQT` `/AQUA` `/WXT` `/QT` `/PNG` `/PDF` `/SVG` `/PS` `/CPS` |
-| `PDLCAIRO_BACKEND` | `osx` で `show()` のデフォルトをOSXバックエンドに |
-| `PDLCAIRO_VIEWER` | `pdlcairo_viewer` バイナリのフルパスを指定（自動検出を上書き） |
+| `PDLCAIRO_BACKEND` | `show()` のバックエンドを上書き: `gs`（macOS の既定）、`gnuplot`、`osx`（deprecated） |
+| `GIZA_SERVER` | `giza_server` バイナリのフルパスを指定（自動検出を上書き） |
+| `PDLCAIRO_VIEWER` | レガシー `pdlcairo_viewer` バイナリのフルパス（deprecated な `osx` バックエンド用） |
 
 ---
 

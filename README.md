@@ -15,11 +15,10 @@ PDL::Graphics::Cairo handles the rendering.
 - PGPLOT compatibility layer (`pgbegin`, `pgenv`, `pgline`, `pgbox`, ...)
 - gnuplot-style API via matplotlib layer (familiar command mapping)
 - PNG, PDF, SVG file output — no X11 or libgiza required
-- **macOS native Cocoa window display** (`$fig->show(backend => 'osx')`) — no gnuplot or AquaTerm required
-- **Persistent windows via giza_server** (`$fig->show(backend => 'gs')`) — in-memory PNG over a socket, windows outlive the program, shared with giza/PGPLOT C programs, works on Linux too
-- **Multiple plots in tabbed window** on macOS native backend
-- Interactive display via gnuplot (aqua/wxt/x11) — cross-platform
-- On non-macOS systems, `backend => 'osx'` automatically falls back to gnuplot
+- **macOS native display via giza_server** — the default on macOS; plain `$fig->show()` opens a native window. In-memory PNG over a Unix-domain socket, persistent tabbed windows that outlive the program, shared with giza/PGPLOT C programs. Works on Linux too (GTK3/Xlib server).
+- **Multiple plots in a tabbed window** (giza_server)
+- Interactive display via gnuplot (aqua/wxt/x11) — cross-platform; automatic fallback when `giza_server` is unavailable
+- Legacy macOS Cocoa viewer (`backend => 'osx'`, `pdlcairo_viewer`) retained as a **deprecated** opt-in fallback only — no longer the default, no longer built by `make`
 - Axes frame, ticks, and tick labels rendered by Cairo
 - Dual Y axis support (`twinx`) with independent tick labels on both axes
 - Black background support (`PGPLOT_BACKGROUND=black`)
@@ -41,14 +40,13 @@ my $x   = sequence(200) / 10;
 my $fig = figure(width => 800, height => 500);
 my $ax  = $fig->axes();
 $ax->line($x, sin($x), color => 'blue', label => 'sin(x)');
-$ax->xlabel('x');
-$ax->ylabel('y');
+$ax->set_xlabel('x');
+$ax->set_ylabel('y');
 $ax->set_grid(1);
 $ax->legend();
 $fig->tight_layout();
 $fig->save('plot.png');         # PNG file
-$fig->show(backend => 'osx');  # macOS native window
-$fig->show();                  # gnuplot (Linux/macOS)
+$fig->show();                   # macOS: giza_server window (default); Linux: gnuplot
 ```
 
 ### If you write PGPLOT-style
@@ -86,16 +84,25 @@ my $y = 10 + $x * (-20 / 999);
 my $fig = figure(width => 800, height => 500);
 my $ax  = $fig->axes();
 $ax->line($x, $y, color => 'green', lw => 1.5);  # plot ... with lines lc "green"
-$ax->xlim(-100, 899);                              # set xrange [-100:899]
-$ax->ylim(10, -10);                                # set yrange [10:-10] (negative up)
+$ax->set_xlim(-100, 899);                          # set xrange [-100:899]
+$ax->set_ylim(10, -10);                            # set yrange [10:-10] (negative up)
 $ax->text(870, 9.5, "Ch1", color => 'black');      # set label "Ch1" at ...
 $fig->tight_layout();
-$fig->show(backend => 'osx');   # macOS native
-$fig->show();                   # gnuplot (Linux/macOS)
+$fig->show();                   # macOS: giza_server (default); Linux: gnuplot
 $fig->save('output.png');       # PNG file
 ```
 
 For details of each API, see the [Documentation](#documentation) section below.
+
+### Method naming
+
+Setter methods use matplotlib's Axes-method names as the canonical form:
+`set_xlim` / `set_ylim` / `set_xlabel` / `set_ylabel` / `set_title` /
+`set_xticks` / `set_yticks`, and `plot` (an alias of `line`). The shorter
+pyplot-style forms `xlim` / `ylim` / `xticks` / `yticks` are kept as permanent
+aliases (not deprecated), so existing scripts and matplotlib muscle-memory both
+work. The entry point is the `figure()` function; `PDL::Graphics::Cairo->new()`
+is an equivalent constructor-style alias.
 
 ---
 
@@ -108,8 +115,8 @@ make test
 sudo make install
 ```
 
-On macOS, `make` automatically builds `pdlcairo_viewer` (native Cocoa viewer)
-using Xcode Command Line Tools.
+On macOS, native window display uses `giza_server` (a separate binary — see
+the Interactive Display section below). No Cocoa viewer is built by `make`.
 
 ### Prerequisites
 
@@ -121,7 +128,6 @@ using Xcode Command Line Tools.
 **macOS (MacPorts):**
 ```bash
 sudo port install p5-cairo p5-pango p5-moo
-xcode-select --install   # for pdlcairo_viewer
 ```
 
 **Ubuntu/Debian:**
@@ -130,67 +136,54 @@ sudo apt install libcairo-perl libpango-perl libmoo-perl
 sudo apt install gnuplot-x11   # for interactive display
 ```
 
-### Optional: PDL::IO::Image (recommended for image display)
+### Optional: faster image loading for imread()
 
-`imread()` uses `PDL::IO::Image` if available, falling back to `rpic`.
-`PDL::IO::Image` is **28x faster** than `rpic` (0.2 ms vs 5.7 ms per image).
+`imread()` picks the fastest available backend, in this order:
+`PDL::IO::PNG` (libpng, ~2.5 ms) → `PDL::IO::Image` (FreeImage, ~5.3 ms) →
+`PDL::IO::Pic` (rpic, ~18.9 ms; bundled with PDL). All paths normalize the
+result to `[H,W,3]` float32 with row 0 = top.
 
 ```bash
-# macOS (requires Alien::FreeImage — see docs/image_io.md for build notes)
+cpan PDL::IO::PNG        # fastest; PNG only
+# or, for multi-format support:
 cpan Alien::FreeImage
 cpan PDL::IO::Image
 ```
 
-Without `PDL::IO::Image`, `imread()` falls back to `PDL::IO::Pic` (rpic) automatically.
+If neither `PDL::IO::PNG` nor `PDL::IO::Image` is installed, `imread()` falls
+back to `PDL::IO::Pic` (rpic) automatically.
 
 ### Interactive Display
 
-#### macOS native (recommended on macOS)
+#### giza_server — default on macOS, also on Linux
+
+On macOS, plain `$fig->show()` opens a native window via `giza_server`.
+You normally don't pass a backend at all:
 
 ```perl
-$fig->show(backend => 'osx');
-```
-
-Press `q`, `ESC`, or `Return` to close. Multiple figures open as tabs:
-
-```perl
-$fig1->show(backend => 'osx', nowait => 1, title => 'Demo 1');
-$fig2->show(backend => 'osx', nowait => 1, title => 'Demo 2');
-PDL::Graphics::Cairo::Driver::OSX->wait_all();
-```
-
-#### giza_server (persistent windows, cross-platform)
-
-```perl
-$fig->show(backend => 'gs');                 # auto-launches giza_server
-$fig->show(backend => 'gs', start => 'connect');  # connect only
+$fig->show();                                     # macOS default: giza_server
+$fig->show(backend => 'gs');                      # explicit; auto-launches the server
+$fig->show(backend => 'gs', start => 'connect');  # connect to a running server only
 ```
 
 Renders the figure to an in-memory PNG and sends it to a `giza_server`
 process over a Unix-domain socket — no temporary files. The server owns
-the window, so it persists after the program exits, and the same server
-is shared by giza/PGPLOT C/Fortran programs using the `/gs` device.
-Requires the `giza_server` binary (found via `$GIZA_SERVER` or `$PATH`).
+the window, so it persists after the program exits, the window is tabbed,
+and the same server is shared by giza/PGPLOT C/Fortran programs using the
+`/gs` device. The binary is found via `$GIZA_SERVER`, a sibling
+`../giza-server` checkout, or `$PATH`.
 See https://github.com/goosh-gh/giza-server.
 
-#### Which backend? (`osx` vs `gs`)
+When `giza_server` is unavailable, `show()` falls back to gnuplot — it does
+**not** fall back to the legacy Cocoa viewer. `wait_all()` is a no-op on the
+`gs` path (windows already persist), so legacy `nowait` + `wait_all` scripts
+still run unchanged.
 
-Both display native windows on macOS; they differ in what they depend on
-and how long the window lives:
+#### gnuplot (cross-platform fallback)
 
-| | `backend => 'osx'` | `backend => 'gs'` |
-|---|---|---|
-| Helper needed | `pdlcairo_viewer` (bundled) | `giza_server` (separate) |
-| Temp files | yes | no (in-memory PNG) |
-| Window lifetime | tied to the session | persists after exit |
-| Linux | falls back to gnuplot | yes (GTK3 server) |
-| Shared with C/Fortran giza | no | yes (`/gs` device) |
-
-Use `osx` for a self-contained P:G:Cairo setup with no extra server.
-Use `gs` if you also run giza/PGPLOT programs and want persistent windows
-shared across processes (and on Linux).
-
-#### gnuplot (cross-platform)
+```perl
+$fig->show(terminal => 'x11');   # or 'aqua', 'wxt', 'qt'
+```
 
 ```bash
 # macOS
@@ -199,6 +192,12 @@ sudo port install gnuplot +aquaterm   # or +x11
 # Ubuntu/Debian
 sudo apt install gnuplot-x11
 ```
+
+#### Legacy Cocoa viewer (deprecated)
+
+`backend => 'osx'` (the standalone `pdlcairo_viewer` Cocoa app) is retired and
+kept only as a deprecated, opt-in fallback. It is no longer the default and is
+no longer built by `make`. New code should use the default (`giza_server`) path.
 
 ---
 
@@ -216,13 +215,14 @@ my $ax  = $fig->axes();
 $ax->imshow($img);
 $ax->axis('off');                # hide frame, ticks, labels
 $fig->tight_layout();
-$fig->show(backend => 'osx');
+$fig->show();
 ```
 
-| Backend | Speed | Install |
-|---------|-------|---------|
-| `PDL::IO::Image` (FreeImage) | 0.2 ms/image ✅ | `cpan Alien::FreeImage PDL::IO::Image` |
-| `PDL::IO::Pic` (rpic, fallback) | 5.7 ms/image | included with PDL |
+| Backend | Speed (1000×1000) | Install |
+|---------|-------------------|---------|
+| `PDL::IO::PNG` (libpng) | ~2.5 ms ✅ | `cpan PDL::IO::PNG` |
+| `PDL::IO::Image` (FreeImage) | ~5.3 ms | `cpan Alien::FreeImage PDL::IO::Image` |
+| `PDL::IO::Pic` (rpic, fallback) | ~18.9 ms | included with PDL |
 
 ---
 
@@ -237,12 +237,13 @@ PDL-Graphics-Cairo/
 │   ├── PGPLOT.pm         # PGPLOT compatibility layer: pgbegin/pgline/pgend/...
 │   ├── Driver/
 │   │   ├── Cairo.pm      # Cairo/Pango rendering backend (PNG/PDF/SVG output)
-│   │   ├── OSX.pm        # macOS native Cocoa backend (via pdlcairo_viewer)
+│   │   ├── GS.pm         # giza_server backend (default macOS native display; Linux too)
+│   │   ├── OSX.pm        # legacy Cocoa backend (deprecated; via pdlcairo_viewer)
 │   │   └── Gnuplot.pm    # gnuplot display backend (aqua/wxt/x11)
 │   ├── Transform/        # Coordinate transforms (linear, log)
 │   ├── ColorMap.pm       # Colormaps (viridis, plasma, ...)
 │   └── Tick.pm           # Tick mark calculation
-├── src/osx/
+├── src/osx/              # legacy Cocoa viewer (deprecated; not built by make)
 │   ├── pdlcairo_viewer.m # Standalone Cocoa viewer app (macOS only)
 │   └── build.sh          # Build script for pdlcairo_viewer
 ├── docs/
@@ -270,28 +271,27 @@ Call `$fig->tight_layout()` before `$fig->show()` or `$fig->save()`:
 
 ```perl
 $fig->tight_layout();
-$fig->show(backend => 'osx');
+$fig->show();
 ```
 
 ---
 
 ## macOS Native Backend
 
+macOS native display is provided by `giza_server` (the default). The figure is
+rendered to an in-memory PNG and streamed over a Unix-domain socket to the
+server, which owns a tabbed, persistent native window:
+
 ```
 Cairo image surface (software rendering)
-    ↓ PNG temporary file
-pdlcairo_viewer (standalone Cocoa app, built by make)
-    ↓ NSImage → NSWindow/NSView (tabbed)
-macOS native window
+    ↓ in-memory PNG over Unix-domain socket (no temp files)
+giza_server (separate process — Cocoa on macOS, GTK3/Xlib on Linux)
+    ↓ NSImage / GTK → native window (tabbed, persistent)
+native window
 ```
 
-| Feature | Status |
-|---------|--------|
-| Native NSWindow display | ✅ |
-| Multiple figures as tabs | ✅ |
-| Letterbox resize (white background) | ✅ |
-| Close with q/ESC/Return | ✅ |
-| Retina/HiDPI | not yet |
+The legacy standalone `pdlcairo_viewer` Cocoa app (`backend => 'osx'`) is
+deprecated and no longer built by `make`.
 
 ---
 
@@ -301,8 +301,9 @@ macOS native window
 |----------|-------------|
 | `PGPLOT_BACKGROUND` | `black` = dark background (default: white) |
 | `PGPLOT_DEV` | Default device for `pgbegin`. Accepted values: `/OSX` `/XW` `/XWIN` `/X11` `/XSERVE` `/AQT` `/AQUA` `/WXT` `/QT` `/PNG` `/PDF` `/SVG` `/PS` `/CPS` |
-| `PDLCAIRO_BACKEND` | `osx` = use macOS native backend for `show()` |
-| `PDLCAIRO_VIEWER` | Full path to `pdlcairo_viewer` binary (override auto-detection) |
+| `PDLCAIRO_BACKEND` | Override the `show()` backend: `gs` (default on macOS), `gnuplot`, or `osx` (deprecated) |
+| `GIZA_SERVER` | Full path to the `giza_server` binary (override auto-detection) |
+| `PDLCAIRO_VIEWER` | Full path to the legacy `pdlcairo_viewer` binary (deprecated `osx` backend) |
 
 ---
 

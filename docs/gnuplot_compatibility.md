@@ -41,8 +41,7 @@ $ax->xlim(-100, 899);                              # set xrange [-100:899]
 $ax->ylim(10, -10);                                # set yrange [10:-10] (negative up)
 $ax->text(870, 9.5, "Ch1", color => 'black');      # set label "Ch1" at ...
 $fig->tight_layout();
-$fig->show(backend => 'osx');   # macOS native window
-$fig->show();                   # gnuplot display (Linux/macOS)
+$fig->show();                   # macOS: giza_server (default); Linux: gnuplot
 $fig->save('output.png');       # set terminal png / set output
 ```
 

@@ -339,6 +339,7 @@ sub line {
 }
 
 *polyline = \&line;
+*plot     = \&line;   # matplotlib Axes-method 名のエイリアス（line が正準）
 
 # ---- scatter -----------------------------------------------------
 sub scatter {
@@ -1032,13 +1033,10 @@ sub ylim {
     return $self;
 }
 
-
-
-#sub ylim {
-#    my ($self, $lo, $hi) = @_;
-#    $self->ymin($lo); $self->ymax($hi);
-#    return $self;
-#}
+# matplotlib Axes-method 名のエイリアス（短縮形 xlim/ylim が正準実装）。
+# set_ylim も lo>hi の Y軸反転則をそのまま継承する。
+sub set_xlim { my $s = shift; $s->xlim(@_) }
+sub set_ylim { my $s = shift; $s->ylim(@_) }
 
 sub set_limits {
     my ($self, $xmin, $xmax, $ymin, $ymax) = @_;
@@ -1058,6 +1056,10 @@ sub yticks {
     $self->_yticklabels($labels) if defined $labels;
     return $self;
 }
+
+# matplotlib Axes-method 名のエイリアス（xticks/yticks が正準実装）
+sub set_xticks { my $s = shift; $s->xticks(@_) }
+sub set_yticks { my $s = shift; $s->yticks(@_) }
 
 sub legend {
     my ($self, %opt) = @_;
@@ -2570,11 +2572,6 @@ sub set_right_ylabel {
     $self->{_right_ylabel} = $label;
     return $self;
 }
-
-# ==================================================================
-# Figure::save
-# ==================================================================
-sub set_tight_layout { return $_[0] }
 
 # ==================================================================
 # savefig — Figure Axes  Figure 
