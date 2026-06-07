@@ -179,6 +179,31 @@ When `giza_server` is unavailable, `show()` falls back to gnuplot — it does
 `gs` path (windows already persist), so legacy `nowait` + `wait_all` scripts
 still run unchanged.
 
+**Interactive mode (`show_interactive`).** Instead of a one-shot `show()`,
+the `gs` driver can hold the socket open and re-render on demand from a
+callback. The callback receives the current state and window size and returns
+a fresh figure:
+
+```perl
+my $gs = PDL::Graphics::Cairo::Driver::GS->new(width=>640, height=>480);
+$gs->show_interactive(
+    render => sub {
+        my ($state, $w, $h) = @_;          # $w/$h = current canvas size (px)
+        my $fig = figure(width=>$w, height=>$h);
+        ...                                # build the figure from $state
+        return $fig;
+    },
+);
+```
+
+The server drives this callback over the GSP reverse channel: viewer sliders
+update `$state`, and **resizing the window replots at the new size** — pass
+`$w`/`$h` to `figure(...)` so the plot is re-laid-out (crisp) rather than
+bitmap-scaled. Resize replot is currently macOS (Cocoa) only. A render
+callback that ignores `$w`/`$h` keeps a fixed figure size and will not fill
+the window on resize. See `examples/example_gs.pl` and
+`examples/example_gs_slider.pl`.
+
 #### gnuplot (cross-platform fallback)
 
 ```perl
