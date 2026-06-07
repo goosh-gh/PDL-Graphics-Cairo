@@ -32,8 +32,8 @@ print "ウィンドウを閉じると終了します。\n\n";
 
 $drv->show_interactive(
     render => sub {
-        my ($state) = @_;
-        my $fig = figure(width=>500, height=>350);
+        my ($state, $w, $h) = @_;        # $w/$h = 現在の窓キャンバスサイズ(px)
+        my $fig = figure(width=>$w, height=>$h);   # ← リサイズに追従して再レイアウト
         my $ax  = $fig->axes();
         $ax->line($x, $y1, color=>'blue', lw=>1.5, label=>'x^2');
         $ax->line($x, $y2, color=>'red',  lw=>1.5, label=>'0.5x^2+x');

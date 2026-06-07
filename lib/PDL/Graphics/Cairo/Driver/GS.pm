@@ -31,8 +31,8 @@ use IO::Socket::UNIX;
 use POSIX ();
 use PDL::Graphics::Cairo::Driver::Cairo;
 
-has width  => (is => 'ro', required => 1);
-has height => (is => 'ro', required => 1);
+has width  => (is => 'rw', required => 1);   # rw: RESIZE 逆チャネルで更新する
+has height => (is => 'rw', required => 1);
 has title  => (is => 'ro', default  => sub { 'PDL::Graphics::Cairo' });
 has start  => (is => 'ro', default  => sub { 'auto' });  # auto|connect|launch
 
@@ -51,6 +51,7 @@ use constant {
     GSP_MSG_SLIDER => 0x13,
     GSP_MSG_SAVEREQ  => 0x14,   # server→client: render & return vector
     GSP_MSG_SAVEDATA => 0x15,   # client→server: vector bytes for pending save
+    GSP_MSG_RESIZE   => 0x16,   # server→client: window resized, re-render at new px
     GSP_SAVE_FMT_PDF => 0,
     GSP_SAVE_FMT_SVG => 1,
 };
@@ -212,12 +213,14 @@ sub _sysread_exact {
     return $buf;
 }
 
-# ACK を待つ。待つ間に届いた SLIDER は捨てずに $state に最新値で吸収する。
-# （ドラッグ中、PNG送信〜ACK受信の隙間に SLIDER が割り込むため。）
-# 戻り値: 待つ間に SLIDER を1つ以上見たら 1（=要再描画）、無ければ 0。
+# ACK を待つ。待つ間に届いた SLIDER / RESIZE は捨てずに反映する。
+# （ドラッグ中、PNG送信〜ACK受信の隙間に SLIDER/RESIZE が割り込むため。）
+#   SLIDER → $state を最新値で上書き
+#   RESIZE → $self->width/height を新サイズに更新（次フレームから反映）
+# 戻り値: 待つ間に再描画要因（SLIDER か RESIZE）を1つ以上見たら 1、無ければ 0。
 sub _recv_ack_sys {
     my ($self, $sock, $what, $state) = @_;
-    my $saw_slider = 0;
+    my $need_redraw = 0;
     while (1) {
         my $hdr = $self->_sysread_exact($sock, 16);
         die "Driver::GS: connection closed waiting for $what ACK\n"
@@ -229,23 +232,29 @@ sub _recv_ack_sys {
             if $len && !defined $payload;
 
         if ($type == GSP_MSG_ACK) {
-            return $saw_slider;                 # 本命。割り込みSLIDERの有無を返す
+            return $need_redraw;                # 本命。割り込みの有無を返す
         }
         elsif ($type == GSP_MSG_SLIDER && $state) {
             my ($id, $val) = unpack('C f<', $payload);
             $state->{$id} = $val;               # 最新値で上書き（中間は捨てる）
-            $saw_slider = 1;
+            $need_redraw = 1;
+        }
+        elsif ($type == GSP_MSG_RESIZE) {
+            my ($w, $h) = unpack('L L', $payload);
+            $self->width($w)  if $w;            # 次の _figure_to_png から新サイズ
+            $self->height($h) if $h;
+            $need_redraw = 1;
         }
         elsif ($type == GSP_MSG_SAVEREQ) {
             # ドラッグ中に File>Save が押されると PNG送信〜ACK の隙間に
             # SAVEREQ が割り込む。ここで畳まず処理（再描画→SAVEDATA返送）
-            # して ACK を待ち続ける。$saw_slider は変えない（画面再描画不要）。
+            # して ACK を待ち続ける。$need_redraw は変えない（画面再描画不要）。
             my ($f) = unpack('C', $payload);
             $self->_handle_savereq($f);
         }
         elsif ($type == GSP_MSG_ERR) {
             warn "Driver::GS: server error: $payload\n";
-            return $saw_slider;
+            return $need_redraw;
         }
         # その他の型は読み捨てて ACK を待ち続ける
     }
@@ -290,7 +299,7 @@ sub _handle_savereq {
     my ($self, $fmt) = @_;
     my $ix = $self->{_ix} or return;     # interactive 外なら無視
     my $ext = ($fmt == GSP_SAVE_FMT_SVG) ? 'svg' : 'pdf';
-    my $figure = $ix->{render}->($ix->{state});
+    my $figure = $ix->{render}->($ix->{state}, $self->width, $self->height);
     my $bytes  = $self->_figure_to_vector($figure, $ext);
     # payload = [uint8 fmt][vector bytes]
     _send_msg($ix->{sock}, GSP_MSG_SAVEDATA,
@@ -298,9 +307,13 @@ sub _handle_savereq {
 }
 
 # ------------------------------------------------------------------
-# show_interactive — 描画後もソケットを保持し、サーバー発スライダで
-# render コールバックを呼んで再描画し続ける（窓クローズ/EOF で return）。
-#   render => sub { my ($state) = @_; ...; return $figure }   必須
+# show_interactive — 描画後もソケットを保持し、サーバー発スライダ／
+# リサイズで render コールバックを呼んで再描画し続ける（窓クローズ/EOF
+# で return）。
+#   render => sub { my ($state, $w, $h) = @_; ...; return $figure }   必須
+#       $w/$h は現在の窓キャンバスサイズ(px)。リサイズ追従させるなら
+#       figure(width => $w, height => $h) のようにこれを使う。使わなければ
+#       従来どおり固定サイズ（リサイズ時は伸縮表示）。
 #   init   => { 0 => k0, 1 => A0 }   初期スライダ値（任意）
 # ------------------------------------------------------------------
 sub show_interactive {
@@ -330,7 +343,9 @@ sub show_interactive {
 
     # 初期フレーム
 
-    _send_msg($sock, GSP_MSG_PNG, $self->_figure_to_png($render->($state)), $seq++);
+    _send_msg($sock, GSP_MSG_PNG,
+              $self->_figure_to_png($render->($state, $self->width, $self->height)),
+              $seq++);
     $self->_recv_ack_sys($sock, 'PNG', $state);
 
     $seq = $self->run($sock, $render, $state, $seq);
@@ -355,13 +370,22 @@ sub run {
         my ($magic, $ver, $type, $flags, $len, $sq) = unpack('L C C S L L', $hdr);
         die "Driver::GS: bad magic in run loop\n" unless $magic == GSP_MAGIC;
 
-        if ($type == GSP_MSG_SLIDER) {
+        # SLIDER（値変化）と RESIZE（窓サイズ変化）は同じ再描画経路に乗せる。
+        # どちらも「状態を更新 → 溜まった分を畳む → 再描画 → 送信 → ACK」。
+        if ($type == GSP_MSG_SLIDER || $type == GSP_MSG_RESIZE) {
             my $p = $self->_sysread_exact($sock, $len);
             last unless defined $p;
-            my ($id, $val) = unpack('C f<', $p);
-            $state->{$id} = $val;
+            if ($type == GSP_MSG_SLIDER) {
+                my ($id, $val) = unpack('C f<', $p);
+                $state->{$id} = $val;
+            } else {                              # RESIZE
+                my ($w, $h) = unpack('L L', $p);
+                $self->width($w)  if $w;
+                $self->height($h) if $h;
+            }
 
-            # --- coalescing: 溜まった SLIDER を全部吸って id ごと最新値で上書き ---
+            # --- coalescing: 溜まった SLIDER/RESIZE を全部吸って最新値で上書き ---
+            # （ドラッグ中は両方が連続して届く。中間フレームは捨てて最後だけ描く。）
             my $eof = 0;
             while ($sel->can_read(0)) {
                 my $h2 = $self->_sysread_exact($sock, 16);
@@ -372,6 +396,10 @@ sub run {
                 if ($t2 == GSP_MSG_SLIDER) {
                     my ($i, $v) = unpack('C f<', $p2);
                     $state->{$i} = $v;
+                } elsif ($t2 == GSP_MSG_RESIZE) {
+                    my ($w, $h) = unpack('L L', $p2);
+                    $self->width($w)  if $w;
+                    $self->height($h) if $h;
                 } elsif ($t2 == GSP_MSG_SAVEREQ) {
                     my ($f) = unpack('C', $p2);
                     $self->_handle_savereq($f);    # ドラッグ中の保存要求も取りこぼさない
@@ -384,12 +412,14 @@ sub run {
             }
             last if $eof;
 
-            # 再計算 → 再描画 → 送信 → ACK（ACK待ち中に割り込んだ SLIDER も吸収）
+            # 再計算 → 再描画 → 送信 → ACK（ACK待ち中に割り込んだ SLIDER/RESIZE も吸収）
             while (1) {
                 _send_msg($sock, GSP_MSG_PNG,
-                          $self->_figure_to_png($render->($state)), $seq++);
+                          $self->_figure_to_png(
+                              $render->($state, $self->width, $self->height)),
+                          $seq++);
                 my $more = $self->_recv_ack_sys($sock, 'PNG', $state);
-                last unless $more;     # ACK待ち中にSLIDERが来ていたら最新値で再描画
+                last unless $more;     # ACK待ち中に SLIDER/RESIZE が来ていたら再描画
             }
 
         }
