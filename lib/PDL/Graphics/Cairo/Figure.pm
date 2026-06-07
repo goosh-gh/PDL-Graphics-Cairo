@@ -326,4 +326,22 @@ sub tight_layout {
 }
 
 
+# --- inline display for App-PDL-Notebook -----------------------------------
+sub to_svg { $_[0]->_inline_bytes('svg') }
+sub to_png { $_[0]->_inline_bytes('png') }
+
+sub _inline_bytes {
+    my ($self, $ext) = @_;
+    require File::Temp;
+    my ($fh, $fn) = File::Temp::tempfile(SUFFIX => ".$ext", UNLINK => 1);
+    close $fh;
+    $self->save($fn);
+    open my $r, '<:raw', $fn or die "read $fn: $!";
+    local $/;
+    my $bytes = <$r>;
+    close $r;
+    return $bytes;
+}
+
+
 1;
