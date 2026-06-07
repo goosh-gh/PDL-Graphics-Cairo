@@ -343,5 +343,25 @@ sub _inline_bytes {
     return $bytes;
 }
 
+# raster-heavy plot types bloat as SVG; prefer PNG when the figure has one
+my %RASTER = map { $_ => 1 } qw(imshow contourf pcolor pcolormesh);
+
+sub _prefers_raster {
+    my ($self) = @_;
+    for my $ax (@{ $self->axes_list }) {
+        for my $item (@{ $ax->_queue }) {
+            return 1 if $RASTER{ $item->{type} // '' };
+        }
+    }
+    return 0;
+}
+
+sub to_inline {
+    my ($self) = @_;
+    return $self->_prefers_raster
+        ? ('image/png',     $self->to_png)
+        : ('image/svg+xml', $self->to_svg);
+}
+
 
 1;
