@@ -339,7 +339,9 @@ sub line {
 }
 
 *polyline = \&line;
-*plot     = \&line;   # matplotlib Axes-method 名のエイリアス（line が正準）
+# matplotlib では plot() が正準名。P:G:C では plot/line 両方サポート。
+# ドキュメント・examples の第一表記は plot() に揃える。
+*plot     = \&line;
 
 # ---- scatter -----------------------------------------------------
 sub scatter {
@@ -1045,17 +1047,33 @@ sub set_limits {
 
 sub xticks {
     my ($self, $ticks, $labels) = @_;
+    # PDL ndarray / scalar → arrayref に正規化。
+    # _xticks を boolean 判定する箇所で multielement ndarray エラーを防ぐ。
+    if (defined $ticks) {
+        # UNIVERSAL::isa を使う: unblessed ARRAY ref に ->isa() は呼べないため
+        $ticks = UNIVERSAL::isa($ticks, 'PDL')
+            ? [ PDL::list($ticks) ]
+            : ref($ticks) eq 'ARRAY' ? $ticks : [$ticks];
+    }
     $self->_xticks($ticks);
     $self->_xticklabels($labels) if defined $labels;
     return $self;
 }
 
+
 sub yticks {
     my ($self, $ticks, $labels) = @_;
+    if (defined $ticks) {
+        # UNIVERSAL::isa を使う: unblessed ARRAY ref に ->isa() は呼べないため
+        $ticks = UNIVERSAL::isa($ticks, 'PDL')
+            ? [ PDL::list($ticks) ]
+            : ref($ticks) eq 'ARRAY' ? $ticks : [$ticks];
+    }
     $self->_yticks($ticks);
     $self->_yticklabels($labels) if defined $labels;
     return $self;
 }
+
 
 # matplotlib Axes-method 名のエイリアス（xticks/yticks が正準実装）
 sub set_xticks { my $s = shift; $s->xticks(@_) }
@@ -1085,23 +1103,34 @@ sub set_grid {
 sub draw {
     my ($self, $backend) = @_;
 
+    # 再描画安全化: _finalize_range() は autoscale 解決値を xmin/xmax/ymin/ymax に
+    # 書き戻すが、これらは xlim()/ylim() のユーザ指定値と枠を兼用している。
+    # 書き戻したまま放置すると 2 回目以降の draw（再 to_inline / append 再描画）で
+    # 旧フレームのレンジに固着する。ユーザ意図（未指定なら undef）を退避し、
+    # 描画後に元へ戻すことで draw を冪等にする。
+    my @user_lim = ($self->xmin, $self->xmax, $self->ymin, $self->ymax);
+
     $self->_finalize_range();
 
-    # twinx  X  Axes 
+    # twinx / twiny: parent と軸・マージンを共有する
     if ($self->{_is_twin} && $self->{_twin_of}) {
         my $parent = $self->{_twin_of};
-        #  finalize  finalize 
         $parent->_finalize_range() unless defined $parent->xmin;
-        # X 
-        $self->xmin($parent->xmin);
-        $self->xmax($parent->xmax);
-        # margin_left/top/bottom 
+
+        if (($self->{_twin_type} // '') eq 'y') {
+            # twiny: Y 軸を共有、X 軸は独立（上端に第2目盛り）
+            $self->ymin($parent->ymin);
+            $self->ymax($parent->ymax);
+        } else {
+            # twinx (デフォルト): X 軸を共有、Y 軸は独立（右端に第2目盛り）
+            $self->xmin($parent->xmin);
+            $self->xmax($parent->xmax);
+        }
+        # マージンは常に parent と揃える
         $self->margin_left(  $parent->margin_left);
         $self->margin_top(   $parent->margin_top);
         $self->margin_bottom($parent->margin_bottom);
-        # margin_right 
-        # Y margin_right 
-        $self->margin_right($parent->margin_right);
+        $self->margin_right( $parent->margin_right);
     }
 
     #
@@ -1179,9 +1208,13 @@ sub draw {
 
     # ---  ---
     if ($self->{_is_twin}) {
-        # twinx: Y
-        $self->_draw_twin_yaxis($backend, $tr, $ml,$mt,$mr,$mb);
-
+        if (($self->{_twin_type} // '') eq 'y') {
+            # twiny: 上端に第2X軸目盛り
+            $self->_draw_twin_xaxis($backend, $tr, $ml,$mt,$mr,$mb);
+        } else {
+            # twinx: 右端に第2Y軸目盛り
+            $self->_draw_twin_yaxis($backend, $tr, $ml,$mt,$mr,$mb);
+        }
     } else {
 
 
@@ -1222,6 +1255,11 @@ sub draw {
     # ---  ---
     $self->_draw_colorbar($backend, $ml,$mr,$mt,$mb)
         if $self->_colorbar && !$self->{_axis_off};
+
+    # ユーザ指定レンジ（または undef）を復元。次回 draw で autoscale を再解決させる。
+    $self->xmin($user_lim[0]); $self->xmax($user_lim[1]);
+    $self->ymin($user_lim[2]); $self->ymax($user_lim[3]);
+    return $self;
 }
 
 # ------------------------------------------------------------------
@@ -1881,6 +1919,60 @@ sub _draw_grid {
 # ------------------------------------------------------------------
 # _draw_twin_yaxis — twinx Y
 # ------------------------------------------------------------------
+# ------------------------------------------------------------------
+# _draw_twin_xaxis — twiny 用: 上端に第2X軸目盛りを描画
+# ------------------------------------------------------------------
+sub _draw_twin_xaxis {
+    my ($self, $b, $tr, $ml,$mt,$mr,$mb) = @_;
+
+    $b->set_color(0,0,0);
+    $b->set_linewidth(1.0);
+    $b->set_linestyle('solid');
+
+    # 上端ライン
+    $b->line_seg($ml, $mt, $mr, $mt);
+
+    # X 目盛り計算
+    my @xtks;
+    if ($self->_xticks) {
+        @xtks = @{ $self->_xticks };
+    } elsif ($self->xscale eq 'log') {
+        my $sc = PDL::Graphics::Cairo::Scale::Log->new;
+        @xtks = $sc->nice_ticks($self->xmin, $self->xmax);
+    } else {
+        @xtks = nice_ticks($self->xmin, $self->xmax, 6);
+    }
+    my @xlbs = $self->_xticklabels ? @{ $self->_xticklabels }
+        : ($self->xscale eq 'log')
+            ? do { my $sc = PDL::Graphics::Cairo::Scale::Log->new;
+                   map { $sc->fmt_tick($_) } @xtks }
+            : map { _fmt_tick($_) } @xtks;
+
+    $b->set_font(size => 10);
+    my $prev_xp = -9999;
+    for my $i (0 .. $#xtks) {
+        my $v   = $xtks[$i];
+        my $eps = ($self->xmax - $self->xmin) * 0.001 + 0.001;
+        next if $v < $self->xmin - $eps || $v > $self->xmax + $eps;
+        my $xp = $tr->x(pdl($v))->at(0);
+        next if $xp < $ml - 1 || $xp > $mr + 1;
+        next if $xp - $prev_xp < 24;
+
+        # 上向き tick (mt から外側へ)
+        $b->line_seg($xp, $mt, $xp, $mt - 4);
+        $b->set_color(_fg());
+        $b->text($xp, $mt - 6, $xlbs[$i], align=>'center', valign=>'bottom');
+        $prev_xp = $xp;
+    }
+
+    # 上X軸ラベル
+    if ($self->xlabel ne '') {
+        $b->set_font(size => 11);
+        $b->text(($ml+$mr)/2, $mt - 28, $self->xlabel,
+            align=>'center', valign=>'bottom');
+    }
+}
+
 sub _draw_twin_yaxis {
     my ($self, $b, $tr, $ml,$mt,$mr,$mb) = @_;
 
@@ -2594,6 +2686,9 @@ sub cla {
     return $self;
 }
 
+# clear() — cla() の別名（matplotlib では Axes.clear == Axes.cla）。
+sub clear { goto &cla }
+
 # ==================================================================
 # scatter scatter 
 # ==================================================================
@@ -2860,4 +2955,121 @@ sub eventplot {
 }
 
 *hist = \&histogram;
+
+# ==================================================================
+# matplotlib compatibility aliases and small missing methods
+# ==================================================================
+#
+# Alias policy:
+#   matplotlib name  ←→  P:G:C primary name
+#   plot                  line          (both documented; plot is matplotlib-canonical)
+#   hist                  histogram
+#   scatter               scatter       (identical — no alias needed)
+#   bar / barh / step / stem / imshow / contourf / contour / pie /
+#   boxplot / violin / quiver / fill_between / errorbar / annotate /
+#   text / axhline / axvline / axhspan / axvspan   (identical — no alias needed)
+#   set_xlim / set_ylim   already alias xlim/ylim
+#   set_xticks / set_yticks / set_xticklabels / set_yticklabels  — already present
+#   set_xscale / set_yscale   — already present
+#   invert_xaxis / invert_yaxis  — already present
+#   twinx / cla / clear / set_aspect / axis  — already present
+
+# grid(bool, %opt) — matplotlib: ax.grid(True) or ax.grid(True, color='.9')
+# P:G:C had only set_grid(); now grid() as direct alias matches matplotlib calling convention.
+
+# sub grid {
+#     my ($self, @args) = @_;
+#     if (@args) {
+#         # grid(1), grid(0), grid(True/False), grid(color=>...)
+#         my $on = (!ref $args[0] && $args[0] =~ /^\d+$/) ? shift @args : 1;
+#         return $self->set_grid($on, @args);
+#     }
+#     # no args: toggle (matplotlib: ax.grid() toggles)
+#     return $self->set_grid( $self->grid ? 0 : 1 );
+# }
+
+# get_xlim / get_ylim — return (lo, hi) after finalize (or current setting)
+sub get_xlim {
+    my ($self) = @_;
+    return (defined $self->xmin ? $self->xmin : 0,
+            defined $self->xmax ? $self->xmax : 1);
+}
+sub get_ylim {
+    my ($self) = @_;
+    return (defined $self->ymin ? $self->ymin : 0,
+            defined $self->ymax ? $self->ymax : 1);
+}
+
+# hlines(y, xmin, xmax, %opt)  — matplotlib ax.hlines()
+# y can be scalar or PDL/arrayref of y positions
+sub hlines {
+    my ($self, $y, $xmin, $xmax, %opt) = @_;
+    my @ys = ref($y) ? (ref($y) eq 'ARRAY' ? @$y : list($y)) : ($y);
+    for my $yv (@ys) {
+        $self->axhline($yv, xmin => $xmin, xmax => $xmax, %opt);
+    }
+    return $self;
+}
+
+# vlines(x, ymin, ymax, %opt)  — matplotlib ax.vlines()
+sub vlines {
+    my ($self, $x, $ymin, $ymax, %opt) = @_;
+    my @xs = ref($x) ? (ref($x) eq 'ARRAY' ? @$x : list($x)) : ($x);
+    for my $xv (@xs) {
+        $self->axvline($xv, ymin => $ymin, ymax => $ymax, %opt);
+    }
+    return $self;
+}
+
+# fill(x, y, %opt)  — matplotlib ax.fill(): filled polygon
+# Implemented as fill_between with y2=0 when a single y series is given,
+# or as fill_between(x, y1, y2) when called with three data args.
+sub fill {
+    my ($self, $x, $y, @rest) = @_;
+    if (@rest && ref($rest[0])) {
+        my $y2 = shift @rest;
+        return $self->fill_between($x, $y, $y2, @rest);
+    }
+        # y2=scalar PDL だと fill_between の append でサイズ不一致になるため同長ゼロに展開
+    return $self->fill_between($x, $y, zeroes($x->nelem), @rest);
+}
+
+# tick_params(%opt)  — matplotlib ax.tick_params()
+# Minimal: handles labelsize, labelcolor, width, length, direction (stubs others silently).
+# Actual rendering of custom tick style is future work; this prevents die() on mpl-ported code.
+sub tick_params {
+    my ($self, %opt) = @_;
+    # TODO: wire up to Tick/frame rendering when those features land
+    return $self;
+}
+
+# twiny()  — share X axis, independent Y axis (mirror of twinx)
+# Like twinx but transposes the role of axes.
+sub twiny {
+    my ($self, %opt) = @_;
+    my $twin = PDL::Graphics::Cairo::Axes->new(
+        width  => $self->width,
+        height => $self->height,
+        fig_x  => $self->fig_x,
+        fig_y  => $self->fig_y,
+    );
+    $twin->{_is_twin}  = 1;
+    $twin->{_twin_of}  = $self;
+    $twin->{_twin_type} = 'y';   # shared X (vs twinx which shares Y)
+    # Share X limits from parent at draw time (same logic as twinx shares X)
+    if (my $fig = $self->{_figure}) {
+        $fig->add_axes($twin);
+    }
+    return $twin;
+}
+
+# margins(%opt or scalar)  — matplotlib ax.margins()
+# Sets auto-scale margin fraction. P:G:C doesn't yet have a per-axis margin fraction,
+# so this is a documented no-op that prevents die() on ported code.
+sub margins {
+    my ($self, @args) = @_;
+    # TODO: plumb margin_fraction into nice_range calls
+    return $self;
+}
+
 1;

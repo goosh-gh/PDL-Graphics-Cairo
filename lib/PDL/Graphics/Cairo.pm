@@ -5,9 +5,30 @@ use warnings;
 
 our $VERSION = '0.01';
 
-use Exporter 'import';
+use Exporter;
 our @EXPORT_OK = qw(figure subplots imread);
+our %EXPORT_TAGS = (
+    gnuplot => [],
+);
 
+# カスタム import: ':gnuplot' タグが指定されたら互換レイヤーを注入する。
+# Exporter::export($class, $caller, @symbols) で通常のエクスポートも処理する。
+sub import {
+    my $class  = shift;
+    my @args   = @_;
+    my $gnuplot = grep { $_ eq ':gnuplot' } @args;
+    my @rest    = grep { $_ ne ':gnuplot' } @args;
+
+    my $caller = caller(0);
+    Exporter::export($class, $caller, @rest);
+
+    if ($gnuplot) {
+        require PDL::Graphics::Cairo::Compat::Gnuplot;
+        PDL::Graphics::Cairo::Compat::Gnuplot::install();
+    }
+}
+
+use Scalar::Util qw(looks_like_number);
 use PDL::Graphics::Cairo::Figure;
 
 sub figure {
@@ -15,59 +36,47 @@ sub figure {
     return PDL::Graphics::Cairo::Figure->new(%args);
 }
 
-# new(%opts) — figure() の別名（OO 風の入口）。
-# 主入口はあくまで figure()（matplotlib の plt.figure() 相当）だが、
-# PDL::Graphics::Cairo->new(...) と書けるよう、先頭のクラス名を捨てて
-# figure() に委譲する。返り値は PDL::Graphics::Cairo::Figure。
 sub new {
     my $class = shift;
     return figure(@_);
 }
 
 sub subplots {
-    my ($nrows, $ncols, %args) = @_;
+    my @a = @_;
+    my ($nrows, $ncols);
+    if (@a && looks_like_number($a[0])) {
+        $nrows = shift @a;
+        $ncols = shift @a if @a && looks_like_number($a[0]);
+    }
+
+    my %args = @a;
+    my $kw_nrows = delete $args{nrows};
+    my $kw_ncols = delete $args{ncols};
+    $nrows //= $kw_nrows;
+    $ncols //= $kw_ncols;
     $nrows //= 1;
     $ncols //= 1;
 
-    # figsize => [w, h] supported
-    if (exists $args{figsize}) {
-        my ($w, $h) = @{ $args{figsize} };
-        $args{width}  = $w;
-        $args{height} = $h;
-        delete $args{figsize};
-    }
-
-    my $fig = PDL::Graphics::Cairo::Figure->new(%args);
+    my $fig  = PDL::Graphics::Cairo::Figure->new(%args);
     my @axes = $fig->subplots($nrows, $ncols);
     return ($fig, @axes);
 }
-
-# ==================================================================
-# imread — 画像ファイルをimshow()用のPDL ndarrayとして読み込む
-# PDL::IO::Image（高速）が使えればそちらを優先、なければrpicにフォールバック
-# ==================================================================
 
 sub imread {
     my ($path) = @_;
     die "imread: file not found: $path\n" unless -f $path;
 
     if (eval { require PDL::IO::PNG; 1 }) {
-        # PDL::IO::PNG: [H,W,3] float32, row=0が上端 (2.5ms, libpngのみ)
         return PDL::IO::PNG::rpng($path);
     } elsif (eval { require PDL::IO::Image; 1 }) {
-        # PDL::IO::Image: [W,H,3], row=0が上端 (5.3ms, FreeImage)
-        # reorder(1,0,2) → [H,W,3]
         my $img = PDL::IO::Image->new_from_file($path);
         return $img->pixels_to_pdl->reorder(1,0,2)->float / 255.0;
     } else {
-        # rpic fallback: [3,W,H], row=0が下端 (18.9ms)
-        # reorder後H軸反転でrow=0を上端に揃える
         require PDL::IO::Pic;
         my $hwc = PDL::IO::Pic::rpic($path)->reorder(2,1,0)->float / 255.0;
         return $hwc->slice("-1:0,:,:");
     }
 }
-
 
 1;
 
@@ -91,9 +100,9 @@ PDL::Graphics::Cairo - matplotlib-inspired 2D plotting for PDL using Cairo
   # single plot
   my $fig = figure(width => 800, height => 500);
   my $ax  = $fig->axes();
-  $ax->line($x, sin($x), color => 'blue', label => 'sin(x)');
+  $ax->plot($x, sin($x), color => 'blue', label => 'sin(x)');
   $ax->legend();
-  $ax->set_grid(1);
+  $ax->grid(1);
   $fig->save('plot.png');
 
   # subplot grid
@@ -102,13 +111,21 @@ PDL::Graphics::Cairo - matplotlib-inspired 2D plotting for PDL using Cairo
   $ax2->hist(grandom(500), bins => 25);
   $fig->save('multi.png');
 
+  # gnuplot compat layer
+  use PDL::Graphics::Cairo qw(figure subplots :gnuplot);
+  my ($fig, $ax) = subplots();
+  $ax->lines($x, sin($x), "with lines lw 2 lc 'steelblue' title 'sin'");
+  $ax->gset("xrange [0:10]");
+  $ax->gset("title 'My Plot'");
+  $fig->save('plot.png');
+
 =head1 DESCRIPTION
 
 PDL::Graphics::Cairo is a 2D plotting library for PDL, using Cairo and Pango
 as the rendering backend. It provides a matplotlib-like API with the following
 plot types:
 
-  line          Line plot (linestyle, alpha, colormap)
+  plot/line     Line plot (linestyle, alpha, colormap)
   scatter       Scatter plot (marker shapes, scalar colormap)
   bar / barh    Vertical / horizontal bar chart
   hist          Histogram (bins, density, overlay)
@@ -123,59 +140,33 @@ plot types:
   axvspan/hspan Shaded span regions
   annotate      Arrow annotation
 
-Axes features: autoscale, grid, legend, colorbar, twinx,
-log scale (semilog-x/y, log-log), subplot grid, Unicode text via Pango.
-
-Colormaps: viridis, plasma, jet, hot, cool, gray, RdBu.
-
-Output formats: PNG, PDF, SVG (via Cairo).
-
-=head1 FUNCTIONS
-
 =head2 figure(%opts)
 
-Creates and returns a Figure object.
-
   my $fig = figure(width => 800, height => 600);
-
-Options: C<width>, C<height>, C<dpi>.
-
-=head2 PDL::Graphics::Cairo->new(%opts)
-
-Alias for C<figure()>, provided as an object-style entry point. Takes the
-same options and returns a Figure object. C<figure()> remains the primary,
-idiomatic entry point (mirroring matplotlib's C<plt.figure()>); C<new()> is
-offered only as a convenience for callers who prefer a constructor form.
-
-  my $fig = PDL::Graphics::Cairo->new(width => 800, height => 600);
+  my $fig = figure(figsize => [800, 600]);
 
 =head2 subplots($nrows, $ncols, %opts)
 
-Creates a Figure with a grid of Axes and returns C<($fig, @axes)>.
+  my ($fig, $ax)        = subplots();
+  my ($fig, $ax1, $ax2) = subplots(1, 2, figsize => [1200, 400]);
+  my ($fig, @rows)      = subplots(2, 3);   # $rows[$r][$c]
 
-B<1×N or N×1 (single row/column):>
+=head2 imread($path)
 
-  my ($fig, $ax1, $ax2, $ax3) = subplots(1, 3, width => 1200, height => 400);
+Load an image as a [H,W,3] float32 PDL ndarray (row 0 = top).
 
-B<2D grid — axes returned row-by-row as array refs:>
+=head1 GNUPLOT COMPATIBILITY
 
-  my ($fig, @rows) = subplots(2, 2);
-  # Access by row/column index:
-  my $ax = $rows[$r][$c];       # row $r, column $c (0-based)
-  # Or unpack explicitly:
-  my ($ax00, $ax01) = @{ $rows[0] };   # top row
-  my ($ax10, $ax11) = @{ $rows[1] };   # bottom row
+  use PDL::Graphics::Cairo qw(figure subplots :gnuplot);
 
-B<Flatten all axes:>
+Activates gnuplot-style aliases and style-string parsing:
 
-  my ($fig, @rows) = subplots(3, 4);
-  my @all_axes = map { @$_ } @rows;    # 12 axes in row-major order
-
-B<Common options:>
-
-  width    => 1200   # figure width in pixels (default: 800)
-  height   => 600    # figure height in pixels (default: 600)
-  figsize  => [1200, 600]  # alternative to width/height
+  $ax->lines($x, $y, "with lines lw 2 lc 'red' title 'data'");
+  $ax->points($x, $y, "with points pt 7 ps 0.5");
+  $ax->linespoints($x, $y);
+  $ax->gset("xrange [0:10]");
+  $ax->gset("title 'My title'");
+  $ax->gset("logscale y");
+  $ax->gset("grid");
 
 =cut
-

@@ -19,6 +19,20 @@ has width  => (is => 'ro', default => sub { 800 });
 has height => (is => 'ro', default => sub { 600 });
 has dpi    => (is => 'ro', default => sub { 96 });
 
+# figsize => [w, h] を width/height に展開（matplotlib 互換のショートハンド）。
+# figure()/->new()/subplots() すべての入口がここを通る。
+# 明示的な width/height が併用された場合はそちらを優先（//=）。
+around BUILDARGS => sub {
+    my ($orig, $class, @args) = @_;
+    my %a = (@args == 1 && ref $args[0] eq 'HASH') ? %{ $args[0] } : @args;
+    if (my $fs = delete $a{figsize}) {
+        my ($w, $h) = @$fs;
+        $a{width}  //= $w if defined $w;
+        $a{height} //= $h if defined $h;
+    }
+    return $class->$orig(%a);
+};
+
 # Figure 
 has suptitle => (is => 'rw', default => sub { '' });
 
@@ -363,5 +377,38 @@ sub to_inline {
         : ('image/svg+xml', $self->to_svg);
 }
 
+
+# ==============================================================
+# Reactive API — App::PDL::Notebook::Reactive との橋渡し
+#
+# ノートブック内で:
+#   my $freq = $fig->param('freq', 1.0, min=>0.1, max=>5.0, label=>'Frequency');
+#   $fig->on_change(sub { my ($name,$val)=@_; $ax->clear; ... });
+#
+# スタンドアロン（ノートブック外）では何もしない（die しない）。
+# ==============================================================
+sub param {
+    my ($self, $name, $default, %opt) = @_;
+    return $default unless _reactive_ok();
+    return App::PDL::Notebook::Reactive::param($name, $default, %opt);
+}
+
+sub button {
+    my ($self, $name, %opt) = @_;
+    return unless _reactive_ok();
+    App::PDL::Notebook::Reactive::button($name, %opt);
+    return;
+}
+
+sub on_change {
+    my ($self, $cb, $group) = @_;
+    return unless _reactive_ok();
+    App::PDL::Notebook::Reactive::on_change($cb, $group);
+    return;
+}
+
+sub _reactive_ok {
+    return eval { require App::PDL::Notebook::Reactive; 1 } ? 1 : 0;
+}
 
 1;
