@@ -37,15 +37,14 @@ use PDL;
 use PDL::Graphics::Cairo qw(figure);
 
 my $x   = sequence(200) / 10;
-my $fig = figure(width => 800, height => 500);
+my $fig = figure(figsize => [8, 5]);   # inches; 768x480 px at 96 dpi
 my $ax  = $fig->axes();
 $ax->line($x, sin($x), color => 'blue', label => 'sin(x)');
 $ax->set_xlabel('x');
 $ax->set_ylabel('y');
 $ax->set_grid(1);
 $ax->legend();
-$fig->tight_layout();
-$fig->save('plot.png');         # PNG file
+$fig->save('plot.png');         # PNG file  (tight_layout called automatically)
 $fig->show();                   # macOS: giza_server window (default); Linux: gnuplot
 ```
 
@@ -81,15 +80,14 @@ use PDL::Graphics::Cairo qw(figure);
 my $x = pdl(-100 .. 899);
 my $y = 10 + $x * (-20 / 999);
 
-my $fig = figure(width => 800, height => 500);
+my $fig = figure(figsize => [8, 5]);
 my $ax  = $fig->axes();
 $ax->line($x, $y, color => 'green', lw => 1.5);  # plot ... with lines lc "green"
 $ax->set_xlim(-100, 899);                          # set xrange [-100:899]
 $ax->set_ylim(10, -10);                            # set yrange [10:-10] (negative up)
 $ax->text(870, 9.5, "Ch1", color => 'black');      # set label "Ch1" at ...
-$fig->tight_layout();
 $fig->show();                   # macOS: giza_server (default); Linux: gnuplot
-$fig->save('output.png');       # PNG file
+$fig->save('output.png');       # PNG file  (tight_layout called automatically)
 ```
 
 For details of each API, see the [Documentation](#documentation) section below.
@@ -103,6 +101,42 @@ pyplot-style forms `xlim` / `ylim` / `xticks` / `yticks` are kept as permanent
 aliases (not deprecated), so existing scripts and matplotlib muscle-memory both
 work. The entry point is the `figure()` function; `PDL::Graphics::Cairo->new()`
 is an equivalent constructor-style alias.
+
+---
+
+### figsize — figure size in inches
+
+`figsize => [width_in, height_in]` is the matplotlib-compatible shorthand.
+Converted to pixels at **96 dpi** inside `figure()` and `subplots()`:
+
+```perl
+figure(figsize => [8, 5])            # -> width=768, height=480
+subplots(1, 2, figsize => [10, 4])   # -> width=960, height=384
+```
+
+Explicit `width`/`height` in pixels still work and take precedence:
+
+```perl
+figure(width => 800, height => 500)  # pixels, unchanged
+```
+
+---
+
+### figsize — figure size in inches
+
+`figsize => [width_in, height_in]` is the matplotlib-compatible shorthand.
+Converted to pixels at **96 dpi** inside `figure()` and `subplots()`:
+
+```perl
+figure(figsize => [8, 5])            # -> width=768, height=480
+subplots(1, 2, figsize => [10, 4])   # -> width=960, height=384
+```
+
+Explicit `width`/`height` in pixels still work and take precedence:
+
+```perl
+figure(width => 800, height => 500)  # pixels, unchanged
+```
 
 ---
 
@@ -290,12 +324,16 @@ There are two files named `Cairo.pm` with distinct roles:
 
 ---
 
-## Important: always call tight_layout()
+## tight_layout
 
-Call `$fig->tight_layout()` before `$fig->show()` or `$fig->save()`:
+`tight_layout()` adjusts subplot margins automatically. It is called
+**automatically** by `show()`, `save()`, `to_svg()`, `to_png()`, and
+`to_inline()` if not already applied, so explicit calls are optional.
+Calling it manually is still useful when you need to apply it before
+inspecting layout geometry:
 
 ```perl
-$fig->tight_layout();
+$fig->tight_layout();   # optional -- called automatically by show()/save()
 $fig->show();
 ```
 
