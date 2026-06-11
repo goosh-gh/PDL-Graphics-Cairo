@@ -314,8 +314,8 @@ sub _finalize_range {
 # ---- line --------------------------------------------------------
 sub line {
     my ($self, $x, $y, %opt) = @_;
-    $x = pdl($x) unless ref($x) && $x->isa('PDL');
-    $y = pdl($y) unless ref($y) && $y->isa('PDL');
+    $x = pdl($x) unless ref($x) eq 'PDL' || (ref($x) && eval { $x->isa('PDL') });
+    $y = pdl($y) unless ref($y) eq 'PDL' || (ref($y) && eval { $y->isa('PDL') });
 
     my $color = exists $opt{color}
         ? $self->_parse_color($opt{color})

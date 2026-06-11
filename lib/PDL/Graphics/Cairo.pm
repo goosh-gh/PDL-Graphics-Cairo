@@ -33,6 +33,11 @@ use PDL::Graphics::Cairo::Figure;
 
 sub figure {
     my (%args) = @_;
+    if (my $fs = delete $args{figsize}) {
+        my ($w, $h) = @$fs;
+        $args{width}  //= int($w * 96) if defined $w;
+        $args{height} //= int($h * 96) if defined $h;
+    }
     return PDL::Graphics::Cairo::Figure->new(%args);
 }
 
@@ -57,6 +62,11 @@ sub subplots {
     $nrows //= 1;
     $ncols //= 1;
 
+    if (my $fs = delete $args{figsize}) {
+        my ($w, $h) = @$fs;
+        $args{width}  //= int($w * 96) if defined $w;
+        $args{height} //= int($h * 96) if defined $h;
+    }
     my $fig  = PDL::Graphics::Cairo::Figure->new(%args);
     my @axes = $fig->subplots($nrows, $ncols);
     return ($fig, @axes);

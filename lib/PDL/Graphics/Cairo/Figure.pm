@@ -15,23 +15,11 @@ use PDL::Graphics::Cairo::Driver::Gnuplot;
 # ------------------------------------------------------------------
 # DPI
 # ------------------------------------------------------------------
-has width  => (is => 'ro', default => sub { 800 });
-has height => (is => 'ro', default => sub { 600 });
+has width  => (is => 'rw', default => sub { 800 });
+has height => (is => 'rw', default => sub { 600 });
 has dpi    => (is => 'ro', default => sub { 96 });
 
-# figsize => [w, h] を width/height に展開（matplotlib 互換のショートハンド）。
-# figure()/->new()/subplots() すべての入口がここを通る。
-# 明示的な width/height が併用された場合はそちらを優先（//=）。
-around BUILDARGS => sub {
-    my ($orig, $class, @args) = @_;
-    my %a = (@args == 1 && ref $args[0] eq 'HASH') ? %{ $args[0] } : @args;
-    if (my $fs = delete $a{figsize}) {
-        my ($w, $h) = @$fs;
-        $a{width}  //= $w if defined $w;
-        $a{height} //= $h if defined $h;
-    }
-    return $class->$orig(%a);
-};
+# figsize 展開は Cairo.pm の _apply_figsize() が担う。
 
 # Figure 
 has suptitle => (is => 'rw', default => sub { '' });
@@ -149,6 +137,8 @@ sub _render_to {
             align=>'center', valign=>'middle');
     }
 
+    # tight_layout が未適用なら自動で適用する
+    $self->tight_layout() unless $self->{_tight_done};
     for my $ax (@{ $self->axes_list }) {
         $ax->draw($driver);
     }
@@ -336,6 +326,7 @@ sub tight_layout {
         $ax->{height} = $cell_h;
     }
 
+    $self->{_tight_done} = 1;
     return $self;
 }
 
