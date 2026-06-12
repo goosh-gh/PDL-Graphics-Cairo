@@ -9,7 +9,7 @@ use strict;
 use warnings;
 use POSIX qw(floor ceil log10 fmod);
 use Exporter 'import';
-our @EXPORT_OK = qw(nice_ticks nice_range);
+our @EXPORT_OK = qw(nice_ticks nice_range minor_ticks);
 
 sub nice_ticks {
     my ($min, $max, $n) = @_;
@@ -56,6 +56,31 @@ sub nice_range {
     my $span = $max - $min || 1;
     return ($min - $span * $margin_ratio,
             $max + $span * $margin_ratio);
+}
+
+sub minor_ticks {
+    my ($min, $max, $n_minor, @major) = @_;
+    $n_minor //= 5;
+    return () if @major < 2;
+    my $step = $major[1] - $major[0];
+    return () if $step <= 0;
+    my $minor_step = $step / $n_minor;
+    my $first      = $major[0] - $step;
+    my @minors;
+    my $v   = $first;
+    my $eps = $minor_step * 1e-6;
+    while ($v <= $max + $eps) {
+        if ($v > $min - $eps && $v < $max + $eps) {
+            my $is_major = 0;
+            for my $m (@major) {
+                if (abs($v - $m) < $minor_step * 0.1) { $is_major = 1; last }
+            }
+            push @minors, $v unless $is_major;
+        }
+        $v += $minor_step;
+        last if @minors > 200;
+    }
+    return @minors;
 }
 
 1;

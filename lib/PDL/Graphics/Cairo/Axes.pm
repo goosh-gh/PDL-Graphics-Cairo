@@ -36,7 +36,7 @@ use POSIX qw(floor ceil);
 use PDL::Graphics::Cairo::Transform::Linear;
 use PDL::Graphics::Cairo::Transform::Log;
 use PDL::Graphics::Cairo::Scale::Log;
-use PDL::Graphics::Cairo::Tick qw(nice_ticks nice_range);
+use PDL::Graphics::Cairo::Tick qw(nice_ticks nice_range minor_ticks);
 use PDL::Graphics::Cairo::ColorMap;
 
 # PDL::Stats::Basic  optional
@@ -137,7 +137,9 @@ my @COLOR_CYCLE = (
 );
 
 has _color_idx  => (is => 'rw', default => sub { 0 });
-has _tick_params => (is => 'rw', default => sub { {} });
+has _tick_params    => (is => 'rw', default => sub { {} });
+has _minor_ticks_on => (is => 'rw', default => sub { 0 });
+has _minor_n        => (is => 'rw', default => sub { 5 });
 
 sub _next_color {
     my ($self) = @_;
@@ -2107,8 +2109,10 @@ sub _draw_frame {
                    map { $sc->fmt_tick($_) } @xtks }
             : map { _fmt_tick($_) } @xtks;
 
+    my ($xlo, $xhi) = ($self->xmin, $self->xmax);
     my $prev_xp = -9999;
     my $min_gap = 24;
+
     for my $i (0 .. $#xtks) {
         my $v    = $xtks[$i];
         my $xeps = ($self->xmax - $self->xmin) * 0.001 + 0.001;
@@ -2176,6 +2180,59 @@ sub _draw_frame {
             }
         }
         $prev_xp = $xp;
+    }
+
+    # ============================================================
+    # X minor ticks
+    # ============================================================
+    if ($self->_minor_ticks_on && $xopt =~ /[TS]/) {
+        my $tp     = $self->_tick_params;
+        my $tdir   = $tp->{x_direction}    // 'out';
+        my $show_b = $tp->{x_bottom}        // 1;
+        my $show_t = $tp->{x_top}            // 0;
+        my @tc     = defined($tp->{x_color})
+            ? @{ $self->_parse_color($tp->{x_color}) } : @fc;
+        my $tlen   = $tp->{x_minor_length}
+                  // ($tp->{x_length} ? $tp->{x_length} * 0.5 : 2);
+        my $twid   = $tp->{x_minor_width}
+                  // ($tp->{x_width}  ? $tp->{x_width}  * 0.6 : 0.6);
+        my @xminors;
+
+        if ($self->xscale eq 'log') {
+            my $lo = POSIX::floor(log(($xlo > 0 ? $xlo : 1e-10))/log(10));
+            my $hi = POSIX::floor(log($xhi > 0 ? $xhi : 1)/log(10)) + 1;
+            for my $e ($lo .. $hi) {
+                for my $m (2..9) {
+                    my $v = $m * (10 ** $e);
+                    push @xminors, $v
+                        if $v > $xlo * 1.001 && $v < $xhi * 0.999;
+                }
+            }
+        } else {
+            @xminors = minor_ticks($xlo, $xhi, $self->_minor_n, @xtks);
+        }
+
+        $b->set_linewidth($twid);
+        $b->set_color(@tc);
+        for my $v (@xminors) {
+            my $xp = $tr->x(pdl($v))->at(0);
+            next if $xp < $ml || $xp > $mr;
+            my $ya = ($y0p >= $mt && $y0p <= $mb) ? $y0p : $mb;
+            if ($show_b) {
+                my ($y1,$y2) = $tdir eq 'in'   ? ($ya, $ya - $tlen)
+                             : $tdir eq 'inout' ? ($ya - $tlen/2, $ya + $tlen/2)
+                             :                    ($ya, $ya + $tlen);
+                $b->line_seg($xp, $y1, $xp, $y2);
+            }
+            if ($show_t) {
+                my $yt = $mt;
+                my ($y1,$y2) = $tdir eq 'in'   ? ($yt, $yt + $tlen)
+                             : $tdir eq 'inout' ? ($yt - $tlen/2, $yt + $tlen/2)
+                             :                    ($yt, $yt - $tlen);
+                $b->line_seg($xp, $y1, $xp, $y2);
+            }
+        }
+        $b->set_linewidth(1.5);
     }
 
     # ============================================================
@@ -2268,6 +2325,62 @@ sub _draw_frame {
             }
         }
         $prev_yp = $yp;
+    }
+    # ============================================================
+    # Y minor ticks
+    # ============================================================
+    if ($self->_minor_ticks_on && $yopt =~ /[TS]/) {
+        my $tp     = $self->_tick_params;
+        my $tdir   = $tp->{y_direction}   // 'out';
+        my $show_l = $tp->{y_left}         // 1;
+        my $show_r = $tp->{y_right}         // 0;
+        my @tc     = defined($tp->{y_color})
+            ? @{ $self->_parse_color($tp->{y_color}) } : @fc;
+        my $tlen   = $tp->{y_minor_length}
+                  // ($tp->{y_length} ? $tp->{y_length} * 0.5 : 2);
+        my $twid   = $tp->{y_minor_width}
+                  // ($tp->{y_width}  ? $tp->{y_width}  * 0.6 : 0.6);
+        my @yminors;
+
+        if ($self->yscale eq 'log') {
+
+            my $lo = POSIX::floor(log(($ylo > 0 ? $ylo : 1e-10))/log(10));
+            my $hi = POSIX::floor(log( $yhi > 0 ? $yhi : 1  )/log(10)) + 1;
+
+            for my $e ($lo .. $hi) {
+                for my $m (2..9) {
+                    my $v = $m * (10 ** $e);
+                    push @yminors, $v
+                        if $v > $ylo * 1.001 && $v < $yhi * 0.999;
+                }
+            }
+
+
+
+        } else {
+            @yminors = minor_ticks($self->ymin, $self->ymax, $self->_minor_n, @ytks);
+        }
+        $b->set_linewidth($twid);
+        $b->set_color(@tc);
+        for my $v (@yminors) {
+            my $yp = $tr->y(pdl($v))->at(0);
+            next if $yp < $mt || $yp > $mb;
+            my $xa = ($x0p >= $ml && $x0p <= $mr) ? $x0p : $ml;
+            if ($show_l) {
+                my ($x1,$x2) = $tdir eq 'in'   ? ($xa, $xa + $tlen)
+                             : $tdir eq 'inout' ? ($xa - $tlen/2, $xa + $tlen/2)
+                             :                    ($xa, $xa - $tlen);
+                $b->line_seg($x1, $yp, $x2, $yp);
+            }
+            if ($show_r) {
+                my $xr = $mr;
+                my ($x1,$x2) = $tdir eq 'in'   ? ($xr, $xr - $tlen)
+                             : $tdir eq 'inout' ? ($xr - $tlen/2, $xr + $tlen/2)
+                             :                    ($xr, $xr + $tlen);
+                $b->line_seg($x1, $yp, $x2, $yp);
+            }
+        }
+        $b->set_linewidth(1.5);
     }
 }
 
@@ -3129,6 +3242,16 @@ sub fill {
     return $self->fill_between($x, $y, zeroes($x->nelem), @rest);
 }
 
+sub minorticks_on  { $_[0]->_minor_ticks_on(1); $_[0] }
+sub minorticks_off { $_[0]->_minor_ticks_on(0); $_[0] }
+
+sub set_minor_locator {
+    my ($self, $n) = @_;
+    $self->_minor_n($n);
+    $self->_minor_ticks_on(1);
+    return $self;
+}
+
 # tick_params(%opt)  — matplotlib ax.tick_params()
 # Minimal: handles labelsize, labelcolor, width, length, direction (stubs others silently).
 # Actual rendering of custom tick style is future work; this prevents die() on mpl-ported code.
@@ -3150,18 +3273,25 @@ sub tick_params {
     # 'axis' キーで x/y/both を仕分け
     my $axis = delete $opt{axis} // 'both';
 
+    my $which_val = $opt{which} // 'major';
     for my $k (keys %opt) {
+        next if $k eq 'which';
+        my $pfx = ($which_val eq 'minor') ? 'minor_' : '';
         if ($axis eq 'both') {
-            $tp->{"x_$k"} = $opt{$k};
-            $tp->{"y_$k"} = $opt{$k};
+            $tp->{"x_${pfx}$k"} = $opt{$k};
+            $tp->{"y_${pfx}$k"} = $opt{$k};
         } elsif ($axis eq 'x') {
-            $tp->{"x_$k"} = $opt{$k};
+            $tp->{"x_${pfx}$k"} = $opt{$k};
         } elsif ($axis eq 'y') {
-            $tp->{"y_$k"} = $opt{$k};
+            $tp->{"y_${pfx}$k"} = $opt{$k};
         }
     }
 
     $self->_tick_params($tp);
+
+    if (defined $opt{which}) {
+        $self->_minor_ticks_on(1) if $opt{which} =~ /minor|both/;
+    }
     return $self;
 }
 
