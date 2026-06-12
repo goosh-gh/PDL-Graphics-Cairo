@@ -110,15 +110,11 @@ sub subplots {
     return @grid;
 }
 
-# add_subplot — matplotlib ユーザが間違えて呼ぶメソッド名
+# add_subplot(R, C, idx) — matplotlib 互換。1-based idx で Axes を返す。
 sub add_subplot {
-    my $self = shift;
-    die "PDL::Graphics::Cairo: add_subplot() is not supported.\n"
-      . "  Use subplots() instead:\n"
-      . "    my (\$fig, \$ax)   = subplots(1, 1);\n"
-      . "    my (\$fig, \@ax)   = subplots(1, N);  # 1xN フラット\n"
-      . "    my (\$fig, \@ax)   = subplots(N, 1);  # Nx1 フラット\n"
-      . "    my (\$fig, \@rows) = subplots(M, N);  # MxN: \$rows[\$r][\$c]\n";
+    my ($self, $nrows, $ncols, $idx) = @_;
+    $nrows //= 1;  $ncols //= 1;  $idx //= 1;
+    return $self->subplot($nrows, $ncols, $idx);
 }
 
 #  Axes

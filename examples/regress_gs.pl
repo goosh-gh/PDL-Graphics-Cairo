@@ -159,11 +159,14 @@ win 'show_interactive (k=横, A=縦)' => sub {
     $drv->show_interactive(
         init   => { 0 => 1.0, 1 => 1.0 },     # 0=k(横) 1=A(縦) 両方読む
         render => sub {
-            my ($state) = @_;
+            my ($state, $w, $h, $opts) = @_;
+            my $is_save = $opts && $opts->{is_save};
             my $k = $state->{0} // 1.0;        # 周波数（横スライダ）
             my $A = $state->{1} // 1.0;        # 振幅（縦スライダ）
             my $x = sequence(400) / 400 * (2 * 3.14159265358979);
-            my $fig = figure(width => 720, height => 420);
+            my $fig_w = $is_save ? 1440 : ($w // 720);
+            my $fig_h = $is_save ? 840  : ($h // 420);
+            my $fig = figure(width => $fig_w, height => $fig_h);
             my $ax  = $fig->axes();
             $ax->line($x, $A * sin($k * $x), color => 'blue', lw => 1.5,
                       label => sprintf('%.2f*sin(%.2f x)', $A, $k));

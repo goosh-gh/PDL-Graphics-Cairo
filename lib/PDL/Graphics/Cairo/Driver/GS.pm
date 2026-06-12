@@ -299,7 +299,7 @@ sub _handle_savereq {
     my ($self, $fmt) = @_;
     my $ix = $self->{_ix} or return;     # interactive 外なら無視
     my $ext = ($fmt == GSP_SAVE_FMT_SVG) ? 'svg' : 'pdf';
-    my $figure = $ix->{render}->($ix->{state}, $self->width, $self->height);
+    my $figure = $ix->{render}->($ix->{state}, $self->width, $self->height, {is_save => 1});
     my $bytes  = $self->_figure_to_vector($figure, $ext);
     # payload = [uint8 fmt][vector bytes]
     _send_msg($ix->{sock}, GSP_MSG_SAVEDATA,
