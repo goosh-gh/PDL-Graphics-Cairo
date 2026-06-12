@@ -136,7 +136,8 @@ my @COLOR_CYCLE = (
     [0.090, 0.745, 0.812],  # cyan
 );
 
-has _color_idx => (is => 'rw', default => sub { 0 });
+has _color_idx  => (is => 'rw', default => sub { 0 });
+has _tick_params => (is => 'rw', default => sub { {} });
 
 sub _next_color {
     my ($self) = @_;
@@ -2106,7 +2107,6 @@ sub _draw_frame {
                    map { $sc->fmt_tick($_) } @xtks }
             : map { _fmt_tick($_) } @xtks;
 
-    $b->set_font(size => 8);
     my $prev_xp = -9999;
     my $min_gap = 24;
     for my $i (0 .. $#xtks) {
@@ -2116,25 +2116,64 @@ sub _draw_frame {
         my $xp = $tr->x(pdl($v))->at(0);
         next if $xp < $ml - 1 || $xp > $mr + 1;
 
-        # T/S: ticks  y=0 3px
+        # T/S: ticks  y=0
         if ($xopt =~ /[TS]/) {
-            $b->set_color(@fc);
-            my $tl = ($xopt =~ /T/) ? 3 : 2;
+            my $tp     = $self->_tick_params;
+            my $tlen   = $tp->{x_length}    // (($xopt =~ /T/) ? 5 : 3);
+            my $twid   = $tp->{x_width}     // 1.0;
+            my $tdir   = $tp->{x_direction} // 'out';
+            my $show_b = $tp->{x_bottom}    // 1;
+            my $show_t = $tp->{x_top}       // 0;
+            my @tc     = defined($tp->{x_color})
+                ? @{ $self->_parse_color($tp->{x_color}) }
+                : @fc;
+            $b->set_color(@tc);
+            $b->set_linewidth($twid);
             my $ya = ($y0p >= $mt && $y0p <= $mb) ? $y0p : $mb;
-            $b->line_seg($xp, $ya - $tl, $xp, $ya + $tl);
+            if ($show_b) {
+                my ($y1,$y2) = $tdir eq 'in'    ? ($ya, $ya - $tlen)
+                             : $tdir eq 'inout'  ? ($ya - $tlen/2, $ya + $tlen/2)
+                             :                     ($ya, $ya + $tlen);
+                $b->line_seg($xp, $y1, $xp, $y2);
+            }
+            if ($show_t) {
+                my $yt = $mt;
+                my ($y1,$y2) = $tdir eq 'in'    ? ($yt, $yt + $tlen)
+                             : $tdir eq 'inout'  ? ($yt - $tlen/2, $yt + $tlen/2)
+                             :                     ($yt, $yt - $tlen);
+                $b->line_seg($xp, $y1, $xp, $y2);
+            }
+            $b->set_linewidth(1.5);
         }
 
         # N: (mb)
         next if $xp - $prev_xp < $min_gap;
         if ($xopt =~ /N/) {
-            $b->set_color(@fc);
-            my $rot   = $self->{_xtick_rot} // 0;
-            # X(mb)xp 
-            # X(mb)
-            # 8px + 2px = 10px → mb+10
-            # $b->text($xp, $mb + 14, $xlbs[$i],
-            $b->text($xp, $mb + 16, $xlbs[$i],
-                align=>'center', valign=>'top', angle=>$rot);
+            my $tp       = $self->_tick_params;
+            my $lsize    = $tp->{x_labelsize}     // 8;
+            my $lshow    = $tp->{x_labelbottom}   // 1;
+            my $lshow_t  = $tp->{x_labeltop}      // 0;
+            my $pad      = $tp->{x_pad}           // 4;
+            my $rot      = $tp->{x_labelrotation} // $self->{_xtick_rot} // 0;
+            my @lc       = defined($tp->{x_labelcolor})
+                ? @{ $self->_parse_color($tp->{x_labelcolor}) }
+                : @fc;
+            my $tlen_eff = $tp->{x_length}    // 3;
+            my $tdir     = $tp->{x_direction} // 'out';
+            my $tick_ext = $tdir eq 'out' ? $tlen_eff
+                         : $tdir eq 'inout' ? $tlen_eff/2 : 0;
+            if ($lshow) {
+                $b->set_color(@lc);
+                $b->set_font(size => $lsize);
+                $b->text($xp, $mb + $tick_ext + $pad + 2, $xlbs[$i],
+                    align=>'center', valign=>'top', angle=>$rot);
+            }
+            if ($lshow_t) {
+                $b->set_color(@lc);
+                $b->set_font(size => $lsize);
+                $b->text($xp, $mt - $tick_ext - $pad - 2, $xlbs[$i],
+                    align=>'center', valign=>'bottom', angle=>$rot);
+            }
         }
         $prev_xp = $xp;
     }
@@ -2167,28 +2206,66 @@ sub _draw_frame {
         my $yp = $tr->y(pdl($v))->at(0);
         next if $yp < $mt - 1 || $yp > $mb + 1;
 
-        # T/S: ticks  x=0 3px
+        # T/S: ticks  x=0
         if ($yopt =~ /[TS]/) {
-            $b->set_color(@fc);
-            my $tl  = ($yopt =~ /T/) ? 3 : 2;
-            my $xa  = ($x0p >= $ml && $x0p <= $mr) ? $x0p : $ml;
-            $b->line_seg($xa - $tl, $yp, $xa + $tl, $yp);
+            my $tp     = $self->_tick_params;
+            my $tlen   = $tp->{y_length}    // (($yopt =~ /T/) ? 5 : 3);
+            my $twid   = $tp->{y_width}     // 1.0;
+            my $tdir   = $tp->{y_direction} // 'out';
+            my $show_l = $tp->{y_left}      // 1;
+            my $show_r = $tp->{y_right}     // 0;
+            my @tc     = defined($tp->{y_color})
+                ? @{ $self->_parse_color($tp->{y_color}) }
+                : @fc;
+            $b->set_color(@tc);
+            $b->set_linewidth($twid);
+            my $xa = ($x0p >= $ml && $x0p <= $mr) ? $x0p : $ml;
+            if ($show_l) {
+                my ($x1,$x2) = $tdir eq 'in'    ? ($xa, $xa + $tlen)
+                             : $tdir eq 'inout'  ? ($xa - $tlen/2, $xa + $tlen/2)
+                             :                     ($xa, $xa - $tlen);
+                $b->line_seg($x1, $yp, $x2, $yp);
+            }
+            if ($show_r) {
+                my $xr = $mr;
+                my ($x1,$x2) = $tdir eq 'in'    ? ($xr, $xr - $tlen)
+                             : $tdir eq 'inout'  ? ($xr - $tlen/2, $xr + $tlen/2)
+                             :                     ($xr, $xr + $tlen);
+                $b->line_seg($x1, $yp, $x2, $yp);
+            }
+            $b->set_linewidth(1.5);
         }
 
         # N: (ml)
         # abs() で正順・逆順どちらの yticks 配列にも対応
         next if abs($yp - $prev_yp) < $min_ygap;
         if ($yopt =~ /N/) {
-            $b->set_color(@fc);
-            # y=0 (y0p) x
-            my $ya = ($x0p >= $ml && $x0p <= $mr) ? $x0p : $ml;
-            my $txt_y = $yp;
-            # y=0 : 
-            if (abs($v) < ($yhi - $ylo) * 0.001 + 0.001) {
-#                $txt_y = $yp - 2;
+            my $tp      = $self->_tick_params;
+            my $lsize   = $tp->{y_labelsize}     // 8;
+            my $lshow_l = $tp->{y_labelleft}     // 1;
+            my $lshow_r = $tp->{y_labelright}    // 0;
+            my $pad     = $tp->{y_pad}           // 4;
+            my $rot     = $tp->{y_labelrotation} // 0;
+            my @lc      = defined($tp->{y_labelcolor})
+                ? @{ $self->_parse_color($tp->{y_labelcolor}) }
+                : @fc;
+            my $tlen_eff = $tp->{y_length}    // 3;
+            my $tdir     = $tp->{y_direction} // 'out';
+            my $tick_ext = $tdir eq 'out' ? $tlen_eff
+                         : $tdir eq 'inout' ? $tlen_eff/2 : 0;
+            my $txt_y    = $yp;
+            if ($lshow_l) {
+                $b->set_color(@lc);
+                $b->set_font(size => $lsize);
+                $b->text($ml - $tick_ext - $pad - 2, $txt_y, $ylbs[$i],
+                    align=>'right', valign=>'middle', angle=>$rot);
             }
-            $b->text($ml - 2, $txt_y, $ylbs[$i],
-                align=>'right', valign=>'middle');
+            if ($lshow_r) {
+                $b->set_color(@lc);
+                $b->set_font(size => $lsize);
+                $b->text($mr + $tick_ext + $pad + 2, $txt_y, $ylbs[$i],
+                    align=>'left', valign=>'middle', angle=>$rot);
+            }
         }
         $prev_yp = $yp;
     }
@@ -3055,10 +3132,36 @@ sub fill {
 # tick_params(%opt)  — matplotlib ax.tick_params()
 # Minimal: handles labelsize, labelcolor, width, length, direction (stubs others silently).
 # Actual rendering of custom tick style is future work; this prevents die() on mpl-ported code.
+# tick_params(%opt)  — matplotlib ax.tick_params() 完全実装
+# 対応キー: axis, which, direction, length, width, color, colors,
+#           labelsize, labelcolor, labelrotation, pad,
+#           bottom, top, left, right, labelbottom, labeltop, labelleft, labelright
 sub tick_params {
     my ($self, %opt) = @_;
-    warn "PDL::Graphics::Cairo: tick_params() is not implemented and has no effect.\n"
-       . "  Use xticks()/yticks() to set tick positions and labels.\n";
+
+    my $tp = $self->_tick_params;
+
+    # 'colors' は tick 線色とラベル色の両方を一括指定 (matplotlib互换)
+    if (defined $opt{colors}) {
+        $opt{color}      //= $opt{colors};
+        $opt{labelcolor} //= $opt{colors};
+    }
+
+    # 'axis' キーで x/y/both を仕分け
+    my $axis = delete $opt{axis} // 'both';
+
+    for my $k (keys %opt) {
+        if ($axis eq 'both') {
+            $tp->{"x_$k"} = $opt{$k};
+            $tp->{"y_$k"} = $opt{$k};
+        } elsif ($axis eq 'x') {
+            $tp->{"x_$k"} = $opt{$k};
+        } elsif ($axis eq 'y') {
+            $tp->{"y_$k"} = $opt{$k};
+        }
+    }
+
+    $self->_tick_params($tp);
     return $self;
 }
 
