@@ -2019,8 +2019,8 @@ sub _draw_twin_yaxis {
         $b->line_seg($mr, $yp, $mr+4, $yp);
 
         # label overlap guard (same logic as _draw_frame Y section)
-        my $gap = $self->{_y_reversed} ? $yp - $prev_yp : $prev_yp - $yp;
-        next if $gap < $min_ygap;
+        # abs() で正順・逆順どちらの yticks 配列にも対応
+        next if abs($yp - $prev_yp) < $min_ygap;
         $b->text($mr+6, $yp, $ylbs[$i], align=>'left', valign=>'middle');
         $prev_yp = $yp;
     }
@@ -2176,8 +2176,8 @@ sub _draw_frame {
         }
 
         # N: (ml)
-        my $gap = $self->{_y_reversed} ? $yp - $prev_yp : $prev_yp - $yp;
-        next if $gap < $min_ygap;
+        # abs() で正順・逆順どちらの yticks 配列にも対応
+        next if abs($yp - $prev_yp) < $min_ygap;
         if ($yopt =~ /N/) {
             $b->set_color(@fc);
             # y=0 (y0p) x
