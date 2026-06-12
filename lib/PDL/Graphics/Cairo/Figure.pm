@@ -22,7 +22,9 @@ has dpi    => (is => 'ro', default => sub { 96 });
 # figsize 展開は Cairo.pm の _apply_figsize() が担う。
 
 # Figure 
-has suptitle => (is => 'rw', default => sub { '' });
+has _suptitle_text  => (is => 'rw', default => sub { '' });
+has _suptitle_fontsize => (is => 'rw', default => sub { 15 });
+has _suptitle_y        => (is => 'rw', default => sub { 18 });
 
 # List of Axes
 has axes_list => (is => 'ro', default => sub { [] });
@@ -48,7 +50,7 @@ sub subplot {
 
     my $pad_x = 20;
     my $pad_y = 20;
-    my $top_pad = $self->suptitle ne '' ? 40 : 10;
+    my $top_pad = ($self->{_suptitle_text} // '') ne '' ? 40 : 10;
 
     my $cell_w = ($fw - $pad_x * ($ncols+1)) / $ncols;
     my $cell_h = ($fh - $pad_y * ($nrows+1) - $top_pad) / $nrows;
@@ -143,14 +145,7 @@ sub axes {
     return $ax;
 }
 
-# ------------------------------------------------------------------
-# set_suptitle — Figure 
-# ------------------------------------------------------------------
-sub set_suptitle {
-    my ($self, $title, %opt) = @_;
-    $self->suptitle($title);
-    return $self;
-}
+
 
 # ------------------------------------------------------------------
 # save
@@ -158,13 +153,26 @@ sub set_suptitle {
 # ------------------------------------------------------------------
 # _render_to($driver) —  driver 
 # ------------------------------------------------------------------
+# suptitle($text, fontsize=>N, size=>N, y=>0..1)
+# matplotlib互換: $fig->suptitle('T') または $fig->set_suptitle('T', fontsize=>16)
+sub suptitle {
+    my ($self, $title, %opt) = @_;
+    return $self->{_suptitle_text} // '' unless defined $title;  # getter
+    $self->{_suptitle_text} = $title;
+    $self->_suptitle_fontsize($opt{fontsize} // $opt{size} // 15);
+    $self->_suptitle_y(int($opt{y} * $self->height)) if defined $opt{y};
+    return $self;
+}
+
+sub set_suptitle { my ($self, $title, %opt) = @_; $self->suptitle($title, %opt) }
+
 sub _render_to {
     my ($self, $driver) = @_;
 
-    if ($self->suptitle ne '') {
-        $driver->set_font(size => 15, weight => 'bold');
+    if (($self->{_suptitle_text} // '') ne '') {
+        $driver->set_font(size => $self->_suptitle_fontsize, weight => 'bold');
         $driver->set_color(0,0,0);
-        $driver->text($self->width/2, 18, $self->suptitle,
+        $driver->text($self->width/2, $self->_suptitle_y, $self->{_suptitle_text},
             align=>'center', valign=>'middle');
     }
 
@@ -290,7 +298,7 @@ sub tight_layout {
     my $fh    = $self->height;
 
     # suptitle 
-    my $top_pad = $self->suptitle ne '' ? 36 : 8;
+    my $top_pad = ($self->{_suptitle_text} // '') ne '' ? 36 : 8;
 
     # Figure pad  px 
     my $outer = int(($fw < $fh ? $fw : $fh) * ($pad - 1.0) * 0.5);
@@ -340,7 +348,7 @@ sub tight_layout {
 
         # : 
         my $mt = $ax->title ne '' ? 38 : 24;
-        $mt = 48 if $row == 0 && $self->suptitle ne '';
+        $mt = 48 if $row == 0 && $self->_suptitle_text ne '';
 
         # cell が小さいとき margin が描画域を食い尽くして $mt>$mb/$ml>$mr になる。
         # X/Y それぞれ合計が cell の 80% を超えないようクランプする。
