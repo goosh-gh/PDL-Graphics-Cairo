@@ -69,6 +69,13 @@ sub subplots {
     }
     my $fig  = PDL::Graphics::Cairo::Figure->new(%args);
     my @axes = $fig->subplots($nrows, $ncols);
+    # MxN のとき @axes は ArrayRef のリスト。フラット Axes と混同しないよう案内。
+    if ($nrows > 1 && $ncols > 1) {
+        warn "PDL::Graphics::Cairo: subplots($nrows,$ncols) — "
+           . "return value contains ArrayRefs, not Axes objects.\n"
+           . "  my (\$fig, \@rows) = subplots($nrows,$ncols);\n"
+           . "  \$rows[\$r][\$c]->line(...);  # correct access\n";
+    }
     return ($fig, @axes);
 }
 

@@ -85,7 +85,12 @@ sub subplots {
         push @grid, \@row;
     }
 
-    # 1x1 → 1xN or Nx1 → 1NxM → 2
+    # 戻り値の規約:
+    #   1x1  → Axes オブジェクト 1個
+    #   1xN  → Axes のフラットリスト ($ax1, $ax2, ...)
+    #   Nx1  → Axes のフラットリスト ($ax1, $ax2, ...)
+    #   MxN  → ArrayRef のリスト    ($row0_ref, $row1_ref, ...)
+    #            アクセス: my ($fig, @rows) = subplots(M,N); $rows[$r][$c]
     if ($nrows == 1 && $ncols == 1) {
         return $grid[0][0];
     }
@@ -95,7 +100,25 @@ sub subplots {
     elsif ($ncols == 1) {
         return map { $_->[0] } @grid;
     }
+    # MxN: ArrayRef のリストを返す — フラットに受けないよう警告
+    warn "PDL::Graphics::Cairo: subplots($nrows,$ncols) returns a list of "
+       . "ArrayRefs, not a flat Axes list.\n"
+       . "  Correct usage:  my (\$fig, \@rows) = subplots($nrows,$ncols);\n"
+       . "                  \$rows[\$r][\$c]->line(...);\n"
+       . "  Wrong usage:    my (\$fig,\$ax1,\$ax2,...) = subplots($nrows,$ncols);\n"
+        if !wantarray;
     return @grid;
+}
+
+# add_subplot — matplotlib ユーザが間違えて呼ぶメソッド名
+sub add_subplot {
+    my $self = shift;
+    die "PDL::Graphics::Cairo: add_subplot() is not supported.\n"
+      . "  Use subplots() instead:\n"
+      . "    my (\$fig, \$ax)   = subplots(1, 1);\n"
+      . "    my (\$fig, \@ax)   = subplots(1, N);  # 1xN フラット\n"
+      . "    my (\$fig, \@ax)   = subplots(N, 1);  # Nx1 フラット\n"
+      . "    my (\$fig, \@rows) = subplots(M, N);  # MxN: \$rows[\$r][\$c]\n";
 }
 
 #  Axes

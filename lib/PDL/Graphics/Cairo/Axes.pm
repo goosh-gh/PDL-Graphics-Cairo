@@ -2606,7 +2606,11 @@ sub set_yticklabels {
 # ==================================================================
 # tight_layout Figure
 # ==================================================================
-sub set_tight_layout { return $_[0] }
+sub set_tight_layout {
+    warn "PDL::Graphics::Cairo: set_tight_layout() on an Axes object has no effect.\n"
+       . "  Call \$fig->tight_layout() on the Figure object instead.\n";
+    return $_[0];
+}
 
 
 # ==================================================================
@@ -3053,7 +3057,8 @@ sub fill {
 # Actual rendering of custom tick style is future work; this prevents die() on mpl-ported code.
 sub tick_params {
     my ($self, %opt) = @_;
-    # TODO: wire up to Tick/frame rendering when those features land
+    warn "PDL::Graphics::Cairo: tick_params() is not implemented and has no effect.\n"
+       . "  Use xticks()/yticks() to set tick positions and labels.\n";
     return $self;
 }
 
