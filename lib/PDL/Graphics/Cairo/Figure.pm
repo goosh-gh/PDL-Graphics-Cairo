@@ -118,6 +118,18 @@ sub add_subplot {
 }
 
 #  Axes
+# ax($idx)       — 0-based 線形インデックス (matplotlib の axes.flat[i] 相当)
+# ax($row, $col) — 0-based (row, col)      (matplotlib の axes[r,c] 相当)
+sub ax {
+    my ($self, $row_or_idx, $col) = @_;
+    my $list = $self->axes_list;
+    if (defined $col) {
+        my $ncols = $self->_ncols || 1;
+        return $list->[$row_or_idx * $ncols + $col];
+    }
+    return $list->[$row_or_idx];
+}
+
 sub axes {
     my ($self, %opt) = @_;
     my $ax = PDL::Graphics::Cairo::Axes->new(
