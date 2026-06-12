@@ -1196,8 +1196,12 @@ sub draw {
 
     # --- ---
     $backend->save;
-    # :  + (14px)
-    $backend->clip_rect($ml-1, $mt-15, $mr-$ml+2, $mb-$mt+16);
+    my $clip_w = $mr - $ml + 2;
+    my $clip_h = $mb - $mt + 16;
+    if ($clip_w > 0 && $clip_h > 0) {
+        # :  + (14px)
+        $backend->clip_rect($ml-1, $mt-15, $clip_w, $clip_h);
+    }
 
     # ---  ---
     for my $cmd (@{ $self->_queue }) {
@@ -2000,19 +2004,25 @@ sub _draw_twin_yaxis {
                    map { $sc->fmt_tick($_) } @ytks }
             : map { _fmt_tick($_) } @ytks;
 
+    my $min_ygap = 14;
+    my ($ylo, $yhi) = ($self->ymin, $self->ymax);
+    my $prev_yp = $self->{_y_reversed} ? -9999 : 9999;
     $b->set_font(size => 10);
     for my $i (0 .. $#ytks) {
-        my $v  = $ytks[$i];
-        next if $v < $self->ymin * 0.9999 || $v > $self->ymax * 1.0001;
+        my $v   = $ytks[$i];
+        my $eps = ($yhi - $ylo) * 0.001 + 0.001;
+        next if $v < $ylo - $eps || $v > $yhi + $eps;
         my $yp = $tr->y(pdl($v))->at(0);
         next if $yp < $mt - 1 || $yp > $mb + 1;
-        # (mb)x
-        next if $yp > $mb - 2;
-        #
 
-        $b->line_seg($mr, $yp, $mr+4, $yp);
         $b->set_color(_fg());
+        $b->line_seg($mr, $yp, $mr+4, $yp);
+
+        # label overlap guard (same logic as _draw_frame Y section)
+        my $gap = $self->{_y_reversed} ? $yp - $prev_yp : $prev_yp - $yp;
+        next if $gap < $min_ygap;
         $b->text($mr+6, $yp, $ylbs[$i], align=>'left', valign=>'middle');
+        $prev_yp = $yp;
     }
 
     # Y
@@ -2034,6 +2044,10 @@ sub _draw_twin_yaxis {
 # ------------------------------------------------------------------
 sub _draw_frame {
     my ($self, $b, $tr, $ml,$mt,$mr,$mb) = @_;
+
+    # セルが極端に小さくなったとき mt>=mb / ml>=mr になり Cairo が壊れた矩形を
+    # 描いて全面塗りつぶし（"真っ青"等）になるのを防ぐ
+    return if $mt >= $mb - 4 || $ml >= $mr - 4;
 
     # pgbox 
     my $pb   = $self->{_pgbox};

@@ -311,6 +311,21 @@ sub tight_layout {
         my $mt = $ax->title ne '' ? 38 : 24;
         $mt = 48 if $row == 0 && $self->suptitle ne '';
 
+        # cell が小さいとき margin が描画域を食い尽くして $mt>$mb/$ml>$mr になる。
+        # X/Y それぞれ合計が cell の 80% を超えないようクランプする。
+        my $max_h = $cell_h * 0.80;
+        my $max_w = $cell_w * 0.80;
+        if ($mt + $mb > $max_h) {
+            my $scale = $max_h / ($mt + $mb);
+            $mt = int($mt * $scale);
+            $mb = int($mb * $scale);
+        }
+        if ($ml + $mr > $max_w) {
+            my $scale = $max_w / ($ml + $mr);
+            $ml = int($ml * $scale);
+            $mr = int($mr * $scale);
+        }
+
         $ax->margin_left($ml);
         $ax->margin_right($mr);
         $ax->margin_bottom($mb);
