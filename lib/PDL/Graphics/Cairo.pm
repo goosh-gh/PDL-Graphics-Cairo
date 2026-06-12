@@ -6,7 +6,7 @@ use warnings;
 our $VERSION = '0.01';
 
 use Exporter;
-our @EXPORT_OK = qw(figure subplots imread);
+our @EXPORT_OK = qw(figure subplots subplot_mosaic imread);
 our %EXPORT_TAGS = (
     gnuplot => [],
 );
@@ -44,6 +44,15 @@ sub figure {
 sub new {
     my $class = shift;
     return figure(@_);
+}
+
+sub subplot_mosaic {
+    my ($layout, %opt) = @_;
+    my $fig = PDL::Graphics::Cairo::Figure->new(
+        width  => $opt{width}  // 640,
+        height => $opt{height} // 480,
+    );
+    return $fig->subplot_mosaic($layout, %opt);
 }
 
 sub subplots {

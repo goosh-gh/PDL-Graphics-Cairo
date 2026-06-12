@@ -8,6 +8,7 @@ package PDL::Graphics::Cairo::Figure;
 use strict;
 use warnings;
 use Moo;
+use PDL::Graphics::Cairo::GridSpec;
 use PDL::Graphics::Cairo::Axes;
 use PDL::Graphics::Cairo::Driver::Cairo;
 use PDL::Graphics::Cairo::Driver::Gnuplot;
@@ -28,6 +29,7 @@ has _suptitle_y        => (is => 'rw', default => sub { 18 });
 
 # List of Axes
 has axes_list => (is => 'ro', default => sub { [] });
+has _gs_axes  => (is => 'ro', default => sub { [] });  # [{ax=>, r0=>, r1=>, c0=>, c1=>}, ...]
 
 # subplot 
 has _nrows => (is => 'rw', default => sub { 1 });
@@ -113,10 +115,118 @@ sub subplots {
 }
 
 # add_subplot(R, C, idx) — matplotlib 互換。1-based idx で Axes を返す。
+# add_gridspec(nrows, ncols, %opt) — matplotlib GridSpec
+# Options: left, right, top, bottom (0..1), hspace, wspace
+# subplot_mosaic($layout, %opt) — matplotlib subplot_mosaic
+# $layout: 'AB\nCC'  or [['A','B'],['C','C']]
+# Returns: ($fig, %ax)  where %ax{'A'} etc. are Axes objects
+# Options: width, height, hspace, wspace, left, right, top, bottom
+sub subplot_mosaic {
+    my ($class_or_fig, $layout, %opt) = @_;
+    my ($fig, $self);
+    if (ref $class_or_fig) {
+        $self = $class_or_fig;
+    } else {
+        require PDL::Graphics::Cairo;
+        $fig  = PDL::Graphics::Cairo::Figure->new(
+            width  => $opt{width}  // 640,
+            height => $opt{height} // 480,
+        );
+        $self = $fig;
+    }
+
+    # Parse layout string or arrayref
+    my @rows;
+    if (ref $layout eq 'ARRAY') {
+        @rows = @$layout;
+    } else {
+        @rows = map { [ split //, $_ ] } split /\n/, $layout;
+    }
+
+    my $nrows = scalar @rows;
+    my $ncols = scalar @{ $rows[0] };
+
+    # Validate rectangular layout
+    for my $row (@rows) {
+        die 'subplot_mosaic: all rows must have same length' if @$row != $ncols;
+    }
+
+    # Find unique labels
+    my %labels;
+    for my $r (0..$nrows-1) {
+        for my $c (0..$ncols-1) {
+            $labels{ $rows[$r][$c] } = 1;
+        }
+    }
+
+    # For each label find bounding box (r0,r1,c0,c1)
+    my %bbox;
+    for my $lbl (keys %labels) {
+        my ($r0,$r1,$c0,$c1) = ($nrows,$nrows-1,$ncols,$ncols-1);
+        for my $r (0..$nrows-1) {
+            for my $c (0..$ncols-1) {
+                next unless $rows[$r][$c] eq $lbl;
+                $r0 = $r if $r < $r0;
+                $r1 = $r if $r > $r1;
+                $c0 = $c if $c < $c0;
+                $c1 = $c if $c > $c1;
+            }
+        }
+        $bbox{$lbl} = [$r0, $r1+1, $c0, $c1+1];  # r1/c1 exclusive
+    }
+
+    # Build GridSpec with mosaic dims
+    my %gs_opt;
+    for my $k (qw(left right top bottom hspace wspace)) {
+        $gs_opt{$k} = $opt{$k} if exists $opt{$k};
+    }
+    my $gs = $self->add_gridspec($nrows, $ncols, %gs_opt);
+
+    my %ax;
+    for my $lbl (sort keys %labels) {
+        my ($r0,$r1,$c0,$c1) = @{ $bbox{$lbl} };
+        my $cell = PDL::Graphics::Cairo::GridSpecCell->new(
+            gridspec => $gs,
+            r0=>$r0, r1=>$r1, c0=>$c0, c1=>$c1,
+        );
+        $ax{$lbl} = $self->add_subplot($cell);
+    }
+
+    return ($self, %ax);
+}
+
+sub add_gridspec {
+    my ($self, $nrows, $ncols, %opt) = @_;
+    $nrows //= 1; $ncols //= 1;
+    return PDL::Graphics::Cairo::GridSpec->new(
+        nrows  => $nrows,
+        ncols  => $ncols,
+        figure => $self,
+        %opt,
+    );
+}
+
 sub add_subplot {
-    my ($self, $nrows, $ncols, $idx) = @_;
-    $nrows //= 1;  $ncols //= 1;  $idx //= 1;
-    return $self->subplot($nrows, $ncols, $idx);
+    my ($self, $nrows_or_cell, $ncols, $idx) = @_;
+    if (ref($nrows_or_cell) && $nrows_or_cell->isa('PDL::Graphics::Cairo::GridSpecCell')) {
+        my $cell = $nrows_or_cell;
+        my ($fig_x, $fig_y, $w, $h) = $cell->pixel_rect;
+        my $ax = PDL::Graphics::Cairo::Axes->new(
+            width => $w, height => $h,
+            fig_x => $fig_x, fig_y => $fig_y,
+        );
+        push @{ $self->axes_list }, $ax;
+        push @{ $self->_gs_axes }, {
+            ax => $ax,
+            r0 => $cell->r0, r1 => $cell->r1,
+            c0 => $cell->c0, c1 => $cell->c1,
+            gs => $cell->gridspec,
+        };
+        return $ax;
+    }
+    my ($nrows, $ncols2, $idx2) = ($nrows_or_cell, $ncols, $idx);
+    $nrows //= 1;  $ncols2 //= 1;  $idx2 //= 1;
+    return $self->subplot($nrows, $ncols2, $idx2);
 }
 
 #  Axes
@@ -327,7 +437,31 @@ sub tight_layout {
     #  Axes  margin 
     # Y Axes  margin_left 
     # X Axes  margin_bottom 
+    # Build GS axes lookup for skip
+    my %gs_ax_set = map { $_ => 1 } map { $_->{ax} } @{ $self->_gs_axes };
+
     for my $ax (@{ $self->axes_list }) {
+        # GridSpec Axes: position already set, just compute margins
+        if ($gs_ax_set{$ax}) {
+            # find gs info
+            my ($gsinfo) = grep { $_->{ax} == $ax } @{ $self->_gs_axes };
+            my $gs   = $gsinfo->{gs};
+            my $r0   = $gsinfo->{r0};
+            my $r1   = $gsinfo->{r1};
+            my $c0   = $gsinfo->{c0};
+            my $nr   = $gs->nrows;
+            my $nc   = $gs->ncols;
+            my $ml = $c0 == 0 ? 68 : 52;
+            $ml = 80 if $ax->ylabel ne '';
+            my $mr = $ax->_colorbar ? 72 : 16;
+            my $mb = $r1 == $nr ? 56 : 36;
+            $mb = 64 if $ax->xlabel ne '';
+            my $mt = $ax->title ne '' ? 38 : 24;
+            $mt = 48 if $r0 == 0 && ($self->{_suptitle_text} // '') ne '';
+            $ax->margin_left($ml);  $ax->margin_right($mr);
+            $ax->margin_bottom($mb); $ax->margin_top($mt);
+            next;
+        }
         # Axes  fig_x/fig_y 
         my $col = int(($ax->fig_x - $left + $cell_w * 0.5) / $cell_w);
         my $row = int(($ax->fig_y - $top  + $cell_h * 0.5) / $cell_h);
