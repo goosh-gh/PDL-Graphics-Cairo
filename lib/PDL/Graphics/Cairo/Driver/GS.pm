@@ -52,6 +52,9 @@ use constant {
     GSP_MSG_SAVEREQ  => 0x14,   # server→client: render & return vector
     GSP_MSG_SAVEDATA => 0x15,   # client→server: vector bytes for pending save
     GSP_MSG_RESIZE   => 0x16,   # server→client: window resized, re-render at new px
+    GSP_MSG_ZOOM     => 0x17,   # server→client: zoom/pan changed (optional notify)
+    GSP_MSG_CURSOR   => 0x18,   # server→client: cursor moved (image fraction)
+    GSP_MSG_PICK     => 0x19,   # server→client: click (image fraction)
     GSP_SAVE_FMT_PDF => 0,
     GSP_SAVE_FMT_SVG => 1,
 };
@@ -252,6 +255,12 @@ sub _recv_ack_sys {
             my ($f) = unpack('C', $payload);
             $self->_handle_savereq($f);
         }
+        elsif ($type == GSP_MSG_CURSOR || $type == GSP_MSG_PICK
+               || $type == GSP_MSG_ZOOM) {
+            # マウスイベントは ACK 待ち中にも届きうる。コールバックを呼ぶ
+            # だけで $need_redraw は変えない（giza_server 側で表示更新済み）。
+            $self->_handle_mouse($type, $payload);
+        }
         elsif ($type == GSP_MSG_ERR) {
             warn "Driver::GS: server error: $payload\n";
             return $need_redraw;
@@ -290,6 +299,29 @@ sub _figure_to_vector {
     close $in;
     unlink $path;
     return $bytes // '';
+}
+
+# サーバー発のマウスイベント（CURSOR / PICK / ZOOM）を処理する。
+# どれも撃ちっぱなしの通知で、登録済みコールバックを呼ぶだけ（再描画不要）。
+# interactive セッション外（$self->{_ix} 無し）なら黙って無視する。
+sub _handle_mouse {
+    my ($self, $type, $payload) = @_;
+    my $ix = $self->{_ix} or return;
+    if ($type == GSP_MSG_CURSOR) {
+        return unless $ix->{on_cursor};
+        my ($fx, $fy, $btn) = unpack('f< f< C', $payload);
+        $ix->{on_cursor}->($fx, $fy, $btn);
+    }
+    elsif ($type == GSP_MSG_PICK) {
+        return unless $ix->{on_pick};
+        my ($fx, $fy, $btn) = unpack('f< f< C', $payload);
+        $ix->{on_pick}->($fx, $fy, $btn);
+    }
+    elsif ($type == GSP_MSG_ZOOM) {
+        return unless $ix->{on_zoom};
+        my ($zoom, $px, $py) = unpack('f< f< f<', $payload);
+        $ix->{on_zoom}->($zoom, $px, $py);
+    }
 }
 
 # サーバー発 SAVEREQ への応答。現在の $state で図を再描画し、PDF/SVG に
@@ -337,8 +369,16 @@ sub show_interactive {
 
     # SAVEREQ（File>Save as PDF/SVG）への応答に必要なコンテキスト。
     # save_seq は SAVEDATA 専用の連番（サーバーは seq を順序判定に使わない）。
+    # on_cursor/on_pick/on_zoom はマウスイベント用コールバック（任意）。
+    #   on_cursor => sub { my ($fx, $fy) = @_; ... }   # 0..1 の画像内分率
+    #   on_pick   => sub { my ($fx, $fy, $btn) = @_; ... } # btn: 1=左,2=中,3=右
+    #   on_zoom   => sub { my ($zoom, $px, $py) = @_; ... }
+    # 画像内分率 (fx,fy) は (0,0)=左上, (1,1)=右下。データ座標への変換は
+    # 呼び出し側が自分の xlim/ylim を使って行う。
     $self->{_ix} = {
         sock => $sock, render => $render, state => $state, save_seq => 900000,
+        on_cursor => $opt{on_cursor}, on_pick => $opt{on_pick},
+        on_zoom   => $opt{on_zoom},
     };
 
     # 初期フレーム
@@ -403,6 +443,9 @@ sub run {
                 } elsif ($t2 == GSP_MSG_SAVEREQ) {
                     my ($f) = unpack('C', $p2);
                     $self->_handle_savereq($f);    # ドラッグ中の保存要求も取りこぼさない
+                } elsif ($t2 == GSP_MSG_CURSOR || $t2 == GSP_MSG_PICK
+                         || $t2 == GSP_MSG_ZOOM) {
+                    $self->_handle_mouse($t2, $p2); # マウスイベントも消費（desync 防止）
                 } elsif ($t2 == GSP_MSG_ERR) {
                     warn "Driver::GS: server error: $p2\n";
                     last;
@@ -428,6 +471,12 @@ sub run {
             last if $len && !defined $p;
             my ($f) = unpack('C', $p);
             $self->_handle_savereq($f);           # 再描画→PDF/SVG→SAVEDATA返送
+        }
+        elsif ($type == GSP_MSG_CURSOR || $type == GSP_MSG_PICK
+               || $type == GSP_MSG_ZOOM) {
+            my $p = $len ? $self->_sysread_exact($sock, $len) : '';
+            last if $len && !defined $p;
+            $self->_handle_mouse($type, $p);      # コールバックのみ（再描画不要）
         }
         elsif ($type == GSP_MSG_ERR) {
             my $msg = $len ? $self->_sysread_exact($sock, $len) : '';
