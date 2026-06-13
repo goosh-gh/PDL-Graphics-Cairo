@@ -38,6 +38,7 @@ use PDL::Graphics::Cairo::Transform::Log;
 use PDL::Graphics::Cairo::Scale::Log;
 use PDL::Graphics::Cairo::Tick qw(nice_ticks nice_range minor_ticks);
 use PDL::Graphics::Cairo::ColorMap;
+use PDL::Graphics::Cairo::ListedColormap;
 
 # PDL::Stats::Basic  optional
 my $_has_pdl_stats = eval { require PDL::Stats::Basic; 1 } // 0;
@@ -142,6 +143,21 @@ has _yformatter  => (is => 'rw', default => sub { undef });
 has _tick_params    => (is => 'rw', default => sub { {} });
 has _minor_ticks_on => (is => 'rw', default => sub { 0 });
 has _minor_n        => (is => 'rw', default => sub { 5 });
+
+# _resolve_cmap($cmap_spec) -- accept string name or object
+# Returns a ColorMap or ListedColormap object
+sub _resolve_cmap {
+    my ($self, $spec) = @_;
+    $spec //= 'viridis';
+    # Already a colormap object
+    if (ref($spec) && (
+        $spec->isa('PDL::Graphics::Cairo::ColorMap') ||
+        $spec->isa('PDL::Graphics::Cairo::ListedColormap'))) {
+        return $spec;
+    }
+    # String name
+    return PDL::Graphics::Cairo::ColorMap->new($spec);
+}
 
 sub _next_color {
     my ($self) = @_;
@@ -372,7 +388,7 @@ sub hexbin {
     $self->_expand_range($x, $y);
 
     # Set up colorbar
-    my $cmap_obj = PDL::Graphics::Cairo::ColorMap->new($opt{cmap} // 'viridis');
+    my $cmap_obj = $self->_resolve_cmap($opt{cmap});
     $self->_colorbar({ cmap => $cmap_obj,
                        vmin => $opt{vmin} // 0,
                        vmax => $opt{vmax} // 1 });
@@ -404,7 +420,7 @@ sub scatter {
     # cdata 
     if (ref($opt{c}) && $opt{c}->isa('PDL')) {
         my ($cdmin, $cdmax) = $opt{c}->minmax;
-        my $cmap_obj = PDL::Graphics::Cairo::ColorMap->new($opt{cmap} // 'viridis');
+        my $cmap_obj = $self->_resolve_cmap($opt{cmap});
         $self->_colorbar({ cmap => $cmap_obj, vmin => $cdmin, vmax => $cdmax });
     }
     if (defined $opt{label}) {
@@ -585,7 +601,7 @@ sub imshow {
     # $data  2D PDL (rows x cols)  3D (rows x cols x 3) RGB
     $data = pdl($data) unless ref($data) && $data->isa('PDL');
 
-    my $cmap  = PDL::Graphics::Cairo::ColorMap->new($opt{cmap} // 'viridis');
+    my $cmap  = $self->_resolve_cmap($opt{cmap});
     my $vmin  = $opt{vmin} // $data->min;
     my $vmax  = $opt{vmax} // $data->max;
 
@@ -1348,10 +1364,10 @@ sub _render_cmd {
         my @cnts   = grep { $_ >= $mincnt } values %counts;
         my $cmax   = $cmd->{vmax} // (@cnts ? do { my $m = $cnts[0]; for (@cnts) { $m = $_ if $_ > $m } $m } : 1);
         my $cmin   = $cmd->{vmin} // $mincnt;
-        $self->_colorbar({ cmap => PDL::Graphics::Cairo::ColorMap->new($cmd->{cmap}),
+        $self->_colorbar({ cmap => $self->_resolve_cmap($cmd->{cmap}),
                            vmin => $cmin, vmax => $cmax });
 
-        my $cmap = PDL::Graphics::Cairo::ColorMap->new($cmd->{cmap});
+        my $cmap = $self->_resolve_cmap($cmd->{cmap});
         $b->set_alpha($cmd->{alpha});
 
         for my $key (keys %counts) {
@@ -1382,7 +1398,7 @@ sub _render_cmd {
 
     elsif ($type eq 'scatter') {
         my $cmap  = defined($cmd->{cdata})
-            ? PDL::Graphics::Cairo::ColorMap->new($cmd->{cmap}) : undef;
+            ? $self->_resolve_cmap($cmd->{cmap}) : undef;
         my ($cdmin,$cdmax);
         if ($cmap) {
             ($cdmin,$cdmax) = $cmd->{cdata}->minmax;
@@ -2814,7 +2830,7 @@ sub contourf {
     $z = pdl($z) unless ref($z) && $z->isa('PDL');
 
     my $levels = $opt{levels} // 10;
-    my $cmap   = PDL::Graphics::Cairo::ColorMap->new($opt{cmap} // 'viridis');
+    my $cmap   = $self->_resolve_cmap($opt{cmap});
     my $vmin   = $opt{vmin} // $z->min;
     my $vmax   = $opt{vmax} // $z->max;
 
@@ -3147,7 +3163,7 @@ sub heatmap {
     my @dims   = $data->dims;
     my ($rows, $cols) = @dims;
 
-    my $cmap   = PDL::Graphics::Cairo::ColorMap->new($opt{cmap} // 'viridis');
+    my $cmap   = $self->_resolve_cmap($opt{cmap});
     my $vmin   = $opt{vmin} // $data->min;
     my $vmax   = $opt{vmax} // $data->max;
     my $annot  = $opt{annot} // 0;

@@ -6,7 +6,8 @@ use warnings;
 our $VERSION = '0.01';
 
 use Exporter;
-our @EXPORT_OK = qw(figure subplots subplot_mosaic imread);
+our @EXPORT_OK = qw(figure subplots subplot_mosaic imread
+                    ListedColormap Normalize LogNorm BoundaryNorm TwoSlopeNorm);
 our %EXPORT_TAGS = (
     gnuplot => [],
 );
@@ -30,6 +31,33 @@ sub import {
 
 use Scalar::Util qw(looks_like_number);
 use PDL::Graphics::Cairo::Figure;
+use PDL::Graphics::Cairo::ListedColormap;
+
+# ListedColormap / Normalize factory functions
+sub ListedColormap {
+    my ($colors, %opt) = @_;
+    return PDL::Graphics::Cairo::ListedColormap->new($colors, %opt);
+}
+
+sub Normalize {
+    my (%opt) = @_;
+    return PDL::Graphics::Cairo::Normalize->new(%opt);
+}
+
+sub LogNorm {
+    my (%opt) = @_;
+    return PDL::Graphics::Cairo::LogNorm->new(%opt);
+}
+
+sub BoundaryNorm {
+    my (%opt) = @_;
+    return PDL::Graphics::Cairo::BoundaryNorm->new(%opt);
+}
+
+sub TwoSlopeNorm {
+    my (%opt) = @_;
+    return PDL::Graphics::Cairo::TwoSlopeNorm->new(%opt);
+}
 
 sub figure {
     my (%args) = @_;
