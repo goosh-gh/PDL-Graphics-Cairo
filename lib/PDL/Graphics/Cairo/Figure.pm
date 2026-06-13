@@ -70,6 +70,7 @@ sub subplot {
         fig_y  => $fig_y,
     );
     push @{ $self->axes_list }, $ax;
+    $ax->_figure($self);
     return $ax;
 }
 
@@ -222,6 +223,7 @@ sub add_subplot {
             c0 => $cell->c0, c1 => $cell->c1,
             gs => $cell->gridspec,
         };
+        $ax->_figure($self);
         return $ax;
     }
     my ($nrows, $ncols2, $idx2) = ($nrows_or_cell, $ncols, $idx);
@@ -441,6 +443,13 @@ sub tight_layout {
     my %gs_ax_set = map { $_ => 1 } map { $_->{ax} } @{ $self->_gs_axes };
 
     for my $ax (@{ $self->axes_list }) {
+        # Inset axes: fixed position, use minimal margins
+        if ($ax->_is_inset) {
+            $ax->margin_left(28);  $ax->margin_right(8);
+            $ax->margin_bottom(24); $ax->margin_top(12);
+            next;
+        }
+
         # GridSpec Axes: position already set, just compute margins
         if ($gs_ax_set{$ax}) {
             # find gs info

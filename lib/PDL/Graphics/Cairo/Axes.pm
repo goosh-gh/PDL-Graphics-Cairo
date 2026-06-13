@@ -137,6 +137,9 @@ my @COLOR_CYCLE = (
     [0.090, 0.745, 0.812],  # cyan
 );
 
+has _figure      => (is => 'rw');
+has _inset_axes  => (is => 'ro', default => sub { [] });
+has _is_inset    => (is => 'rw', default => sub { 0 });
 has _color_idx   => (is => 'rw', default => sub { 0 });
 has _xformatter  => (is => 'rw', default => sub { undef });
 has _yformatter  => (is => 'rw', default => sub { undef });
@@ -3389,6 +3392,47 @@ sub set_major_formatter {
     if ($axis eq 'x') { return $self->xaxis_formatter($fmt) }
     if ($axis eq 'y') { return $self->yaxis_formatter($fmt) }
     return $self;
+}
+
+# inset_axes([$x0,$y0,$w,$h], %opt) -- create inset axes
+# $x0,$y0,$w,$h are fractions of the parent axes bounding box (0..1)
+# x0,y0 = lower-left corner; w,h = width/height fraction
+# Options: transform ('axes' default)
+sub inset_axes {
+    my ($self, $bounds, %opt) = @_;
+    $bounds //= [0.6, 0.6, 0.35, 0.35];
+    my ($bx0, $by0, $bw, $bh) = @$bounds;
+
+    # Compute pixel coordinates from parent axes layout
+    # These are fractions of the axes *data* area (inside margins)
+    # We use the full axes bounding box (fig_x,fig_y,width,height)
+    my $px = $self->fig_x;
+    my $py = $self->fig_y;
+    my $pw = $self->width;
+    my $ph = $self->height;
+
+    # Convert fractions to pixels
+    # y0 is from bottom in matplotlib, but Cairo y increases downward
+    my $ix = int($px + $bx0 * $pw);
+    my $iy = int($py + (1 - $by0 - $bh) * $ph);  # flip y
+    my $iw = int($bw * $pw);
+    my $ih = int($bh * $ph);
+
+    # Create new Axes with computed pixel position
+    my $ax_in = PDL::Graphics::Cairo::Axes->new(
+        fig_x    => $ix,
+        fig_y    => $iy,
+        width    => $iw,
+        height   => $ih,
+        _is_inset => 1,
+    );
+
+    # Register in parent and figure
+    push @{ $self->_inset_axes }, $ax_in;
+    if ($self->_figure) {
+        push @{ $self->_figure->axes_list }, $ax_in;
+    }
+    return $ax_in;
 }
 
 sub minorticks_on  { $_[0]->_minor_ticks_on(1); $_[0] }
