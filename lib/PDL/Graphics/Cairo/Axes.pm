@@ -1598,7 +1598,9 @@ sub _render_cmd {
             }
             $b->set_color(@c, $cmd->{alpha});
             $b->set_linewidth(0.5);
-            $b->marker($xp, $yp, $cmd->{size}, $cmd->{marker}, 1);
+            # matplotlib s = area in pt^2, radius = sqrt(s/pi)
+            my $radius = sqrt($cmd->{size} / 3.14159265) || 1;
+            $b->marker($xp, $yp, $radius, $cmd->{marker}, 1);
         }
     }
 

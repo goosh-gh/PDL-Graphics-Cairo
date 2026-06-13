@@ -163,7 +163,7 @@ sub subplot_mosaic {
     # For each label find bounding box (r0,r1,c0,c1)
     my %bbox;
     for my $lbl (keys %labels) {
-        my ($r0,$r1,$c0,$c1) = ($nrows,$nrows-1,$ncols,$ncols-1);
+        my ($r0,$r1,$c0,$c1) = ($nrows,-1,$ncols,-1);  # r0/c0: big sentinel, r1/c1: -1 sentinel
         for my $r (0..$nrows-1) {
             for my $c (0..$ncols-1) {
                 next unless $rows[$r][$c] eq $lbl;
@@ -460,13 +460,17 @@ sub tight_layout {
             my $c0   = $gsinfo->{c0};
             my $nr   = $gs->nrows;
             my $nc   = $gs->ncols;
-            my $ml = $c0 == 0 ? 68 : 52;
-            $ml = 80 if $ax->ylabel ne '';
-            my $mr = $ax->_colorbar ? 72 : 16;
-            my $mb = $r1 == $nr ? 56 : 36;
-            $mb = 64 if $ax->xlabel ne '';
-            my $mt = $ax->title ne '' ? 38 : 24;
-            $mt = 48 if $r0 == 0 && ($self->{_suptitle_text} // '') ne '';
+            # Cell pixel size from GridSpec
+            my ($gx,$gy,$gw,$gh) = $ax->fig_x, $ax->fig_y, $ax->width, $ax->height;
+            my $ml = ($c0 == 0 ? 60 : 44);
+            $ml = 72 if $ax->ylabel ne '';
+            $ml = int($ml * 0.75) if $gw < 200;
+            my $mr = $ax->_colorbar ? 68 : 14;
+            my $mb = ($r1 == $nr ? 50 : 30);
+            $mb = 58 if $ax->xlabel ne '';
+            $mb = int($mb * 0.8) if $gh < 150;
+            my $mt = $ax->title ne '' ? 34 : 18;
+            $mt = 44 if $r0 == 0 && ($self->{_suptitle_text} // '') ne '';
             $ax->margin_left($ml);  $ax->margin_right($mr);
             $ax->margin_bottom($mb); $ax->margin_top($mt);
             next;
