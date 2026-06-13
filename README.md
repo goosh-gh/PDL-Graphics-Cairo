@@ -1,141 +1,148 @@
 # PDL::Graphics::Cairo
 
-A 2D plotting library for PDL (Perl Data Language),
-using Cairo and Pango as the rendering backend.
+**matplotlib-style scientific plotting for Perl/PDL, built on Cairo.**
 
-Runs on **macOS and Linux (Ubuntu/Debian)**.
+PDL::Graphics::Cairo (P:G:C) is a high-level 2D plotting library for [PDL](https://pdl.perl.org/) that provides a matplotlib-compatible API. It handles axis scaling, tick placement, labels, legends, colormaps, and complex layouts — so you don't have to.
 
-You can write plots in whichever style you are familiar with —
-matplotlib, PGPLOT, or gnuplot.
-PDL::Graphics::Cairo handles the rendering.
+> Cairo is a low-level drawing API: "draw a line here", "place text there", one command at a time.  
+> PDL::Graphics::Cairo is the high-level layer on top: axes, ticks, data transforms, color mapping, and layout — all done for you.
+
+---
 
 ## Features
 
-- matplotlib-style API (`figure`, `axes`, `line`, `scatter`, `hist`, ...)
-- PGPLOT compatibility layer (`pgbegin`, `pgenv`, `pgline`, `pgbox`, ...)
-- gnuplot-style API via matplotlib layer (familiar command mapping)
-- PNG, PDF, SVG file output — no X11 or libgiza required
-- **macOS native display via giza_server** — the default on macOS; plain `$fig->show()` opens a native window. In-memory PNG over a Unix-domain socket, persistent tabbed windows that outlive the program, shared with giza/PGPLOT C programs. Works on Linux too (GTK3/Xlib server).
-- **Multiple plots in a tabbed window** (giza_server)
-- Interactive display via gnuplot (aqua/wxt/x11) — cross-platform; automatic fallback when `giza_server` is unavailable
-- Legacy macOS Cocoa viewer (`backend => 'osx'`, `pdlcairo_viewer`) retained as a **deprecated** opt-in fallback only — no longer the default, no longer built by `make`
-- Axes frame, ticks, and tick labels rendered by Cairo
-- Dual Y axis support (`twinx`) with independent tick labels on both axes
-- Black background support (`PGPLOT_BACKGROUND=black`)
-- Negative-up Y axis: `pgenv` with ymin > ymax, or `$ax->ylim(lo, hi)` with lo > hi
-- Multi-panel subplots with `tight_layout()`
-- 6×6 multi-panel (36 subplots) layout tested
+### Plot types
+`line` · `scatter` · `bar` / `barh` · `hist` · `errorbar` · `fill_between` · `step` · `stem` · `imshow` · `contourf` · `pie` · `boxplot` · `violin` · `quiver` · `heatmap` · `stackplot` · `eventplot` · `hexbin` · `specgram` · and more
+
+### Axes & decoration
+- Auto-scaling with `tight_layout`
+- Linear / log scale (`set_xscale`, `set_yscale`, `semilogy`, `loglog`)
+- Tick control: `tick_params`, minor ticks, `xaxis_formatter` / `yaxis_formatter`
+- Twin axes: `twinx`, `twiny`
+- Inset axes: `inset_axes`
+- Annotations: `annotate`, `axhline`, `axvline`, `axhspan`, `axvspan`, `text`
+
+### Layouts
+- `subplots(M, N)` — uniform grid
+- `GridSpec` — non-uniform spanning panels
+- `subplot_mosaic("AAB\nCDB")` — string-defined layouts
+- `suptitle` — figure-level title
+
+### Color
+- Built-in colormaps: `viridis`, `plasma`, `jet`, `hot`, `cool`, `gray`, `RdBu`, `inferno`, `magma`
+- `ListedColormap` — discrete color lists
+- `Normalize`, `LogNorm`, `BoundaryNorm`, `TwoSlopeNorm` — data-to-color mapping
+
+### Output
+- PNG (via `PDL::IO::PNG` or Cairo), PDF, SVG
+- Interactive display via `giza-server` (persistent window with tabs, sliders)
+- Inline display in `App::PDL::Notebook`
+
+### Compatibility layers
+- matplotlib API (`line`, `scatter`, `set_xlim`, `tick_params`, ...)
+- PGPLOT API (`env`, `line`, `points`, `pgbox`, ...)
+- gnuplot-style API (`:gnuplot` import tag)
 
 ---
 
-## Synopsis
-
-### If you write matplotlib-style
+## Quick start
 
 ```perl
 use PDL;
-use PDL::Graphics::Cairo qw(figure);
+use PDL::Graphics::Cairo qw(subplots);
 
-my $x   = sequence(200) / 10;
-my $fig = figure(figsize => [8, 5]);   # inches; 768x480 px at 96 dpi
-my $ax  = $fig->axes();
-$ax->line($x, sin($x), color => 'blue', label => 'sin(x)');
-$ax->set_xlabel('x');
-$ax->set_ylabel('y');
-$ax->set_grid(1);
-$ax->legend();
-$fig->save('plot.png');         # PNG file  (tight_layout called automatically)
-$fig->show();                   # macOS: giza_server window (default); Linux: gnuplot
-```
+my ($fig, $ax) = subplots(1, 1, width => 600, height => 400);
 
-### If you write PGPLOT-style
+my $x = sequence(100) / 10;
+$ax->line($x, sin($x),         color => 'steelblue', lw => 2, label => 'sin(x)');
+$ax->line($x, cos($x),         color => 'tomato',    lw => 2, label => 'cos(x)');
+$ax->fill_between($x, sin($x), cos($x), alpha => 0.15);
 
-```perl
-use PDL::Graphics::Cairo::PGPLOT qw(:all);
+$ax->xlabel('x');
+$ax->ylabel('y');
+$ax->title('sin and cos');
+$ax->legend;
+$ax->grid(1);
 
-my @x = (-100 .. 899);
-my @y = map { 10 + $_ * (-20 / 999) } (0 .. 999);
-my $n = scalar @x;
-
-pgbegin(0, "/osx", 1, 1);              # macOS native
-# pgbegin(0, "/xw",  1, 1);            # X11 via gnuplot
-# pgbegin(0, "/aqua", 1, 1);           # AquaTerm via gnuplot
-# pgbegin(0, "output.png/PNG", 1, 1);  # PNG file
-
-pgenv(-100, 899, 10, -10, 0, -2);      # negative up (ymin > ymax)
-pgsci(3);                               # green
-pgline($n, \@x, \@y);
-pgsci(1);
-pgbox("ANST", 0.0, 1, "ANTV", 5.0, 2);
-pgmtxt("TR", -1, 0.1, 1.0, "Ch1");
-pgend();
-```
-
-### If you write gnuplot-style
-
-```perl
-use PDL;
-use PDL::Graphics::Cairo qw(figure);
-
-my $x = pdl(-100 .. 899);
-my $y = 10 + $x * (-20 / 999);
-
-my $fig = figure(figsize => [8, 5]);
-my $ax  = $fig->axes();
-$ax->line($x, $y, color => 'green', lw => 1.5);  # plot ... with lines lc "green"
-$ax->set_xlim(-100, 899);                          # set xrange [-100:899]
-$ax->set_ylim(10, -10);                            # set yrange [10:-10] (negative up)
-$ax->text(870, 9.5, "Ch1", color => 'black');      # set label "Ch1" at ...
-$fig->show();                   # macOS: giza_server (default); Linux: gnuplot
-$fig->save('output.png');       # PNG file  (tight_layout called automatically)
-```
-
-For details of each API, see the [Documentation](#documentation) section below.
-
-### Method naming
-
-Setter methods use matplotlib's Axes-method names as the canonical form:
-`set_xlim` / `set_ylim` / `set_xlabel` / `set_ylabel` / `set_title` /
-`set_xticks` / `set_yticks`, and `plot` (an alias of `line`). The shorter
-pyplot-style forms `xlim` / `ylim` / `xticks` / `yticks` are kept as permanent
-aliases (not deprecated), so existing scripts and matplotlib muscle-memory both
-work. The entry point is the `figure()` function; `PDL::Graphics::Cairo->new()`
-is an equivalent constructor-style alias.
-
----
-
-### figsize — figure size in inches
-
-`figsize => [width_in, height_in]` is the matplotlib-compatible shorthand.
-Converted to pixels at **96 dpi** inside `figure()` and `subplots()`:
-
-```perl
-figure(figsize => [8, 5])            # -> width=768, height=480
-subplots(1, 2, figsize => [10, 4])   # -> width=960, height=384
-```
-
-Explicit `width`/`height` in pixels still work and take precedence:
-
-```perl
-figure(width => 800, height => 500)  # pixels, unchanged
+$fig->tight_layout;
+$fig->save('plot.png');
 ```
 
 ---
 
-### figsize — figure size in inches
+## More examples
 
-`figsize => [width_in, height_in]` is the matplotlib-compatible shorthand.
-Converted to pixels at **96 dpi** inside `figure()` and `subplots()`:
+### Spectrogram (EEG / audio analysis)
 
 ```perl
-figure(figsize => [8, 5])            # -> width=768, height=480
-subplots(1, 2, figsize => [10, 4])   # -> width=960, height=384
+use PDL::Graphics::Cairo qw(subplots);
+
+my $Fs  = 256;                          # sample rate (Hz)
+my $t   = sequence($Fs * 5) / $Fs;
+my $sig = sin(2*3.14159*10*$t) * exp(-($t-2.5)**2/0.5)  # alpha burst
+        + 0.2 * grandom($t->nelem);
+
+my ($fig, $ax) = subplots(1, 1, width => 700, height => 400);
+$ax->specgram($sig, Fs => $Fs, NFFT => 128, noverlap => 112,
+              window => 'hann', cmap => 'hot', vmin => -35, vmax => 5);
+$ax->ylim(0, 40);
+$ax->xlabel('Time (s)');
+$ax->ylabel('Frequency (Hz)');
+$fig->tight_layout;
+$fig->save('specgram.png');
 ```
 
-Explicit `width`/`height` in pixels still work and take precedence:
+### Complex layouts with subplot_mosaic
 
 ```perl
-figure(width => 800, height => 500)  # pixels, unchanged
+use PDL::Graphics::Cairo qw(subplot_mosaic);
+
+my ($fig, %ax) = subplot_mosaic("AAB\nCCB", width => 800, height => 500);
+
+$ax{A}->line(pdl(0..10), pdl(map { sin($_) } 0..10));
+$ax{A}->title('Panel A: full width');
+
+$ax{B}->bar(pdl(1..4), pdl(3, 1, 4, 2));
+$ax{B}->title('B: tall');
+
+$ax{C}->scatter(grandom(50), grandom(50), s => 20);
+$ax{C}->title('C');
+
+$fig->suptitle('subplot_mosaic demo');
+$fig->tight_layout;
+$fig->save('mosaic.png');
+```
+
+### Hexbin density plot
+
+```perl
+use PDL::Graphics::Cairo qw(subplots);
+
+my $x = grandom(5000);
+my $y = $x * 0.8 + grandom(5000) * 0.6;
+
+my ($fig, $ax) = subplots(1, 1, width => 600, height => 500);
+$ax->hexbin($x, $y, gridsize => 30, cmap => 'plasma');
+$ax->xlabel('X'); $ax->ylabel('Y');
+$fig->tight_layout;
+$fig->save('hexbin.png');
+```
+
+### Custom colormaps and normalization
+
+```perl
+use PDL::Graphics::Cairo qw(subplots ListedColormap TwoSlopeNorm);
+
+my $cmap = ListedColormap(['#2166ac','#74add1','#fee090','#f46d43','#a50026']);
+my $norm = TwoSlopeNorm(vmin => -10, vcenter => 0, vmax => 20);
+
+my $vals = grandom(200) * 10;
+my @c    = map { $norm->call($vals->at($_)) } 0..$vals->nelem-1;
+
+my ($fig, $ax) = subplots(1, 1, width => 600, height => 400);
+$ax->scatter(grandom(200), grandom(200), c => pdl(@c), cmap => $cmap, s => 25);
+$fig->tight_layout;
+$fig->save('custom_cmap.png');
 ```
 
 ---
@@ -143,295 +150,74 @@ figure(width => 800, height => 500)  # pixels, unchanged
 ## Installation
 
 ```bash
-perl Makefile.PL
-make
-make test
-sudo make install
+# Dependencies
+cpanm Moo Cairo PDL PDL::IO::PNG
+
+# Install
+git clone https://github.com/goosh-gh/PDL-Graphics-Cairo
+cd PDL-Graphics-Cairo
+perl Makefile.PL && make && make install
 ```
 
-On macOS, native window display uses `giza_server` (a separate binary — see
-the Interactive Display section below). No Cocoa viewer is built by `make`.
-
-### Prerequisites
-
-- PDL >= 2.0
-- Cairo (Perl binding)
-- Pango (Perl binding)
-- Moo
-
-**macOS (MacPorts):**
-```bash
-sudo port install p5-cairo p5-pango p5-moo
-```
-
-**Ubuntu/Debian:**
-```bash
-sudo apt install libcairo-perl libpango-perl libmoo-perl
-sudo apt install gnuplot-x11   # for interactive display
-```
-
-### Optional: faster image loading for imread()
-
-`imread()` picks the fastest available backend, in this order:
-`PDL::IO::PNG` (libpng, ~2.5 ms) → `PDL::IO::Image` (FreeImage, ~5.3 ms) →
-`PDL::IO::Pic` (rpic, ~18.9 ms; bundled with PDL). All paths normalize the
-result to `[H,W,3]` float32 with row 0 = top.
-
-```bash
-cpan PDL::IO::PNG        # fastest; PNG only
-# or, for multi-format support:
-cpan Alien::FreeImage
-cpan PDL::IO::Image
-```
-
-If neither `PDL::IO::PNG` nor `PDL::IO::Image` is installed, `imread()` falls
-back to `PDL::IO::Pic` (rpic) automatically.
-
-### Interactive Display
-
-#### giza_server — default on macOS, also on Linux
-
-On macOS, plain `$fig->show()` opens a native window via `giza_server`.
-You normally don't pass a backend at all:
-
-```perl
-$fig->show();                                     # macOS default: giza_server
-$fig->show(backend => 'gs');                      # explicit; auto-launches the server
-$fig->show(backend => 'gs', start => 'connect');  # connect to a running server only
-```
-
-Renders the figure to an in-memory PNG and sends it to a `giza_server`
-process over a Unix-domain socket — no temporary files. The server owns
-the window, so it persists after the program exits, the window is tabbed,
-and the same server is shared by giza/PGPLOT C/Fortran programs using the
-`/gs` device. The binary is found via `$GIZA_SERVER`, a sibling
-`../giza-server` checkout, or `$PATH`.
-See https://github.com/goosh-gh/giza-server.
-
-When `giza_server` is unavailable, `show()` falls back to gnuplot — it does
-**not** fall back to the legacy Cocoa viewer. `wait_all()` is a no-op on the
-`gs` path (windows already persist), so legacy `nowait` + `wait_all` scripts
-still run unchanged.
-
-**Interactive mode (`show_interactive`).** Instead of a one-shot `show()`,
-the `gs` driver can hold the socket open and re-render on demand from a
-callback. The callback receives the current state and window size and returns
-a fresh figure:
-
-```perl
-my $gs = PDL::Graphics::Cairo::Driver::GS->new(width=>640, height=>480);
-$gs->show_interactive(
-    render => sub {
-        my ($state, $w, $h) = @_;          # $w/$h = current canvas size (px)
-        my $fig = figure(width=>$w, height=>$h);
-        ...                                # build the figure from $state
-        return $fig;
-    },
-);
-```
-
-The server drives this callback over the GSP reverse channel: viewer sliders
-update `$state`, and **resizing the window replots at the new size** — pass
-`$w`/`$h` to `figure(...)` so the plot is re-laid-out (crisp) rather than
-bitmap-scaled. Resize replot is currently macOS (Cocoa) only. A render
-callback that ignores `$w`/`$h` keeps a fixed figure size and will not fill
-the window on resize. See `examples/example_gs.pl` and
-`examples/example_gs_slider.pl`.
-
-#### gnuplot (cross-platform fallback)
-
-```perl
-$fig->show(terminal => 'x11');   # or 'aqua', 'wxt', 'qt'
-```
-
-```bash
-# macOS
-sudo port install gnuplot +aquaterm   # or +x11
-
-# Ubuntu/Debian
-sudo apt install gnuplot-x11
-```
-
-#### Legacy Cocoa viewer (deprecated)
-
-`backend => 'osx'` (the standalone `pdlcairo_viewer` Cocoa app) is retired and
-kept only as a deprecated, opt-in fallback. It is no longer the default and is
-no longer built by `make`. New code should use the default (`giza_server`) path.
-
----
-
-## Image Display with imread()
-
-Use `imread()` to load images for `imshow()`. It automatically selects the
-fastest available backend and normalizes the array to `[H,W,3]` float32:
-
-```perl
-use PDL::Graphics::Cairo qw(figure imread);
-
-my $img = imread("photo.png");   # [H,W,3] float32, row=0 = top
-my $fig = figure(width => 800, height => 600);
-my $ax  = $fig->axes();
-$ax->imshow($img);
-$ax->axis('off');                # hide frame, ticks, labels
-$fig->tight_layout();
-$fig->show();
-```
-
-| Backend | Speed (1000×1000) | Install |
-|---------|-------------------|---------|
-| `PDL::IO::PNG` (libpng) | ~2.5 ms ✅ | `cpan PDL::IO::PNG` |
-| `PDL::IO::Image` (FreeImage) | ~5.3 ms | `cpan Alien::FreeImage PDL::IO::Image` |
-| `PDL::IO::Pic` (rpic, fallback) | ~18.9 ms | included with PDL |
-
----
-
-## Directory Structure
-
-```
-PDL-Graphics-Cairo/
-├── lib/PDL/Graphics/Cairo/
-│   ├── Cairo.pm          # Main entry point: figure(), subplots()
-│   ├── Figure.pm         # Figure class: save(), show(), tight_layout()
-│   ├── Axes.pm           # Axes class: line(), scatter(), xlim(), ylim(), ...
-│   ├── PGPLOT.pm         # PGPLOT compatibility layer: pgbegin/pgline/pgend/...
-│   ├── Driver/
-│   │   ├── Cairo.pm      # Cairo/Pango rendering backend (PNG/PDF/SVG output)
-│   │   ├── GS.pm         # giza_server backend (default macOS native display; Linux too)
-│   │   ├── OSX.pm        # legacy Cocoa backend (deprecated; via pdlcairo_viewer)
-│   │   └── Gnuplot.pm    # gnuplot display backend (aqua/wxt/x11)
-│   ├── Transform/        # Coordinate transforms (linear, log)
-│   ├── ColorMap.pm       # Colormaps (viridis, plasma, ...)
-│   └── Tick.pm           # Tick mark calculation
-├── src/osx/              # legacy Cocoa viewer (deprecated; not built by make)
-│   ├── pdlcairo_viewer.m # Standalone Cocoa viewer app (macOS only)
-│   └── build.sh          # Build script for pdlcairo_viewer
-├── docs/
-│   ├── PGPLOT_compatibility_en.md
-│   ├── PGPLOT_compatibility_ja.md
-│   ├── gnuplot_compatibility.md
-│   └── matplotlib_comparison.md
-└── examples/
-```
-
-### Role of the two Cairo.pm files
-
-There are two files named `Cairo.pm` with distinct roles:
-
-| File | Role |
-|------|------|
-| `lib/PDL/Graphics/Cairo.pm` | Public API entry point. Exports `figure()` and `subplots()`. The file a user loads with `use PDL::Graphics::Cairo`. |
-| `lib/PDL/Graphics/Cairo/Driver/Cairo.pm` | Internal rendering driver. Uses the Cairo/Pango C libraries to draw lines, text, and shapes onto an image surface, and saves it as PNG/PDF/SVG. Never loaded directly by users. |
-
----
-
-## tight_layout
-
-`tight_layout()` adjusts subplot margins automatically. It is called
-**automatically** by `show()`, `save()`, `to_svg()`, `to_png()`, and
-`to_inline()` if not already applied, so explicit calls are optional.
-Calling it manually is still useful when you need to apply it before
-inspecting layout geometry:
-
-```perl
-$fig->tight_layout();   # optional -- called automatically by show()/save()
-$fig->show();
-```
-
----
-
-## macOS Native Backend
-
-macOS native display is provided by `giza_server` (the default). The figure is
-rendered to an in-memory PNG and streamed over a Unix-domain socket to the
-server, which owns a tabbed, persistent native window:
-
-```
-Cairo image surface (software rendering)
-    ↓ in-memory PNG over Unix-domain socket (no temp files)
-giza_server (separate process — Cocoa on macOS, GTK3/Xlib on Linux)
-    ↓ NSImage / GTK → native window (tabbed, persistent)
-native window
-```
-
-The legacy standalone `pdlcairo_viewer` Cocoa app (`backend => 'osx'`) is
-deprecated and no longer built by `make`.
-
----
-
-## Environment Variables
-
-| Variable | Description |
-|----------|-------------|
-| `PGPLOT_BACKGROUND` | `black` = dark background (default: white) |
-| `PGPLOT_DEV` | Default device for `pgbegin`. Accepted values: `/OSX` `/XW` `/XWIN` `/X11` `/XSERVE` `/AQT` `/AQUA` `/WXT` `/QT` `/PNG` `/PDF` `/SVG` `/PS` `/CPS` |
-| `PDLCAIRO_BACKEND` | Override the `show()` backend: `gs` (default on macOS), `gnuplot`, or `osx` (deprecated) |
-| `GIZA_SERVER` | Full path to the `giza_server` binary (override auto-detection) |
-| `PDLCAIRO_VIEWER` | Full path to the legacy `pdlcairo_viewer` binary (deprecated `osx` backend) |
-
----
-
-## Plot Types (matplotlib API)
-
-| Method | Description |
-|--------|-------------|
-| `line` | Line plot |
-| `scatter` | Scatter plot (colormap supported) |
-| `bar` / `barh` | Vertical / horizontal bar chart |
-| `hist` / `hist_kde` | Histogram / Histogram + KDE overlay |
-| `errorbar` / `errorbar_stats` | Error bars |
-| `fill_between` | Filled confidence band |
-| `step` | Step function |
-| `stem` | Stem plot |
-| `imshow` | 2D image or RGB image [H,W,3] with colorbar; use `imread()` to load |
-| `contourf` | Filled contour |
-| `pie` | Pie chart |
-| `boxplot` | Box-and-whisker |
-| `violinplot` | Violin plot |
-| `qqplot` | Q-Q plot vs. normal |
-| `heatmap` | Heatmap with labels |
-| `stackplot` | Stacked area |
-| `eventplot` | Raster / spike plot |
-| `axhline` / `axvline` | Reference lines |
-| `axvspan` / `axhspan` | Shaded regions |
-| `annotate` | Arrow annotation |
-| `twinx` | Dual Y axis (independent ticks on both axes) |
-
----
-
-## Documentation
-
-| File | Description |
-|------|-------------|
-| `docs/PGPLOT_compatibility_en.md` | PGPLOT compatibility layer — full function list and device strings |
-| `docs/PGPLOT_compatibility_ja.md` | Same in Japanese |
-| `docs/gnuplot_compatibility.md` | gnuplot-style API mapping and comparison |
-| `docs/matplotlib_comparison.md` | matplotlib vs PDL::Graphics::Cairo comparison |
+For interactive display, also install [giza-server](https://github.com/goosh-gh/giza-server).
 
 ---
 
 ## Examples
 
-```bash
-# Cross-platform (macOS and Linux)
-perl examples/example_png.pl               # basic PNG output
-perl examples/example_stats.pl             # statistical plots
-perl examples/example_cairo_api.pl         # matplotlib-style with negative-up Y axis
-perl examples/example_pgplot.pl            # PGPLOT-style API
+See the `examples/` directory:
 
-# Interactive display
-perl examples/example_show.pl              # auto-detect terminal
-perl examples/example_show.pl osx          # macOS native (macOS only)
-perl examples/example_show.pl aqua         # gnuplot/AquaTerm (macOS)
-perl examples/example_show.pl x11          # gnuplot/X11 (Linux/XQuartz)
+| File | Description |
+|---|---|
+| `example_gridspec.pl` | GridSpec, subplot_mosaic layouts |
+| `example_hexbin.pl` | 2D density, scatter vs hexbin comparison |
+| `example_colormap.pl` | ListedColormap, LogNorm, TwoSlopeNorm, BoundaryNorm |
+| `specgram_demo.pl` | Chirp, EEG-like, multi-tone spectrograms |
+| `example_stats.pl` | Statistical plots (boxplot, violin, histogram) |
+| `example_png.pl` | Basic plotting quickstart |
+| `example_gs.pl` | Interactive display via giza-server |
 
-# macOS 4-panel demo
-perl examples/pdlcairo_osx_demo.pl         # macOS native
-perl examples/pdlcairo_osx_demo.pl gnuplot # via gnuplot
+---
+
+## Architecture
+
 ```
+PDL::Graphics::Cairo        ← this library
+├── Figure                  ← canvas, layout (subplots, GridSpec, mosaic)
+├── Axes                    ← one subplot: plots, axes, ticks, legends
+├── Driver::Cairo           ← Cairo surface rendering (PNG/PDF/SVG)
+├── Driver::GS              ← giza-server interactive display
+├── ColorMap                ← built-in colormaps
+├── ListedColormap          ← discrete color lists
+├── GridSpec                ← non-uniform subplot layout
+├── Transform::Linear/Log   ← data→pixel coordinate transforms
+├── Scale::Log              ← log-scale tick placement
+└── Tick                    ← tick generation (nice_ticks, minor_ticks)
+```
+
+---
+
+## Status
+
+Active development. matplotlib API coverage:
+
+| Category | Status |
+|---|---|
+| Plot types | ✅ 20+ types |
+| Axes decoration | ✅ tick_params, minor ticks, formatters |
+| Layouts | ✅ GridSpec, subplot_mosaic, inset_axes |
+| Colormaps | ✅ 10 built-in + ListedColormap |
+| Normalization | ✅ Normalize, LogNorm, BoundaryNorm, TwoSlopeNorm |
+| Signal analysis | ✅ specgram (STFT) |
+| Interactive | ✅ giza-server (tabs, sliders, resize) |
+| 3D plots | 🔲 not planned (use PDL::Graphics::Gnuplot) |
 
 ---
 
 ## License
 
-This library is free software; you can redistribute it and/or modify it
-under the same terms as Perl itself.
+Same as Perl itself (Artistic License 2.0 / GPL).
+
+## Author
+
+goosh-gh
