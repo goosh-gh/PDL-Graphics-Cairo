@@ -39,7 +39,8 @@ eval { $ax->set_xticks(pdl(0, 1, 2)); $ax->set_yticks(pdl(0, 5, 10)) };
 is $@, '', 'set_xticks/set_yticks no error';
 
 # --- 重複していた set_tight_layout が単一であること（no-op, 返り値=self） ----
-is $ax->set_tight_layout, $ax, 'set_tight_layout is a no-op returning self';
+do { local $SIG{__WARN__} = sub {};
+     is $ax->set_tight_layout, $ax, 'set_tight_layout is a no-op returning self'; };
 
 # --- PDL::Graphics::Cairo->new は figure() の別名 -------------------
 can_ok 'PDL::Graphics::Cairo', 'new';

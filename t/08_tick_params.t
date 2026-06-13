@@ -139,9 +139,10 @@ use PDL::Graphics::Cairo qw(figure subplots);
 
     $ax->tick_params(which=>'minor', length=>2, width=>0.5);
     my $tp = $ax->_tick_params;
-    is $tp->{x_which},  'minor', 'which=minor stored for x';
-    is $tp->{y_which},  'minor', 'which=minor stored for y';
-    is $tp->{x_length}, 2,       'minor length stored';
+    # which itself is consumed by tick_params routing; check side effects
+    is $tp->{x_minor_length}, 2,   'minor length stored for x';
+    is $tp->{y_minor_length}, 2,   'minor length stored for y';
+    is $tp->{x_minor_width},  0.5, 'minor width stored';
 }
 
 # ----------------------------------------------------------------
