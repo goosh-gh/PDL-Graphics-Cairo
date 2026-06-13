@@ -461,7 +461,7 @@ sub tight_layout {
             my $nr   = $gs->nrows;
             my $nc   = $gs->ncols;
             # Cell pixel size from GridSpec
-            my ($gx,$gy,$gw,$gh) = $ax->fig_x, $ax->fig_y, $ax->width, $ax->height;
+            my ($gx,$gy,$gw,$gh) = ($ax->fig_x, $ax->fig_y, $ax->width, $ax->height);
             my $ml = ($c0 == 0 ? 60 : 44);
             $ml = 72 if $ax->ylabel ne '';
             $ml = int($ml * 0.75) if $gw < 200;

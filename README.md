@@ -12,7 +12,7 @@ PDL::Graphics::Cairo (P:G:C) is a high-level 2D plotting library for [PDL](https
 ## Features
 
 ### Plot types
-`line` · `scatter` · `bar` / `barh` · `hist` · `errorbar` · `fill_between` · `step` · `stem` · `imshow` · `contourf` · `pie` · `boxplot` · `violin` · `quiver` · `heatmap` · `stackplot` · `eventplot` · `hexbin` · `specgram` · and more
+`line` · `scatter` · `bar` / `barh` · `hist` · `errorbar` · `fill_between` · `step` · `stem` · `imshow` · `contour` · `contourf` · `pie` · `boxplot` · `violin` · `quiver` · `heatmap` · `stackplot` · `eventplot` · `hexbin` · `specgram` · and more
 
 ### Axes & decoration
 - Auto-scaling with `tight_layout`
@@ -29,7 +29,7 @@ PDL::Graphics::Cairo (P:G:C) is a high-level 2D plotting library for [PDL](https
 - `suptitle` — figure-level title
 
 ### Color
-- Built-in colormaps: `viridis`, `plasma`, `jet`, `hot`, `cool`, `gray`, `RdBu`, `inferno`, `magma`
+- Built-in colormaps: `viridis`, `plasma`, `jet`, `hot`, `cool`, `gray`, `RdBu`, `inferno`, `magma`, `coolwarm`
 - `ListedColormap` — discrete color lists
 - `Normalize`, `LogNorm`, `BoundaryNorm`, `TwoSlopeNorm` — data-to-color mapping
 
@@ -173,6 +173,7 @@ See the `examples/` directory:
 | `example_hexbin.pl` | 2D density, scatter vs hexbin comparison |
 | `example_colormap.pl` | ListedColormap, LogNorm, TwoSlopeNorm, BoundaryNorm |
 | `specgram_demo.pl` | Chirp, EEG-like, multi-tone spectrograms |
+| `example_contour.pl` | contour/contourf: sincos overlay, 4-panel gallery, topographic map |
 | `example_stats.pl` | Statistical plots (boxplot, violin, histogram) |
 | `example_png.pl` | Basic plotting quickstart |
 | `example_gs.pl` | Interactive display via giza-server |
@@ -203,14 +204,37 @@ Active development. matplotlib API coverage:
 
 | Category | Status |
 |---|---|
-| Plot types | ✅ 20+ types |
-| Axes decoration | ✅ tick_params, minor ticks, formatters |
-| Layouts | ✅ GridSpec, subplot_mosaic, inset_axes |
-| Colormaps | ✅ 10 built-in + ListedColormap |
+| Plot types | ✅ 20+ types incl. hexbin, specgram, contour/contourf |
+| Axes decoration | ✅ tick_params, minor ticks, formatters, inset_axes |
+| Layouts | ✅ GridSpec, subplot_mosaic, suptitle |
+| Colormaps | ✅ 12 built-in + ListedColormap |
 | Normalization | ✅ Normalize, LogNorm, BoundaryNorm, TwoSlopeNorm |
-| Signal analysis | ✅ specgram (STFT) |
+| Signal analysis | ✅ specgram (STFT, windowing, dB scale) |
 | Interactive | ✅ giza-server (tabs, sliders, resize) |
 | 3D plots | 🔲 not planned (use PDL::Graphics::Gnuplot) |
+| streamplot | 🔲 low priority |
+| spine control | 🔲 low priority |
+
+---
+
+## What P:G:C does NOT do
+
+To set expectations clearly:
+
+**Out of scope (by design):**
+- **3D plots** — surface, 3D scatter, wireframe → use `PDL::Graphics::Gnuplot` or `PDL::Graphics::TriD`
+- **Interactive pan/zoom** — mouse-driven navigation (giza-server sliders are separate)
+- **Real-time animation** — frame-by-frame output is possible, but no animation API
+- **pandas-style DataFrames** — Perl has no DataFrame equivalent; use PDL ndarrays directly
+
+**Not yet implemented:**
+- `streamplot` — streamlines for vector fields
+- Spine control — `ax.spines['top'].set_visible(False)` equivalent
+- `constrained_layout` — automatic margin optimization (use `tight_layout` + manual `hspace`/`wspace`)
+
+**What this means in practice:**
+For 2D scientific plotting of PDL data — line, scatter, histogram, contour, spectrogram,
+hexbin, complex layouts — P:G:C handles everything. For 3D visualization, use a dedicated 3D library.
 
 ---
 

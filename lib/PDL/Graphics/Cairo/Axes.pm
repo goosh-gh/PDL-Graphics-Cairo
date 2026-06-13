@@ -2228,16 +2228,16 @@ sub _render_cmd {
 
                     # Marching Squares line segments
                     # bits: 8=BL(v00) 4=BR(v01) 2=TR(v11) 1=TL(v10)
-                    if    ($case==1||$case==14) { $b->line_seg($pxD,$pyD,$pxA,$pyA) }
-                    elsif ($case==2||$case==13) { $b->line_seg($pxA,$pyA,$pxB,$pyB) }
-                    elsif ($case==3||$case==12) { $b->line_seg($pxD,$pyD,$pxB,$pyB) }
-                    elsif ($case==4||$case==11) { $b->line_seg($pxB,$pyB,$pxC,$pyC) }
-                    elsif ($case==5           ) { $b->line_seg($pxD,$pyD,$pxA,$pyA);
-                                                  $b->line_seg($pxB,$pyB,$pxC,$pyC) }
+                    if    ($case==1||$case==14) { $b->line_seg($pxC,$pyC,$pxD,$pyD) }
+                    elsif ($case==2||$case==13) { $b->line_seg($pxB,$pyB,$pxC,$pyC) }
+                    elsif ($case==3||$case==12) { $b->line_seg($pxB,$pyB,$pxD,$pyD) }
+                    elsif ($case==4||$case==11) { $b->line_seg($pxA,$pyA,$pxB,$pyB) }
+                    elsif ($case==5           ) { $b->line_seg($pxA,$pyA,$pxB,$pyB);
+                                                  $b->line_seg($pxC,$pyC,$pxD,$pyD) }
                     elsif ($case==6||$case==9 ) { $b->line_seg($pxA,$pyA,$pxC,$pyC) }
-                    elsif ($case==7||$case==8 ) { $b->line_seg($pxD,$pyD,$pxC,$pyC) }
+                    elsif ($case==7||$case==8 ) { $b->line_seg($pxA,$pyA,$pxD,$pyD) }
                     elsif ($case==10          ) { $b->line_seg($pxA,$pyA,$pxB,$pyB);
-                                                  $b->line_seg($pxD,$pyD,$pxC,$pyC) }
+                                                  $b->line_seg($pxC,$pyC,$pxD,$pyD) }
                 }
             }
         }
