@@ -39,15 +39,19 @@ sub lttb {
     my $a = 0;   # 直前の選択点インデックス
 
     for my $i (0 .. $n_out - 3) {
-        # 次のバケット
-        my $next_start = int(($i + 1) * $bucket_size) + 1;
-        my $next_end   = int(($i + 2) * $bucket_size) + 1;
-        $next_end = $n - 1 if $next_end >= $n;
+        # 現在バケット: インデックス範囲 [cur_start, cur_end]
+        my $cur_start = int($i       * $bucket_size) + 1;
+        my $cur_end   = int(($i + 1) * $bucket_size);      # 次バケット開始の1つ前
+        $cur_start = $n - 2 if $cur_start > $n - 2;
+        $cur_end   = $n - 2 if $cur_end   > $n - 2;
+        $cur_end   = $cur_start if $cur_end < $cur_start;
 
-        # 現在バケット
-        my $cur_start = int($i * $bucket_size) + 1;
-        my $cur_end   = $next_start;
-        $cur_end = $n - 1 if $cur_end >= $n;
+        # 次バケット: 平均を三角形頂点Cとして使う
+        my $next_start = $cur_end + 1;
+        my $next_end   = int(($i + 2) * $bucket_size);
+        $next_start = $n - 1 if $next_start > $n - 1;
+        $next_end   = $n - 1 if $next_end   > $n - 1;
+        $next_end   = $next_start if $next_end < $next_start;
 
         # 次バケットの平均点（三角形の頂点C）
         my $nx = $x->slice("$next_start:$next_end")->avg;
@@ -58,8 +62,7 @@ sub lttb {
         my $ay = $y->at($a);
 
         my $cur_x = $x->slice("$cur_start:$cur_end");
-        my $cur_y = $y->slice("$cur_end:$cur_end");  # sliceは同じ範囲
-        $cur_y    = $y->slice("$cur_start:$cur_end");
+        my $cur_y = $y->slice("$cur_start:$cur_end");
 
         # 三角形面積 = |（B-A）×（C-A）| / 2
         # = |(bx-ax)(cy-ay) - (cx-ax)(by-ay)| / 2

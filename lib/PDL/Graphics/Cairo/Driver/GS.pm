@@ -559,12 +559,16 @@ sub run {
                 # render が最後に返した Figure を _last_figure に保存してあれば使う
                 if (my $fig = $ix->{_last_figure}) {
                     my ($xd, $yd) = (undef, undef);
+                    my $ax_idx = undef;
+                    my $i = 0;
                     for my $ax (@{ $fig->axes_list }) {
                         ($xd, $yd) = $ax->image_frac_to_data($ev->{fx}, $ev->{fy});
-                        last if defined $xd;   # プロット枠内の最初の Axes を使う
+                        if (defined $xd) { $ax_idx = $i; last }
+                        $i++;
                     }
-                    $state->{_cursor_x} = $xd;
-                    $state->{_cursor_y} = $yd;
+                    $state->{_cursor_x}      = $xd;
+                    $state->{_cursor_y}      = $yd;   # マウスのY座標（通常は使わない）
+                    $state->{_cursor_ax_idx} = $ax_idx;  # ヒットしたAxesのインデックス
                 } else {
                     $state->{_cursor_x} = undef;
                     $state->{_cursor_y} = undef;

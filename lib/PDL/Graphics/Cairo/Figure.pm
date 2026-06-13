@@ -481,21 +481,28 @@ sub tight_layout {
         $col = 0 if $col < 0; $col = $ncols-1 if $col >= $ncols;
         $row = 0 if $row < 0; $row = $nrows-1 if $row >= $nrows;
 
-        # : Y
-        my $ml = $col == 0 ? 72 : 56;
-        $ml = 84 if $ax->ylabel ne "";
-        $ml = 84 if $ax->ylabel ne '';
+        # マージン基準値をセルサイズに比例させる（多パネル時の隙間を削減）
+        my $scale_h = $cell_h < 120 ? $cell_h / 120.0 : 1.0;
+        my $scale_w = $cell_w < 160 ? $cell_w / 160.0 : 1.0;
 
-        # : 
-        my $mr = $ax->_colorbar ? 72 : (exists $ax->{_right_ylabel} && $ax->{_right_ylabel} ne "") ? 110 : 16;
+        # 左マージン: Y軸ラベル有無で変化
+        my $ml = $col == 0 ? int(56 * $scale_w + 0.5) : int(36 * $scale_w + 0.5);
+        $ml = int(70 * $scale_w + 0.5) if $ax->ylabel ne "";
+        $ml = int(70 * $scale_w + 0.5) if $ax->ylabel ne '';
+        $ml = 28 if $ml < 28;   # 最小値
 
-        # : X
-        my $mb = $row == $nrows-1 ? 64 : 40;
-        $mb = 72 if $ax->xlabel ne '';
+        # 右マージン
+        my $mr = $ax->_colorbar ? 72 : (exists $ax->{_right_ylabel} && $ax->{_right_ylabel} ne "") ? 110 : int(10 * $scale_w + 8);
 
-        # : 
-        my $mt = $ax->title ne '' ? 38 : 24;
-        $mt = 48 if $row == 0 && $self->_suptitle_text ne '';
+        # 下マージン: X軸ラベル有無で変化
+        my $mb = $row == $nrows-1 ? int(48 * $scale_h + 0.5) : int(28 * $scale_h + 0.5);
+        $mb = int(56 * $scale_h + 0.5) if $ax->xlabel ne '';
+        $mb = 20 if $mb < 20;
+
+        # 上マージン: タイトル有無で変化
+        my $mt = $ax->title ne '' ? int(32 * $scale_h + 0.5) : int(16 * $scale_h + 0.5);
+        $mt = int(40 * $scale_h + 0.5) if $row == 0 && $self->_suptitle_text ne '';
+        $mt = 12 if $mt < 12;
 
         # cell が小さいとき margin が描画域を食い尽くして $mt>$mb/$ml>$mr になる。
         # X/Y それぞれ合計が cell の 80% を超えないようクランプする。
