@@ -136,7 +136,9 @@ my @COLOR_CYCLE = (
     [0.090, 0.745, 0.812],  # cyan
 );
 
-has _color_idx  => (is => 'rw', default => sub { 0 });
+has _color_idx   => (is => 'rw', default => sub { 0 });
+has _xformatter  => (is => 'rw', default => sub { undef });
+has _yformatter  => (is => 'rw', default => sub { undef });
 has _tick_params    => (is => 'rw', default => sub { {} });
 has _minor_ticks_on => (is => 'rw', default => sub { 0 });
 has _minor_n        => (is => 'rw', default => sub { 5 });
@@ -347,6 +349,36 @@ sub line {
 *plot     = \&line;
 
 # ---- scatter -----------------------------------------------------
+# hexbin($x, $y, %opt) -- 2D hexagonal binning
+# Options: gridsize (default 20), cmap, mincnt (default 1),
+#          vmin, vmax, alpha, reduce_C_function (ignored, count only)
+sub hexbin {
+    my ($self, $x, $y, %opt) = @_;
+    $x = pdl($x) unless ref($x) && $x->isa('PDL');
+    $y = pdl($y) unless ref($y) && $y->isa('PDL');
+
+    push @{ $self->_queue }, {
+        type     => 'hexbin',
+        x        => $x,
+        y        => $y,
+        gridsize => $opt{gridsize} // 20,
+        cmap     => $opt{cmap}     // 'viridis',
+        mincnt   => $opt{mincnt}   // 1,
+        alpha    => $opt{alpha}    // 1.0,
+        vmin     => $opt{vmin},
+        vmax     => $opt{vmax},
+        label    => $opt{label},
+    };
+    $self->_expand_range($x, $y);
+
+    # Set up colorbar
+    my $cmap_obj = PDL::Graphics::Cairo::ColorMap->new($opt{cmap} // 'viridis');
+    $self->_colorbar({ cmap => $cmap_obj,
+                       vmin => $opt{vmin} // 0,
+                       vmax => $opt{vmax} // 1 });
+    return $self;
+}
+
 sub scatter {
     my ($self, $x, $y, %opt) = @_;
     $x = pdl($x) unless ref($x) && $x->isa('PDL');
@@ -1287,6 +1319,67 @@ sub _render_cmd {
         $b->set_linestyle('solid');
     }
 
+    elsif ($type eq 'hexbin') {
+        my ($nx, $xmin, $xmax) = ($cmd->{gridsize},
+            $self->xmin, $self->xmax);
+        my ($ymin, $ymax) = ($self->ymin, $self->ymax);
+        my $dx   = ($xmax - $xmin) / $nx;
+        # hex geometry: width=dx, height=dx/cos(30deg) approx
+        my $asp  = ($ymax - $ymin) / ($xmax - $xmin);
+        my $ny   = int($nx * $asp * 0.8660) + 1;  # sqrt(3)/2
+        my $dy   = ($ymax - $ymin) / $ny;
+
+        # Count points per hexagon
+        my %counts;
+        my $xs = $cmd->{x};
+        my $ys = $cmd->{y};
+        for my $i (0 .. $xs->nelem - 1) {
+            my ($xv, $yv) = ($xs->at($i), $ys->at($i));
+            next if $xv < $xmin || $xv > $xmax;
+            next if $yv < $ymin || $yv > $ymax;
+            # offset rows for hex packing
+            my $row  = int(($yv - $ymin) / $dy);
+            my $xoff = ($row % 2) ? $dx * 0.5 : 0;
+            my $col  = int(($xv - $xmin - $xoff) / $dx);
+            $counts{"$row,$col"}++;
+        }
+
+        my $mincnt = $cmd->{mincnt};
+        my @cnts   = grep { $_ >= $mincnt } values %counts;
+        my $cmax   = $cmd->{vmax} // (@cnts ? do { my $m = $cnts[0]; for (@cnts) { $m = $_ if $_ > $m } $m } : 1);
+        my $cmin   = $cmd->{vmin} // $mincnt;
+        $self->_colorbar({ cmap => PDL::Graphics::Cairo::ColorMap->new($cmd->{cmap}),
+                           vmin => $cmin, vmax => $cmax });
+
+        my $cmap = PDL::Graphics::Cairo::ColorMap->new($cmd->{cmap});
+        $b->set_alpha($cmd->{alpha});
+
+        for my $key (keys %counts) {
+            my $cnt = $counts{$key};
+            next if $cnt < $mincnt;
+            my ($row, $col) = split /,/, $key;
+            my $xoff = ($row % 2) ? $dx * 0.5 : 0;
+            my $cx   = $xmin + ($col + 0.5) * $dx + $xoff;
+            my $cy   = $ymin + ($row + 0.5) * $dy;
+
+            my $t    = ($cmax > $cmin) ? ($cnt - $cmin) / ($cmax - $cmin) : 1;
+            $t = 0 if $t < 0; $t = 1 if $t > 1;
+            my @col_rgb = $cmap->rgb_at($t);
+            $b->set_color(@col_rgb);
+
+            # Draw filled hexagon
+            my $pxcx = $tr->x(pdl($cx))->at(0);
+            my $pycy = $tr->y(pdl($cy))->at(0);
+            my $rx   = abs($tr->x(pdl($cx + $dx*0.5))->at(0) - $pxcx);
+            my $ry   = abs($tr->y(pdl($cy + $dy*0.5))->at(0) - $pycy);
+            # 6 vertices of flat-top hexagon
+            my @vx = map { $pxcx + $rx * cos($_ * 3.14159265/3) } 0..5;
+            my @vy = map { $pycy + $ry * sin($_ * 3.14159265/3) } 0..5;
+            $b->filled_polygon_xy(\@vx, \@vy);
+        }
+        $b->set_alpha(1.0);
+    }
+
     elsif ($type eq 'scatter') {
         my $cmap  = defined($cmd->{cdata})
             ? PDL::Graphics::Cairo::ColorMap->new($cmd->{cmap}) : undef;
@@ -2001,11 +2094,18 @@ sub _draw_twin_yaxis {
     } else {
         @ytks = nice_ticks($self->ymin, $self->ymax, 6);
     }
-    my @ylbs = $self->_yticklabels ? @{ $self->_yticklabels }
-        : ($self->yscale eq 'log')
-            ? do { my $sc = PDL::Graphics::Cairo::Scale::Log->new;
-                   map { $sc->fmt_tick($_) } @ytks }
-            : map { _fmt_tick($_) } @ytks;
+    my @ylbs;
+    if ($self->_yticklabels) {
+        @ylbs = @{ $self->_yticklabels };
+    } elsif ($self->_yformatter) {
+        my $fmt = $self->_yformatter;
+        @ylbs = map { $fmt->($ytks[$_], $_) } 0..$#ytks;
+    } elsif ($self->yscale eq 'log') {
+        my $sc = PDL::Graphics::Cairo::Scale::Log->new;
+        @ylbs = map { $sc->fmt_tick($_) } @ytks;
+    } else {
+        @ylbs = map { _fmt_tick($_) } @ytks;
+    }
 
     my $min_ygap = 14;
     my ($ylo, $yhi) = ($self->ymin, $self->ymax);
@@ -2103,11 +2203,18 @@ sub _draw_frame {
     } else {
         @xtks = nice_ticks($self->xmin, $self->xmax, 6);
     }
-    my @xlbs = $self->_xticklabels ? @{ $self->_xticklabels }
-        : ($self->xscale eq 'log')
-            ? do { my $sc = PDL::Graphics::Cairo::Scale::Log->new;
-                   map { $sc->fmt_tick($_) } @xtks }
-            : map { _fmt_tick($_) } @xtks;
+    my @xlbs;
+    if ($self->_xticklabels) {
+        @xlbs = @{ $self->_xticklabels };
+    } elsif ($self->_xformatter) {
+        my $fmt = $self->_xformatter;
+        @xlbs = map { $fmt->($xtks[$_], $_) } 0..$#xtks;
+    } elsif ($self->xscale eq 'log') {
+        my $sc = PDL::Graphics::Cairo::Scale::Log->new;
+        @xlbs = map { $sc->fmt_tick($_) } @xtks;
+    } else {
+        @xlbs = map { _fmt_tick($_) } @xtks;
+    }
 
     my ($xlo, $xhi) = ($self->xmin, $self->xmax);
     my $prev_xp = -9999;
@@ -3240,6 +3347,32 @@ sub fill {
     }
         # y2=scalar PDL だと fill_between の append でサイズ不一致になるため同長ゼロに展開
     return $self->fill_between($x, $y, zeroes($x->nelem), @rest);
+}
+
+# xaxis_formatter($coderef) -- set custom X tick label formatter
+# $coderef receives (value, index) and returns a string
+# Example: $ax->xaxis_formatter(sub { sprintf '%.1f%%', $_[0]*100 })
+sub xaxis_formatter {
+    my ($self, $fmt) = @_;
+    $self->_xformatter($fmt);
+    return $self;
+}
+
+# yaxis_formatter($coderef) -- set custom Y tick label formatter
+sub yaxis_formatter {
+    my ($self, $fmt) = @_;
+    $self->_yformatter($fmt);
+    return $self;
+}
+
+# set_major_formatter($axis, $coderef) -- matplotlib Axes.xaxis.set_major_formatter compat
+# Usage: $ax->set_major_formatter('x', sub { ... })
+#        $ax->set_major_formatter('y', sub { ... })
+sub set_major_formatter {
+    my ($self, $axis, $fmt) = @_;
+    if ($axis eq 'x') { return $self->xaxis_formatter($fmt) }
+    if ($axis eq 'y') { return $self->yaxis_formatter($fmt) }
+    return $self;
 }
 
 sub minorticks_on  { $_[0]->_minor_ticks_on(1); $_[0] }

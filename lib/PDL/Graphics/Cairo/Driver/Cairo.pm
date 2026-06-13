@@ -195,6 +195,23 @@ sub polyline {
 }
 
 # PDL piddle
+
+sub set_alpha { my ($self, $a) = @_; $self->{_alpha} = $a // 1.0; }
+
+sub filled_polygon_xy {
+    my ($self, $xs, $ys) = @_;  # arrayrefs
+    return unless @$xs >= 3;
+    my $cr = $self->{cr};
+    $cr->new_path;
+    $cr->move_to($xs->[0], $ys->[0]);
+    for my $i (1..$#$xs) { $cr->line_to($xs->[$i], $ys->[$i]) }
+    $cr->close_path;
+    my $a = $self->{_alpha} // 1.0;
+    if ($a < 1.0) {
+        $cr->save; $cr->clip; $cr->paint_with_alpha($a); $cr->restore;
+    } else { $cr->fill; }
+}
+
 sub filled_polygon {
     my ($self, $x, $y) = @_;
     my $cr = $self->{cr};
@@ -204,7 +221,15 @@ sub filled_polygon {
         $cr->line_to($x->at($i), $y->at($i));
     }
     $cr->close_path;
-    $cr->fill;
+    my $a = $self->{_alpha} // 1.0;
+    if ($a < 1.0) {
+        $cr->save;
+        $cr->clip;
+        $cr->paint_with_alpha($a);
+        $cr->restore;
+    } else {
+        $cr->fill;
+    }
 }
 
 #
