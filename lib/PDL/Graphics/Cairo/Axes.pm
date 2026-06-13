@@ -398,6 +398,137 @@ sub hexbin {
     return $self;
 }
 
+# specgram($x, %opt) -- Short-Time Fourier Transform spectrogram
+# Options:
+#   Fs       => sample rate in Hz (default 1)
+#   NFFT     => FFT window size (default 256)
+#   noverlap => overlap samples (default NFFT/2)
+#   window   => 'hann' | 'hamming' | 'blackman' | 'none' (default 'hann')
+#   cmap     => colormap name or object (default 'viridis')
+#   vmin     => min power in dB (default auto)
+#   vmax     => max power in dB (default auto)
+#   sides    => 'onesided' | 'twosided' (default 'onesided')
+#   scale    => 'dB' | 'linear' (default 'dB')
+#   detrend  => 'none' | 'mean' (default 'none')
+sub specgram {
+    my ($self, $x, %opt) = @_;
+    $x = pdl($x) unless ref($x) && $x->isa('PDL');
+    $x = $x->flat;
+
+    my $Fs       = $opt{Fs}       // 1;
+    my $NFFT     = $opt{NFFT}     // 256;
+    my $noverlap = $opt{noverlap} // int($NFFT / 2);
+    my $wname    = $opt{window}   // 'hann';
+    my $cmap     = $opt{cmap}     // 'viridis';
+    my $sides    = $opt{sides}    // 'onesided';
+    my $scale    = $opt{scale}    // 'dB';
+    my $detrend  = $opt{detrend}  // 'none';
+
+    my $step     = $NFFT - $noverlap;
+    my $npts     = $x->nelem;
+    my $nframes  = int(($npts - $NFFT) / $step) + 1;
+    die "specgram: signal too short (need >= NFFT=$NFFT samples)" if $nframes < 1;
+
+    # Build window function
+    my $win;
+    if ($wname eq 'hann' || $wname eq 'hanning') {
+        $win = 0.5 * (1 - cos(2 * 3.14159265358979 * sequence($NFFT) / ($NFFT - 1)));
+    } elsif ($wname eq 'hamming') {
+        $win = 0.54 - 0.46 * cos(2 * 3.14159265358979 * sequence($NFFT) / ($NFFT - 1));
+    } elsif ($wname eq 'blackman') {
+        my $n = sequence($NFFT) / ($NFFT - 1);
+        $win = 0.42 - 0.5 * cos(2 * 3.14159265358979 * $n)
+                    + 0.08 * cos(4 * 3.14159265358979 * $n);
+    } else {
+        $win = ones($NFFT);
+    }
+    my $win_norm = ($win * $win)->sum->sqrt->at(0);
+    $win_norm = 1 if $win_norm == 0;
+
+    # STFT: compute power spectrum for each frame
+    my $nfreqs = $sides eq 'onesided' ? int($NFFT/2) + 1 : $NFFT;
+
+    # Build spectrogram matrix: [nfreqs x nframes]
+    my $spec = zeroes($nfreqs, $nframes);
+
+    for my $fi (0 .. $nframes - 1) {
+        my $start = $fi * $step;
+        my $seg   = $x->slice("$start:" . ($start + $NFFT - 1))->copy;
+
+        # Detrend
+        if ($detrend eq 'mean') {
+            $seg -= $seg->avg;
+        }
+
+        # Apply window
+        $seg *= $win;
+
+        # FFT using PDL::FFT
+        my $re = $seg->copy->double;
+        my $im = zeroes($NFFT)->double;
+        eval { require PDL::FFT; PDL::FFT::fft($re, $im) };
+        if ($@) {
+            # Fallback: DFT (slow but always available)
+            my $re2 = zeroes($NFFT)->double;
+            my $im2 = zeroes($NFFT)->double;
+            for my $k (0 .. $NFFT-1) {
+                for my $n (0 .. $NFFT-1) {
+                    my $angle = -2 * 3.14159265358979 * $k * $n / $NFFT;
+                    $re2->set($k, $re2->at($k) + $seg->at($n) * cos($angle));
+                    $im2->set($k, $im2->at($k) + $seg->at($n) * sin($angle));
+                }
+            }
+            $re = $re2; $im = $im2;
+        }
+
+        # Power spectrum
+        my $power = ($re * $re + $im * $im) / ($win_norm * $win_norm);
+        my $pslice = $power->slice("0:" . ($nfreqs - 1));
+
+        # Double non-DC/Nyquist bins for onesided
+        if ($sides eq 'onesided') {
+            $pslice->slice("1:" . ($nfreqs - 2)) *= 2
+                if $nfreqs > 2;
+        }
+
+        $spec->slice(":,$fi") .= $pslice;
+    }
+
+    # Convert to dB
+    if ($scale eq 'dB') {
+        $spec = 10 * log10($spec + 1e-300);
+    }
+
+    # Compute time and frequency axes
+    my @times = map { ($_ * $step + $NFFT/2) / $Fs } 0..$nframes-1;
+    my @freqs = $sides eq 'onesided'
+        ? map { $_ * $Fs / $NFFT } 0..$nfreqs-1
+        : map { (($_ <= $NFFT/2) ? $_ : $_ - $NFFT) * $Fs / $NFFT } 0..$nfreqs-1;
+
+    my $vmin = $opt{vmin} // $spec->min->at(0);
+    my $vmax = $opt{vmax} // $spec->max->at(0);
+
+    push @{ $self->_queue }, {
+        type  => 'specgram',
+        spec  => $spec,       # [nfreqs x nframes]
+        times => \@times,
+        freqs => \@freqs,
+        cmap  => $cmap,
+        vmin  => $vmin,
+        vmax  => $vmax,
+    };
+
+    # Set axis ranges
+    $self->_expand_range(pdl($times[0], $times[-1]),
+                         pdl($freqs[0], $freqs[-1]));
+
+    # Colorbar
+    my $cmap_obj = $self->_resolve_cmap($cmap);
+    $self->_colorbar({ cmap => $cmap_obj, vmin => $vmin, vmax => $vmax });
+
+    return $self;
+}
+
 sub scatter {
     my ($self, $x, $y, %opt) = @_;
     $x = pdl($x) unless ref($x) && $x->isa('PDL');
@@ -1336,6 +1467,56 @@ sub _render_cmd {
         $b->set_linestyle($cmd->{linestyle}, $cmd->{lw});
         $b->polyline($xd, $yd);
         $b->set_linestyle('solid');
+    }
+
+    elsif ($type eq 'specgram') {
+        my $spec   = $cmd->{spec};
+        my $times  = $cmd->{times};
+        my $freqs  = $cmd->{freqs};
+        my $vmin   = $cmd->{vmin};
+        my $vmax   = $cmd->{vmax};
+        my $cmap   = $self->_resolve_cmap($cmd->{cmap});
+
+        my $nframes = scalar @$times;
+        my $nfreqs  = scalar @$freqs;
+
+        # Draw each cell as a filled rectangle
+        # Time runs left-right (x), Frequency runs bottom-top (y)
+        for my $fi (0 .. $nframes - 1) {
+            for my $fqi (0 .. $nfreqs - 1) {
+                my $val = $spec->at($fqi, $fi);
+                my $t   = ($vmax > $vmin)
+                    ? ($val - $vmin) / ($vmax - $vmin) : 0.5;
+                $t = 0 if $t < 0; $t = 1 if $t > 1;
+                my @rgb = $cmap->rgb_at($t);
+                $b->set_color(@rgb);
+
+                # Pixel coordinates for this cell
+                my $t0 = $times->[$fi];
+                my $t1 = ($fi < $nframes - 1) ? $times->[$fi+1]
+                       : $t0 + ($t0 - ($fi > 0 ? $times->[$fi-1] : $t0));
+                my $f0 = $freqs->[$fqi];
+                my $f1 = ($fqi < $nfreqs - 1) ? $freqs->[$fqi+1]
+                       : $f0 + ($f0 - ($fqi > 0 ? $freqs->[$fqi-1] : $f0));
+
+                my $px0 = $tr->x(pdl($t0))->at(0);
+                my $px1 = $tr->x(pdl($t1))->at(0);
+                my $py0 = $tr->y(pdl($f0))->at(0);
+                my $py1 = $tr->y(pdl($f1))->at(0);
+
+                # Ensure correct order (y increases downward in screen)
+                my ($lx, $rx) = $px0 < $px1 ? ($px0,$px1) : ($px1,$px0);
+                my ($ty, $by) = $py0 < $py1 ? ($py0,$py1) : ($py1,$py0);
+
+                next if $rx < $ml || $lx > $mr;
+                next if $by < $mt || $ty > $mb;
+
+                $lx = $ml if $lx < $ml; $rx = $mr if $rx > $mr;
+                $ty = $mt if $ty < $mt; $by = $mb if $by > $mb;
+
+                $b->filled_rect($lx, $ty, $rx - $lx, $by - $ty);
+            }
+        }
     }
 
     elsif ($type eq 'hexbin') {

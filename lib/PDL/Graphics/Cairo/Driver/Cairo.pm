@@ -196,6 +196,13 @@ sub polyline {
 
 # PDL piddle
 
+sub filled_rect {
+    my ($self, $x, $y, $w, $h) = @_;
+    return if $w <= 0 || $h <= 0;
+    $self->{cr}->rectangle($x, $y, $w, $h);
+    $self->{cr}->fill;
+}
+
 sub set_alpha { my ($self, $a) = @_; $self->{_alpha} = $a // 1.0; }
 
 sub filled_polygon_xy {
