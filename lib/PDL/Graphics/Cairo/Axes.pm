@@ -362,10 +362,10 @@ sub line {
     return $self;
 }
 
-*polyline = \&line;
+sub polyline; *polyline = \&line;
 # matplotlib では plot() が正準名。P:G:C では plot/line 両方サポート。
 # ドキュメント・examples の第一表記は plot() に揃える。
-*plot     = \&line;
+sub plot;     *plot     = \&line;
 
 # ---- scatter -----------------------------------------------------
 # hexbin($x, $y, %opt) -- 2D hexagonal binning
@@ -2167,6 +2167,84 @@ sub _render_cmd {
         $b->text($txp, $typ, $cmd->{text}, align=>'left', valign=>'bottom');
     }
 
+    elsif ($type eq 'contour') {
+        my @xs      = list($cmd->{x});
+        my @ys      = list($cmd->{y});
+        my $z       = $cmd->{z};
+        my $nr      = scalar @ys;
+        my $nc      = scalar @xs;
+        my @levels  = @{ $cmd->{levels} };
+        my $colors  = $cmd->{colors};
+        my $lws     = $cmd->{linewidths};
+        my $lss     = $cmd->{linestyles};
+
+        for my $li (0 .. $#levels) {
+            my $level = $levels[$li];
+
+            my @lc;
+            if (ref($colors) eq 'ARRAY') {
+                @lc = @{ $self->_parse_color($colors->[$li % scalar(@$colors)]) };
+            } else {
+                @lc = @{ $self->_parse_color($colors) };
+            }
+            my $lw = ref($lws) eq 'ARRAY' ? $lws->[$li % scalar(@$lws)] : $lws;
+            my $ls = ref($lss) eq 'ARRAY' ? $lss->[$li % scalar(@$lss)] : $lss;
+
+            $b->set_color(@lc, $cmd->{alpha});
+            $b->set_linewidth($lw);
+            $b->set_linestyle($ls);
+
+            for my $r (0 .. $nr - 2) {
+                for my $c (0 .. $nc - 2) {
+                    my $v00 = $z->at($r,   $c);
+                    my $v01 = $z->at($r,   $c+1);
+                    my $v10 = $z->at($r+1, $c);
+                    my $v11 = $z->at($r+1, $c+1);
+
+                    my $case = (($v00 >= $level) ? 8 : 0)
+                             | (($v01 >= $level) ? 4 : 0)
+                             | (($v11 >= $level) ? 2 : 0)
+                             | (($v10 >= $level) ? 1 : 0);
+                    next if $case == 0 || $case == 15;
+
+                    my $x0d = $xs[$c];   my $x1d = $xs[$c+1];
+                    my $y0d = $ys[$r];   my $y1d = $ys[$r+1];
+
+                    # Linear interp on each edge
+                    # A=bottom(y0) B=right(x1) C=top(y1) D=left(x0)
+                    my $tA = ($v01!=$v00) ? ($level-$v00)/($v01-$v00) : 0.5;
+                    my ($xA,$yA) = ($x0d+$tA*($x1d-$x0d), $y0d);
+                    my $tB = ($v11!=$v01) ? ($level-$v01)/($v11-$v01) : 0.5;
+                    my ($xB,$yB) = ($x1d, $y0d+$tB*($y1d-$y0d));
+                    my $tC = ($v11!=$v10) ? ($level-$v10)/($v11-$v10) : 0.5;
+                    my ($xC,$yC) = ($x0d+$tC*($x1d-$x0d), $y1d);
+                    my $tD = ($v10!=$v00) ? ($level-$v00)/($v10-$v00) : 0.5;
+                    my ($xD,$yD) = ($x0d, $y0d+$tD*($y1d-$y0d));
+
+                    my ($pxA,$pyA) = ($tr->x(pdl($xA))->at(0), $tr->y(pdl($yA))->at(0));
+                    my ($pxB,$pyB) = ($tr->x(pdl($xB))->at(0), $tr->y(pdl($yB))->at(0));
+                    my ($pxC,$pyC) = ($tr->x(pdl($xC))->at(0), $tr->y(pdl($yC))->at(0));
+                    my ($pxD,$pyD) = ($tr->x(pdl($xD))->at(0), $tr->y(pdl($yD))->at(0));
+
+                    # Marching Squares line segments
+                    # bits: 8=BL(v00) 4=BR(v01) 2=TR(v11) 1=TL(v10)
+                    if    ($case==1||$case==14) { $b->line_seg($pxD,$pyD,$pxA,$pyA) }
+                    elsif ($case==2||$case==13) { $b->line_seg($pxA,$pyA,$pxB,$pyB) }
+                    elsif ($case==3||$case==12) { $b->line_seg($pxD,$pyD,$pxB,$pyB) }
+                    elsif ($case==4||$case==11) { $b->line_seg($pxB,$pyB,$pxC,$pyC) }
+                    elsif ($case==5           ) { $b->line_seg($pxD,$pyD,$pxA,$pyA);
+                                                  $b->line_seg($pxB,$pyB,$pxC,$pyC) }
+                    elsif ($case==6||$case==9 ) { $b->line_seg($pxA,$pyA,$pxC,$pyC) }
+                    elsif ($case==7||$case==8 ) { $b->line_seg($pxD,$pyD,$pxC,$pyC) }
+                    elsif ($case==10          ) { $b->line_seg($pxA,$pyA,$pxB,$pyB);
+                                                  $b->line_seg($pxD,$pyD,$pxC,$pyC) }
+                }
+            }
+        }
+        $b->set_linestyle('solid');
+        $b->set_linewidth(1.5);
+    }
+
     elsif ($type eq 'contourf') {
         # bilinear
         my @xs  = list($cmd->{x});
@@ -3222,28 +3300,36 @@ sub contour {
     $y = pdl($y) unless ref($y) && $y->isa('PDL');
     $z = pdl($z) unless ref($z) && $z->isa('PDL');
 
-    my $levels  = $opt{levels}  // 8;
-    my $color   = $self->_parse_color($opt{color} // 'black');
-    my $lw      = $opt{linewidth} // $opt{lw} // 1.0;
-    my $vmin    = $opt{vmin} // $z->min;
-    my $vmax    = $opt{vmax} // $z->max;
+    my $levels   = $opt{levels}     // 8;
+    my $colors   = $opt{colors}     // $opt{color} // 'black';
+    my $lws      = $opt{linewidths} // $opt{linewidth} // $opt{lw} // 1.0;
+    my $lss      = $opt{linestyles} // $opt{linestyle} // 'solid';
+    my $vmin     = $opt{vmin}       // $z->min->at(0);
+    my $vmax     = $opt{vmax}       // $z->max->at(0);
+
+    my @level_vals;
+    if (ref($levels) eq 'ARRAY') {
+        @level_vals = @$levels;
+    } else {
+        my $n    = $levels;
+        my $step = ($vmax - $vmin) / ($n + 1);
+        @level_vals = map { $vmin + $_ * $step } 1..$n;
+    }
 
     push @{ $self->_queue }, {
-        type   => 'contour',
-        x => $x, y => $y, z => $z,
-        levels => $levels,
-        color  => $color,
-        lw     => $lw,
-        vmin   => $vmin,
-        vmax   => $vmax,
+        type       => 'contour',
+        x          => $x, y => $y, z => $z,
+        levels     => \@level_vals,
+        colors     => $colors,
+        linewidths => $lws,
+        linestyles => $lss,
+        alpha      => $opt{alpha} // 1.0,
     };
+
     $self->_expand_range($x, $y);
     return $self;
 }
 
-# ==================================================================
-# violin() — 
-# ==================================================================
 sub violin {
     my ($self, $data, %opt) = @_;
 
