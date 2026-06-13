@@ -140,6 +140,11 @@ my @COLOR_CYCLE = (
 has _figure      => (is => 'rw');
 has _inset_axes  => (is => 'ro', default => sub { [] });
 has _is_inset    => (is => 'rw', default => sub { 0 });
+# draw() が確定した plot 矩形キャッシュ（image_frac_to_data 用）
+has _plot_ml     => (is => 'rw');   # プロット枠左端 (pixel, Figure座標)
+has _plot_mr     => (is => 'rw');   # プロット枠右端
+has _plot_mt     => (is => 'rw');   # プロット枠上端
+has _plot_mb     => (is => 'rw');   # プロット枠下端
 has _color_idx   => (is => 'rw', default => sub { 0 });
 has _xformatter  => (is => 'rw', default => sub { undef });
 has _yformatter  => (is => 'rw', default => sub { undef });
@@ -1348,6 +1353,12 @@ sub draw {
         }
     }
 
+    # draw() が確定した plot 矩形を image_frac_to_data 用にキャッシュ
+    $self->_plot_ml($ml);
+    $self->_plot_mr($mr);
+    $self->_plot_mt($mt);
+    $self->_plot_mb($mb);
+
     # xscale/yscale  Transform 
     # _y_reversed PGPLOT  negative up: ymin>ymax
     my ($ymin_tr, $ymax_tr) = ($self->ymin, $self->ymax);
@@ -2541,15 +2552,15 @@ sub _draw_frame {
         next if $xp - $prev_xp < $min_gap;
         if ($xopt =~ /N/) {
             my $tp       = $self->_tick_params;
-            my $lsize    = $tp->{x_labelsize}     // 8;
+            my $lsize    = $tp->{x_labelsize}     // 10;
             my $lshow    = $tp->{x_labelbottom}   // 1;
             my $lshow_t  = $tp->{x_labeltop}      // 0;
-            my $pad      = $tp->{x_pad}           // 4;
+            my $pad      = $tp->{x_pad}           // 16;
             my $rot      = $tp->{x_labelrotation} // $self->{_xtick_rot} // 0;
             my @lc       = defined($tp->{x_labelcolor})
                 ? @{ $self->_parse_color($tp->{x_labelcolor}) }
                 : @fc;
-            my $tlen_eff = $tp->{x_length}    // 3;
+            my $tlen_eff = $tp->{x_length} // (($xopt =~ /T/) ? 5 : 3);
             my $tdir     = $tp->{x_direction} // 'out';
             my $tick_ext = $tdir eq 'out' ? $tlen_eff
                          : $tdir eq 'inout' ? $tlen_eff/2 : 0;
@@ -2685,15 +2696,15 @@ sub _draw_frame {
         next if abs($yp - $prev_yp) < $min_ygap;
         if ($yopt =~ /N/) {
             my $tp      = $self->_tick_params;
-            my $lsize   = $tp->{y_labelsize}     // 8;
+            my $lsize   = $tp->{y_labelsize}     // 10;
             my $lshow_l = $tp->{y_labelleft}     // 1;
             my $lshow_r = $tp->{y_labelright}    // 0;
-            my $pad     = $tp->{y_pad}           // 4;
+            my $pad     = $tp->{y_pad}           // 10;
             my $rot     = $tp->{y_labelrotation} // 0;
             my @lc      = defined($tp->{y_labelcolor})
                 ? @{ $self->_parse_color($tp->{y_labelcolor}) }
                 : @fc;
-            my $tlen_eff = $tp->{y_length}    // 3;
+            my $tlen_eff = $tp->{y_length} // (($yopt =~ /T/) ? 5 : 3);
             my $tdir     = $tp->{y_direction} // 'out';
             my $tick_ext = $tdir eq 'out' ? $tlen_eff
                          : $tdir eq 'inout' ? $tlen_eff/2 : 0;
@@ -3602,6 +3613,67 @@ sub get_ylim {
     return (defined $self->ymin ? $self->ymin : 0,
             defined $self->ymax ? $self->ymax : 1);
 }
+
+# image_frac_to_data($fx, $fy) — 画像分率（0..1）→ データ座標
+# draw() または tight_layout() → to_png/to_inline の後に呼ぶこと。
+# $fx: Figure全体の横方向分率 (0=左端, 1=右端)
+# $fy: Figure全体の縦方向分率 (0=上端, 1=下端)  ← giza-serverのCURSOR/PICK送出値と同方向
+# 返値: ($x_data, $y_data)。プロット枠外なら undef, undef を返す。
+sub image_frac_to_data {
+    my ($self, $fx, $fy) = @_;
+    my $fig = $self->_figure
+        or die "image_frac_to_data: Axes が Figure に属していません\n";
+    my ($ml, $mr, $mt, $mb) =
+        ($self->_plot_ml, $self->_plot_mr, $self->_plot_mt, $self->_plot_mb);
+    unless (defined $ml) {
+        die "image_frac_to_data: draw() / tight_layout() の前に呼ばれました\n";
+    }
+    # 画像全体ピクセル座標に変換
+    my $px = $fx * $fig->width;
+    my $py = $fy * $fig->height;
+    # プロット枠外なら undef
+    if ($px < $ml || $px > $mr || $py < $mt || $py > $mb) {
+        return (undef, undef);
+    }
+    my ($xmin, $xmax) = ($self->xmin // 0, $self->xmax // 1);
+    my ($ymin, $ymax) = ($self->ymin // 0, $self->ymax // 1);
+    # X座標: 左→右
+    my $x_data = $xmin + ($px - $ml) / ($mr - $ml) * ($xmax - $xmin);
+    # Y座標: Cairo は上→下 (py増加=下)、データ座標は下→上が普通
+    # _y_reversed(negative-up, ERP/PGPLOT流) の場合は ymin/ymax が逆転している
+    my $y_data;
+    if ($self->{_y_reversed}) {
+        # ymin < ymax だが表示は上がマイナス: py小さい=上=ymax方向
+        $y_data = $ymin + ($py - $mt) / ($mb - $mt) * ($ymax - $ymin);
+    } else {
+        # 通常: py小さい=上=ymax方向
+        $y_data = $ymax - ($py - $mt) / ($mb - $mt) * ($ymax - $ymin);
+    }
+    return ($x_data, $y_data);
+}
+
+# data_to_image_frac($x, $y) — データ座標 → 画像分率  (image_frac_to_data の逆)
+sub data_to_image_frac {
+    my ($self, $x, $y) = @_;
+    my $fig = $self->_figure
+        or die "data_to_image_frac: Axes が Figure に属していません\n";
+    my ($ml, $mr, $mt, $mb) =
+        ($self->_plot_ml, $self->_plot_mr, $self->_plot_mt, $self->_plot_mb);
+    unless (defined $ml) {
+        die "data_to_image_frac: draw() / tight_layout() の前に呼ばれました\n";
+    }
+    my ($xmin, $xmax) = ($self->xmin // 0, $self->xmax // 1);
+    my ($ymin, $ymax) = ($self->ymin // 0, $self->ymax // 1);
+    my $px = $ml + ($x - $xmin) / ($xmax - $xmin) * ($mr - $ml);
+    my $py;
+    if ($self->{_y_reversed}) {
+        $py = $mt + ($y - $ymin) / ($ymax - $ymin) * ($mb - $mt);
+    } else {
+        $py = $mb - ($y - $ymin) / ($ymax - $ymin) * ($mb - $mt);
+    }
+    return ($px / $fig->width, $py / $fig->height);
+}
+
 
 # hlines(y, xmin, xmax, %opt)  — matplotlib ax.hlines()
 # y can be scalar or PDL/arrayref of y positions

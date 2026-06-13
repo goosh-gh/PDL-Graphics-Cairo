@@ -466,8 +466,8 @@ sub tight_layout {
             $ml = 72 if $ax->ylabel ne '';
             $ml = int($ml * 0.75) if $gw < 200;
             my $mr = $ax->_colorbar ? 68 : 14;
-            my $mb = ($r1 == $nr ? 50 : 30);
-            $mb = 58 if $ax->xlabel ne '';
+            my $mb = ($r1 == $nr ? 58 : 36);
+            $mb = 66 if $ax->xlabel ne '';
             $mb = int($mb * 0.8) if $gh < 150;
             my $mt = $ax->title ne '' ? 34 : 18;
             $mt = 44 if $r0 == 0 && ($self->{_suptitle_text} // '') ne '';
@@ -482,16 +482,16 @@ sub tight_layout {
         $row = 0 if $row < 0; $row = $nrows-1 if $row >= $nrows;
 
         # : Y
-        my $ml = $col == 0 ? 68 : 52;
-        $ml = 80 if $ax->ylabel ne "";
-        $ml = 80 if $ax->ylabel ne '';
+        my $ml = $col == 0 ? 72 : 56;
+        $ml = 84 if $ax->ylabel ne "";
+        $ml = 84 if $ax->ylabel ne '';
 
         # : 
         my $mr = $ax->_colorbar ? 72 : (exists $ax->{_right_ylabel} && $ax->{_right_ylabel} ne "") ? 110 : 16;
 
         # : X
-        my $mb = $row == $nrows-1 ? 56 : 36;
-        $mb = 64 if $ax->xlabel ne '';
+        my $mb = $row == $nrows-1 ? 64 : 40;
+        $mb = 72 if $ax->xlabel ne '';
 
         # : 
         my $mt = $ax->title ne '' ? 38 : 24;

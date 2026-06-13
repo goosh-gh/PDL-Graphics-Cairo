@@ -302,27 +302,39 @@ sub _figure_to_vector {
 }
 
 # サーバー発のマウスイベント（CURSOR / PICK / ZOOM）を処理する。
-# どれも撃ちっぱなしの通知で、登録済みコールバックを呼ぶだけ（再描画不要）。
+# cursor_overlay モード時は $ix->{_cursor_pending} に座標を記録し、
+# 再描画フラグを立てる（run ループ側でドレイン後に再描画）。
 # interactive セッション外（$self->{_ix} 無し）なら黙って無視する。
 sub _handle_mouse {
     my ($self, $type, $payload) = @_;
     my $ix = $self->{_ix} or return;
     if ($type == GSP_MSG_CURSOR) {
-        return unless $ix->{on_cursor};
         my ($fx, $fy, $btn) = unpack('f< f< C', $payload);
-        $ix->{on_cursor}->($fx, $fy, $btn);
+        # cursor_overlay: 次 render で座標テキストを描かせるため state に記録
+        if ($ix->{cursor_overlay}) {
+            $ix->{_cursor_pending} = { fx => $fx, fy => $fy, btn => $btn, type => 'cursor' };
+        }
+        $ix->{on_cursor}->($fx, $fy, $btn) if $ix->{on_cursor};
     }
     elsif ($type == GSP_MSG_PICK) {
-        return unless $ix->{on_pick};
         my ($fx, $fy, $btn) = unpack('f< f< C', $payload);
-        $ix->{on_pick}->($fx, $fy, $btn);
+        if ($ix->{cursor_overlay}) {
+            $ix->{_cursor_pending} = { fx => $fx, fy => $fy, btn => $btn, type => 'pick' };
+        }
+        $ix->{on_pick}->($fx, $fy, $btn) if $ix->{on_pick};
     }
     elsif ($type == GSP_MSG_ZOOM) {
-        return unless $ix->{on_zoom};
         my ($zoom, $px, $py) = unpack('f< f< f<', $payload);
-        $ix->{on_zoom}->($zoom, $px, $py);
+        # zoom_pan_redraw: zoom/pan 状態を _ix に記録して run() 側で再描画
+        if ($ix->{zoom_pan_redraw}) {
+            $ix->{_zoom}  = $zoom;
+            $ix->{_pan_x} = $px;
+            $ix->{_pan_y} = $py;
+        }
+        $ix->{on_zoom}->($zoom, $px, $py) if $ix->{on_zoom};
     }
 }
+
 
 # サーバー発 SAVEREQ への応答。現在の $state で図を再描画し、PDF/SVG に
 # 変換して SAVEDATA で返送する（撃ちっぱなし、ACK は待たない）。
@@ -373,19 +385,31 @@ sub show_interactive {
     #   on_cursor => sub { my ($fx, $fy) = @_; ... }   # 0..1 の画像内分率
     #   on_pick   => sub { my ($fx, $fy, $btn) = @_; ... } # btn: 1=左,2=中,3=右
     #   on_zoom   => sub { my ($zoom, $px, $py) = @_; ... }
-    # 画像内分率 (fx,fy) は (0,0)=左上, (1,1)=右下。データ座標への変換は
-    # 呼び出し側が自分の xlim/ylim を使って行う。
+    # cursor_overlay => 1 を指定すると CURSOR/PICK 受信時に自動再描画し、
+    #   render コールバックの $state に以下のキーが入る:
+    #     _cursor_fx, _cursor_fy  ... giza-server からの画像分率 (0..1)
+    #     _cursor_x,  _cursor_y   ... データ座標（Figure の xlim/ylim で変換済み）
+    #                                  プロット枠外なら undef
+    #     _cursor_btn             ... ボタン番号（CURSOR時は0=移動、PICK時は1/2/3）
+    #     _cursor_type            ... 'cursor' または 'pick'
+    # 画像内分率 (fx,fy) は (0,0)=左上, (1,1)=右下。
     $self->{_ix} = {
         sock => $sock, render => $render, state => $state, save_seq => 900000,
-        on_cursor => $opt{on_cursor}, on_pick => $opt{on_pick},
-        on_zoom   => $opt{on_zoom},
+        on_cursor      => $opt{on_cursor},
+        on_pick        => $opt{on_pick},
+        on_zoom        => $opt{on_zoom},
+        cursor_overlay => $opt{cursor_overlay} // 0,
+        zoom_pan_redraw => $opt{zoom_pan_redraw} // 0,
+        _cursor_pending => undef,
+        _zoom  => 1.0, _pan_x => 0.0, _pan_y => 0.0,
     };
 
     # 初期フレーム
-
-    _send_msg($sock, GSP_MSG_PNG,
-              $self->_figure_to_png($render->($state, $self->width, $self->height)),
-              $seq++);
+    {
+        my $fig = $render->($state, $self->width, $self->height);
+        $self->{_ix}{_last_figure} = $fig;
+        _send_msg($sock, GSP_MSG_PNG, $self->_figure_to_png($fig), $seq++);
+    }
     $self->_recv_ack_sys($sock, 'PNG', $state);
 
     $seq = $self->run($sock, $render, $state, $seq);
@@ -457,10 +481,9 @@ sub run {
 
             # 再計算 → 再描画 → 送信 → ACK（ACK待ち中に割り込んだ SLIDER/RESIZE も吸収）
             while (1) {
-                _send_msg($sock, GSP_MSG_PNG,
-                          $self->_figure_to_png(
-                              $render->($state, $self->width, $self->height)),
-                          $seq++);
+                my $fig = $render->($state, $self->width, $self->height);
+                $self->{_ix}{_last_figure} = $fig if $self->{_ix};
+                _send_msg($sock, GSP_MSG_PNG, $self->_figure_to_png($fig), $seq++);
                 my $more = $self->_recv_ack_sys($sock, 'PNG', $state);
                 last unless $more;     # ACK待ち中に SLIDER/RESIZE が来ていたら再描画
             }
@@ -476,7 +499,82 @@ sub run {
                || $type == GSP_MSG_ZOOM) {
             my $p = $len ? $self->_sysread_exact($sock, $len) : '';
             last if $len && !defined $p;
-            $self->_handle_mouse($type, $p);      # コールバックのみ（再描画不要）
+            $self->_handle_mouse($type, $p);
+
+            my $ix = $self->{_ix};
+
+            # zoom_pan_redraw モード: ZOOM 受信時に xlim/ylim を更新して再描画
+            if ($ix && $ix->{zoom_pan_redraw} && $type == GSP_MSG_ZOOM) {
+                # coalescing: 溜まった ZOOM を全部吸う
+                while ($sel->can_read(0)) {
+                    my $h2 = $self->_sysread_exact($sock, 16);
+                    last unless defined $h2;
+                    my ($m2, undef, $t2, undef, $l2) = unpack('L C C S L', $h2);
+                    my $p2 = $l2 ? $self->_sysread_exact($sock, $l2) : '';
+                    last unless defined $p2;
+                    if ($t2 == GSP_MSG_ZOOM) {
+                        $self->_handle_mouse($t2, $p2);
+                    } else {
+                        last;
+                    }
+                }
+                # state に zoom/pan を書き込む
+                $state->{_zoom}  = $ix->{_zoom};
+                $state->{_pan_x} = $ix->{_pan_x};
+                $state->{_pan_y} = $ix->{_pan_y};
+                # _last_figure の xlim/ylim から新しい表示範囲を計算
+                if (my $fig = $ix->{_last_figure}) {
+                    _apply_zoom_to_state($state, $fig, $ix->{_zoom}, $ix->{_pan_x}, $ix->{_pan_y});
+                }
+                # 再描画
+                my $fig = $render->($state, $self->width, $self->height);
+                $ix->{_last_figure} = $fig;
+                _send_msg($sock, GSP_MSG_PNG, $self->_figure_to_png($fig), $seq++);
+                $self->_recv_ack_sys($sock, 'PNG', $state);
+            }
+            if ($ix && $ix->{cursor_overlay} && $ix->{_cursor_pending}
+                && ($type == GSP_MSG_CURSOR || $type == GSP_MSG_PICK)) {
+                # coalescing: キューに残っている CURSOR を全部吸う
+                while ($sel->can_read(0)) {
+                    my $h2 = $self->_sysread_exact($sock, 16);
+                    last unless defined $h2;
+                    my ($m2, undef, $t2, undef, $l2) = unpack('L C C S L', $h2);
+                    my $p2 = $l2 ? $self->_sysread_exact($sock, $l2) : '';
+                    last unless defined $p2;
+                    if ($t2 == GSP_MSG_CURSOR || $t2 == GSP_MSG_PICK) {
+                        $self->_handle_mouse($t2, $p2);   # _cursor_pending を上書き
+                    } else {
+                        # CURSOR以外が来たら戻せないので溢れたことにする（稀）
+                        last;
+                    }
+                }
+                # state に座標を書き込む
+                my $ev = $ix->{_cursor_pending};
+                $state->{_cursor_fx}   = $ev->{fx};
+                $state->{_cursor_fy}   = $ev->{fy};
+                $state->{_cursor_btn}  = $ev->{btn};
+                $state->{_cursor_type} = $ev->{type};
+                $ix->{_cursor_pending} = undef;
+                # Axes ベースのデータ座標変換（Figure が axes_list を持つ場合）
+                # render が最後に返した Figure を _last_figure に保存してあれば使う
+                if (my $fig = $ix->{_last_figure}) {
+                    my ($xd, $yd) = (undef, undef);
+                    for my $ax (@{ $fig->axes_list }) {
+                        ($xd, $yd) = $ax->image_frac_to_data($ev->{fx}, $ev->{fy});
+                        last if defined $xd;   # プロット枠内の最初の Axes を使う
+                    }
+                    $state->{_cursor_x} = $xd;
+                    $state->{_cursor_y} = $yd;
+                } else {
+                    $state->{_cursor_x} = undef;
+                    $state->{_cursor_y} = undef;
+                }
+                # 再描画
+                my $fig = $render->($state, $self->width, $self->height);
+                $ix->{_last_figure} = $fig;
+                _send_msg($sock, GSP_MSG_PNG, $self->_figure_to_png($fig), $seq++);
+                $self->_recv_ack_sys($sock, 'PNG', $state);
+            }
         }
         elsif ($type == GSP_MSG_ERR) {
             my $msg = $len ? $self->_sysread_exact($sock, $len) : '';
@@ -491,9 +589,63 @@ sub run {
 
 
 
-# ------------------------------------------------------------------
-# show($figure) — メモリPNGを作って giza_server に送る
-# ------------------------------------------------------------------
+# _apply_zoom_to_state — giza-server の zoom/pan 値から
+# state に _xlim_lo/_xlim_hi/_ylim_lo/_ylim_hi を書き込む。
+# render コールバック側でこれを使って xlim/ylim を設定することで
+# データ座標レベルの zoom/pan が実現できる。
+#
+# giza-server の zoom/pan 定義:
+#   zoom=1.0, pan=0,0  → 全体表示
+#   zoom>1             → 中心を基準に拡大
+#   pan_x/pan_y        → ズーム済み画像の中心オフセット（-0.5..+0.5）
+#                        （正=右/上方向に移動）
+#
+# データ座標への変換:
+#   表示中心 = (xmid + pan_x*(xrange/zoom), ymid - pan_y*(yrange/zoom))
+#   表示幅   = xrange / zoom
+sub _apply_zoom_to_state {
+    my ($state, $fig, $zoom, $pan_x, $pan_y) = @_;
+    $zoom //= 1.0; $pan_x //= 0.0; $pan_y //= 0.0;
+
+    # _orig_xlim/_orig_ylim: zoom=1.0のときの元のデータ範囲
+    # 最初のZOOM受信時に保存、zoom=1.0に戻ったらクリア
+    if ($zoom <= 1.0 + 1e-4 && abs($pan_x) < 1e-4 && abs($pan_y) < 1e-4) {
+        # ほぼリセット状態: 元の範囲を使う
+        delete $state->{_zoom_xlim_lo};
+        delete $state->{_zoom_xlim_hi};
+        delete $state->{_zoom_ylim_lo};
+        delete $state->{_zoom_ylim_hi};
+        return;
+    }
+
+    # 元レンジを Figure の最初の Axes から取得（未保存なら今の表示レンジを保存）
+    my $ax0 = $fig->axes_list->[0] or return;
+    my $ox0 = $state->{_orig_xmin} // $ax0->xmin // 0;
+    my $ox1 = $state->{_orig_xmax} // $ax0->xmax // 1;
+    my $oy0 = $state->{_orig_ymin} // $ax0->ymin // 0;
+    my $oy1 = $state->{_orig_ymax} // $ax0->ymax // 1;
+    # 元レンジを記憶（zoom=1のときに更新）
+    $state->{_orig_xmin} //= $ox0;
+    $state->{_orig_xmax} //= $ox1;
+    $state->{_orig_ymin} //= $oy0;
+    $state->{_orig_ymax} //= $oy1;
+
+    my $xmid  = ($ox0 + $ox1) / 2;
+    my $ymid  = ($oy0 + $oy1) / 2;
+    my $xspan = ($ox1 - $ox0) / $zoom;
+    my $yspan = ($oy1 - $oy0) / $zoom;
+
+    # pan: giza-server では pan_x>0 = 画像を右にずらす = データを左に移動
+    my $cx = $xmid - $pan_x * ($ox1 - $ox0);
+    my $cy = $ymid + $pan_y * ($oy1 - $oy0);
+
+    $state->{_zoom_xlim_lo} = $cx - $xspan/2;
+    $state->{_zoom_xlim_hi} = $cx + $xspan/2;
+    $state->{_zoom_ylim_lo} = $cy - $yspan/2;
+    $state->{_zoom_ylim_hi} = $cy + $yspan/2;
+}
+
+
 sub show {
     my ($self, $figure) = @_;
 
