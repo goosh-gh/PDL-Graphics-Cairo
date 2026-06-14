@@ -15,7 +15,7 @@ PDL::Graphics::Cairo (P:G:C) is a high-level 2D plotting library for [PDL](https
 `line` · `scatter` · `bar` / `barh` · `hist` · `errorbar` · `fill_between` · `step` · `stem` · `imshow` · `contour` · `contourf` · `pie` · `boxplot` · `violin` · `quiver` · `heatmap` · `stackplot` · `eventplot` · `hexbin` · `specgram` · and more
 
 ### Axes & decoration
-- Auto-scaling with `tight_layout`
+- Auto-scaling with `tight_layout`; `uniform_margins => 1` option ensures all panels have identical plot-area dimensions in multi-panel grids (avoids the default asymmetry where edge panels receive larger margins)
 - Linear / log scale (`set_xscale`, `set_yscale`, `semilogy`, `loglog`)
 - Tick control: `tick_params`, minor ticks, `xaxis_formatter` / `yaxis_formatter`
 - Twin axes: `twinx`, `twiny`
@@ -36,7 +36,7 @@ PDL::Graphics::Cairo (P:G:C) is a high-level 2D plotting library for [PDL](https
 ### Output
 - PNG (via `PDL::IO::PNG` or Cairo), PDF, SVG
 - Interactive display via `giza-server` (persistent window with tabs, sliders)
-- Inline display in `App::PDL::Notebook`
+- Inline display in `App::PDL::Notebook` (via `$fig->to_inline`)
 
 ### Downsampling
 - `PDL::Graphics::Cairo::LTTB` — Largest-Triangle-Three-Buckets downsampling
@@ -77,33 +77,7 @@ $fig->save('plot.png');
 
 ## More examples
 
-### 20-channel EEG viewer with interactive sliders
-
-```perl
-# examples/eeg_viewer.pl
-# Requires giza-server running
-perl -Ilib examples/eeg_viewer.pl
-```
-
-A full ERP/EEG viewer featuring:
-- **5×5 subplot grid** following the international 10-20 electrode layout
-- **Negative-up convention** (ERP standard: negative voltage plotted upward)
-- **Horizontal slider**: time window (100–2000 ms)
-- **Vertical slider**: gain (±50–500 μV)
-- **LTTB downsampling** during interactive display (80% point reduction at 1000px width) — slider stays responsive even with 2000-sample traces
-- **Cursor overlay**: mouse position snaps to nearest sample; shows `t=` and `v=` of the channel under the cursor
-- **Scale bar panel**: shared coordinate system with EEG panels (same xlim/ylim)
-- **Save**: File▸Save PNG/PDF/SVG via giza-server menu (full resolution, no LTTB)
-
-```
-[0,_] Fp1  ___  Fp2  ___
-[1,_] F7   F3   Fz   F4   F8
-[2,_] T3   C3   Cz   C4   T4
-[3,_] T5   P3   Pz   P4   T6
-[4,_] Info O1   Oz?  O2   Scale
-```
-
-### Spectrogram (EEG / audio analysis)
+### Spectrogram ( audio analysis)
 
 ```perl
 use PDL::Graphics::Cairo qw(subplots);
@@ -209,8 +183,6 @@ See the `examples/` directory:
 | `example_png.pl` | Basic plotting quickstart |
 | `example_gs.pl` | Interactive display via giza-server |
 | `example_gs_cursor_overlay.pl` | Cursor coordinate overlay with mouse tracking |
-| `eeg_viewer.pl` | 20-channel EEG viewer: 5×5 10-20 layout, LTTB downsampling, gain/window sliders, cursor readout |
-| `eeg_viewer_static.pl` | Static PNG render test for eeg_viewer (no giza-server needed) |
 
 ---
 

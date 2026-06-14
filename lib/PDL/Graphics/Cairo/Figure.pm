@@ -486,7 +486,10 @@ sub tight_layout {
         my $scale_w = $cell_w < 160 ? $cell_w / 160.0 : 1.0;
 
         # 左マージン: Y軸ラベル有無で変化
-        my $ml = $col == 0 ? int(56 * $scale_w + 0.5) : int(36 * $scale_w + 0.5);
+        # uniform_margins => 1: 内側値で全パネルを揃える（外縁余白はpadで確保）
+        my $ml = ($opt{uniform_margins})
+            ? int(36 * $scale_w + 0.5)
+            : ($col == 0 ? int(56 * $scale_w + 0.5) : int(36 * $scale_w + 0.5));
         $ml = int(70 * $scale_w + 0.5) if $ax->ylabel ne "";
         $ml = int(70 * $scale_w + 0.5) if $ax->ylabel ne '';
         $ml = 28 if $ml < 28;   # 最小値
@@ -495,7 +498,9 @@ sub tight_layout {
         my $mr = $ax->_colorbar ? 72 : (exists $ax->{_right_ylabel} && $ax->{_right_ylabel} ne "") ? 110 : int(10 * $scale_w + 8);
 
         # 下マージン: X軸ラベル有無で変化
-        my $mb = $row == $nrows-1 ? int(48 * $scale_h + 0.5) : int(28 * $scale_h + 0.5);
+        my $mb = ($opt{uniform_margins})
+            ? int(28 * $scale_h + 0.5)
+            : ($row == $nrows-1 ? int(48 * $scale_h + 0.5) : int(28 * $scale_h + 0.5));
         $mb = int(56 * $scale_h + 0.5) if $ax->xlabel ne '';
         $mb = 20 if $mb < 20;
 

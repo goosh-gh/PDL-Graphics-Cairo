@@ -207,9 +207,6 @@ my $render = sub {
             fontsize => 7, color => '#1a3a5c');
 
         # 時刻軸ラベルは最下行だけ
-        if ($r == 4) {
-            $ax->xlabel('ms');
-        }
     }
 
     # ─ 情報パネル（r=4, c=1,2,3） — 軸を 0..1 で使用 ─
@@ -338,7 +335,7 @@ my $render = sub {
             ha => 'center', va => 'bottom', fontsize => 7, color => '#7f8c8d');
     }
 
-    $fig->tight_layout(pad => 1.01, h_pad => 8, w_pad => 8);
+    $fig->tight_layout(pad => 1.05, h_pad => 8, w_pad => 8, uniform_margins => 1);
     return $fig;
 };
 
