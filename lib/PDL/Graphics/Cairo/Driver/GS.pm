@@ -26,6 +26,7 @@ package PDL::Graphics::Cairo::Driver::GS;
 
 use strict;
 use warnings;
+use Time::HiRes;
 use Moo;
 use IO::Socket::UNIX;
 use POSIX ();
@@ -270,13 +271,23 @@ sub _recv_ack_sys {
 }
 
 
+# render用のwidth/height（PDLCAIRO_RENDER_SCALE適用済み）
+sub _render_w { int($_[0]->width  * ($ENV{PDLCAIRO_RENDER_SCALE} // 1.0)) || 1 }
+sub _render_h { int($_[0]->height * ($ENV{PDLCAIRO_RENDER_SCALE} // 1.0)) || 1 }
+
 # Figure → :memory: Cairo → メモリPNG（show() のロジックを再利用）
 sub _figure_to_png {
     my ($self, $figure) = @_;
+    my $_t0 = Time::HiRes::time();
     my $cairo = PDL::Graphics::Cairo::Driver::Cairo->new(
-        width => $self->width, height => $self->height, file => ':memory:');
+        width => $self->_render_w, height => $self->_render_h, file => ':memory:');
     $figure->_render_to($cairo);
-    return $cairo->png_bytes;
+    my $_t1 = Time::HiRes::time();
+    my $bytes = $cairo->png_bytes;
+    my $_t2 = Time::HiRes::time();
+    printf "  png: cairo_render=%.0fms  png_compress=%.0fms  size=%dKB\n",
+        ($_t1-$_t0)*1000, ($_t2-$_t1)*1000, length($bytes)/1024;
+    return $bytes;
 }
 
 # Figure → PDF/SVG ベクタバイト列。
@@ -404,9 +415,16 @@ sub show_interactive {
         _zoom  => 1.0, _pan_x => 0.0, _pan_y => 0.0,
     };
 
+    # warm-up: Cairo JIT・フォントキャッシュ初期化（初回フレームの遅延を隠す）
+    {
+        my $wu = PDL::Graphics::Cairo::Driver::Cairo->new(
+            width => $self->_render_w, height => $self->_render_h, file => ':memory:');
+        $wu->png_bytes;   # 空のCairoサーフェスをPNG化してキャッシュを温める
+    }
+
     # 初期フレーム
     {
-        my $fig = $render->($state, $self->width, $self->height);
+        my $fig = $render->($state, $self->_render_w, $self->_render_h);
         $self->{_ix}{_last_figure} = $fig;
         _send_msg($sock, GSP_MSG_PNG, $self->_figure_to_png($fig), $seq++);
     }
@@ -481,7 +499,7 @@ sub run {
 
             # 再計算 → 再描画 → 送信 → ACK（ACK待ち中に割り込んだ SLIDER/RESIZE も吸収）
             while (1) {
-                my $fig = $render->($state, $self->width, $self->height);
+                my $fig = $render->($state, $self->_render_w, $self->_render_h);
                 $self->{_ix}{_last_figure} = $fig if $self->{_ix};
                 _send_msg($sock, GSP_MSG_PNG, $self->_figure_to_png($fig), $seq++);
                 my $more = $self->_recv_ack_sys($sock, 'PNG', $state);
@@ -527,7 +545,7 @@ sub run {
                     _apply_zoom_to_state($state, $fig, $ix->{_zoom}, $ix->{_pan_x}, $ix->{_pan_y});
                 }
                 # 再描画
-                my $fig = $render->($state, $self->width, $self->height);
+                my $fig = $render->($state, $self->_render_w, $self->_render_h);
                 $ix->{_last_figure} = $fig;
                 _send_msg($sock, GSP_MSG_PNG, $self->_figure_to_png($fig), $seq++);
                 $self->_recv_ack_sys($sock, 'PNG', $state);
@@ -574,7 +592,7 @@ sub run {
                     $state->{_cursor_y} = undef;
                 }
                 # 再描画
-                my $fig = $render->($state, $self->width, $self->height);
+                my $fig = $render->($state, $self->_render_w, $self->_render_h);
                 $ix->{_last_figure} = $fig;
                 _send_msg($sock, GSP_MSG_PNG, $self->_figure_to_png($fig), $seq++);
                 $self->_recv_ack_sys($sock, 'PNG', $state);

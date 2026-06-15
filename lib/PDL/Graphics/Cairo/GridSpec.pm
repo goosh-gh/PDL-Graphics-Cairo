@@ -25,6 +25,11 @@ has bottom => (is => 'ro', default => sub { 0.08 });   # fraction from bottom
 has hspace => (is => 'ro', default => sub { 0.30 });
 has wspace => (is => 'ro', default => sub { 0.25 });
 
+# height_ratios / width_ratios: arrayref of relative sizes per row/col
+# e.g. height_ratios=>[1,1,1,0.3] makes last row 0.3x height of others
+has height_ratios => (is => 'ro', default => sub { undef });
+has width_ratios  => (is => 'ro', default => sub { undef });
+
 # ============================================================
 # at($row, $col)  →  GridSpecCell
 #
@@ -76,28 +81,61 @@ sub pixel_rect {
     my $fw = $self->figure->width;
     my $fh = $self->figure->height;
 
-    # Convert matplotlib fractions to pixel coordinates (y flipped)
     my $px_left   = $self->left   * $fw;
     my $px_right  = $self->right  * $fw;
-    my $px_top    = (1 - $self->top)    * $fh;   # small pixel y = near top
-    my $px_bottom = (1 - $self->bottom) * $fh;   # large pixel y = near bottom
+    my $px_top    = (1 - $self->top)    * $fh;
+    my $px_bottom = (1 - $self->bottom) * $fh;
 
     my $avail_w = $px_right - $px_left;
-    my $avail_h = $px_bottom - $px_top;   # positive since px_bottom > px_top
+    my $avail_h = $px_bottom - $px_top;
 
     my $nr = $self->nrows;
     my $nc = $self->ncols;
 
-    # Cell size (gap between cells = wspace/hspace * cell size)
-    my $cell_w = $avail_w / ($nc + ($nc > 1 ? ($nc-1) * $self->wspace : 0));
-    my $cell_h = $avail_h / ($nr + ($nr > 1 ? ($nr-1) * $self->hspace : 0));
-    my $gap_w  = $cell_w * $self->wspace;
-    my $gap_h  = $cell_h * $self->hspace;
+    # ── height_ratios 対応 ────────────────────────────────────────
+    # gap = hspace * 平均セル高さ (matplotlib互換)
+    my @row_px;   # 各行のピクセル高さ
+    if (my $hr = $self->height_ratios) {
+        my $total_ratio = 0; $total_ratio += $_ for @$hr;
+        # gap数 = nr-1、gap幅 = hspace * avail_h / (total_ratio + (nr-1)*hspace)
+        my $unit = $avail_h / ($total_ratio + ($nr > 1 ? ($nr-1) * $self->hspace : 0));
+        @row_px = map { $_ * $unit } @$hr;
+    } else {
+        my $cell_h = $avail_h / ($nr + ($nr > 1 ? ($nr-1) * $self->hspace : 0));
+        @row_px = ($cell_h) x $nr;
+    }
+    my $gap_h = $nr > 1
+        ? ($avail_h - do { my $s=0; $s+=$_ for @row_px; $s }) / ($nr - 1)
+        : 0;
 
-    my $x0 = $px_left + $c0 * ($cell_w + $gap_w);
-    my $y0 = $px_top  + $r0 * ($cell_h + $gap_h);
-    my $x1 = $px_left + ($c1-1) * ($cell_w + $gap_w) + $cell_w;
-    my $y1 = $px_top  + ($r1-1) * ($cell_h + $gap_h) + $cell_h;
+    # ── width_ratios 対応 ─────────────────────────────────────────
+    my @col_px;
+    if (my $wr = $self->width_ratios) {
+        my $total_ratio = 0; $total_ratio += $_ for @$wr;
+        my $unit = $avail_w / ($total_ratio + ($nc > 1 ? ($nc-1) * $self->wspace : 0));
+        @col_px = map { $_ * $unit } @$wr;
+    } else {
+        my $cell_w = $avail_w / ($nc + ($nc > 1 ? ($nc-1) * $self->wspace : 0));
+        @col_px = ($cell_w) x $nc;
+    }
+    my $gap_w = $nc > 1
+        ? ($avail_w - do { my $s=0; $s+=$_ for @col_px; $s }) / ($nc - 1)
+        : 0;
+
+    # 各行/列の開始ピクセル位置を累積
+    my @row_start = ($px_top);
+    for my $r (0 .. $nr-2) {
+        push @row_start, $row_start[-1] + $row_px[$r] + $gap_h;
+    }
+    my @col_start = ($px_left);
+    for my $c (0 .. $nc-2) {
+        push @col_start, $col_start[-1] + $col_px[$c] + $gap_w;
+    }
+
+    my $x0 = $col_start[$c0];
+    my $y0 = $row_start[$r0];
+    my $x1 = $col_start[$c1-1] + $col_px[$c1-1];
+    my $y1 = $row_start[$r1-1] + $row_px[$r1-1];
 
     return (int($x0), int($y0), int($x1 - $x0), int($y1 - $y0));
 }

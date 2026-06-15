@@ -31,7 +31,7 @@ our $HAVE_WPNG = eval { require PDL::IO::PNG; PDL::IO::PNG->import('wpng'); 1 };
 # -------------------------------------------------------------
 has width  => (is => 'ro', required => 1);
 has height => (is => 'ro', required => 1);
-has file   => (is => 'ro', default  => sub { 'out.png' });
+has file      => (is => 'ro', default  => sub { 'out.png' });
 has dpi    => (is => 'ro', default  => sub { 96 });
 
 # -------------------------------------------------------------
@@ -61,6 +61,19 @@ sub BUILD {
     }
 
     my $cr = Cairo::Context->create($surface);
+
+    # アンチエイリアス設定（環境変数 PDLCAIRO_ANTIALIAS で上書き可能）
+    # 'none'=最速, 'fast'=高速, 'good'=高品質(デフォルト), 'best'=最高品質
+    {
+        my $aa = lc($ENV{PDLCAIRO_ANTIALIAS} // 'gray');
+        # Cairo::Perl有効値を実測: 'gray' のみ安定動作
+        # none/default/subpixelはこの環境でクラッシュするため無効化
+        # gray=グレースケールAA（高速・安定）
+        if ($aa eq 'gray' || $aa eq 'good' || $aa eq 'fast') {
+            $cr->set_antialias('gray');
+        }
+        # それ以外はデフォルト（set_antialiasを呼ばない）
+    }
 
     # Background color:
     # Only read PGPLOT_BACKGROUND when called from the PGPLOT layer.

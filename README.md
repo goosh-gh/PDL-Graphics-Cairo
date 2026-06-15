@@ -24,7 +24,7 @@ PDL::Graphics::Cairo (P:G:C) is a high-level 2D plotting library for [PDL](https
 
 ### Layouts
 - `subplots(M, N)` — uniform grid
-- `GridSpec` — non-uniform spanning panels
+- `GridSpec` — non-uniform spanning panels, now with **`height_ratios`/`width_ratios`** for per-row/column size control
 - `subplot_mosaic("AAB\nCDB")` — string-defined layouts
 - `suptitle` — figure-level title
 
@@ -40,8 +40,10 @@ PDL::Graphics::Cairo (P:G:C) is a high-level 2D plotting library for [PDL](https
 
 ### Downsampling
 - `PDL::Graphics::Cairo::LTTB` — Largest-Triangle-Three-Buckets downsampling
+  - `lttb($x, $y, $n_out)` — original LTTB (Steinarsson 2013), spike-preserving
+  - `lttb_minmax($x, $y, $n_out)` — **MinMax-LTTB** (v0.05+): selects min+max per bucket; pure PDL vector ops, ~10× faster than original LTTB for interactive use
 - Preserves visual spikes (EOG artifacts, transients) unlike simple decimation
-- Used automatically in `eeg_viewer.pl` for interactive slider responsiveness
+- Used automatically in `eeg_viewer_raw.pl` and `eeg_viewer.pl`
 
 ### Compatibility layers
 - matplotlib API (`line`, `scatter`, `set_xlim`, `tick_params`, ...)
@@ -175,6 +177,7 @@ See the `examples/` directory:
 | File | Description |
 |---|---|
 | `example_gridspec.pl` | GridSpec, subplot_mosaic layouts |
+| `eeg_viewer_raw.pl` | MNE `raw.plot()`-style multi-channel EEG viewer; real-time LTTB, channel scroll, time window, page buttons |
 | `example_hexbin.pl` | 2D density, scatter vs hexbin comparison |
 | `example_colormap.pl` | ListedColormap, LogNorm, TwoSlopeNorm, BoundaryNorm |
 | `specgram_demo.pl` | Chirp, EEG-like, multi-tone spectrograms |
@@ -204,6 +207,21 @@ PDL::Graphics::Cairo        ← this library
 
 ---
 
+## Performance (interactive EEG viewer, Apple Silicon M-series)
+
+Profiled with `eeg_viewer_raw.pl` (8 ch × 10 s × 1 kHz, 1100×900 window):
+
+| Step | Before | After | Change |
+|------|--------|-------|--------|
+| LTTB (8 ch) | 230 ms | 17 ms | `lttb_minmax` replaces Perl loop |
+| PNG compress | 40 ms | 5–7 ms | `PDL::IO::PNG` level 1 + FILTER_NONE |
+| Cairo render | 60 ms | 12–22 ms | `PDLCAIRO_RENDER_SCALE=0.5–0.75` |
+| **Total/frame** | **~330 ms** | **~46 ms** | **~7× faster** |
+
+`PDLCAIRO_RENDER_SCALE` env var controls the render resolution (default 0.75):
+the viewer renders at a fraction of the window size; the Cocoa/Xlib viewer
+scales up automatically with no loss of interactivity.
+
 ## Status
 
 Active development. matplotlib API coverage:
@@ -216,7 +234,7 @@ Active development. matplotlib API coverage:
 | Colormaps | ✅ 12 built-in + ListedColormap |
 | Normalization | ✅ Normalize, LogNorm, BoundaryNorm, TwoSlopeNorm |
 | Signal analysis | ✅ specgram (STFT, windowing, dB scale) |
-| Interactive | ✅ giza-server (tabs, sliders, resize) |
+| Interactive | ✅ giza-server (tabs, sliders, resize, cursor/pick, zoom/pan) |
 | 3D plots | 🔲 not planned (use PDL::Graphics::Gnuplot) |
 | streamplot | 🔲 low priority |
 | spine control | 🔲 low priority |
