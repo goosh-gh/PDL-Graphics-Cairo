@@ -3,17 +3,17 @@
 #
 # レイアウト:
 #   上部: 波形 N_ROWS_VIS 行（固定行数、スクロールで全チャンネルを閲覧）
-#   下部: ボタン行（固定高さ BTN_H_FRAC）
+#   下部: ボタン行（固定高さ BTN_PX）
 #
 # スライダ（giza-server物理スライダ）:
-#   スライダ0（水平）: 廃止（無視）
-#   スライダ1（垂直）: チャンネルオフセット（どの行から表示するか）
+#   廃止（すべてボタン行カスタムUIで実装）
 #
 # ボタン行カスタムUI（xlim/ylim=0..1）:
 #   [◀] [▶]         : 1ページ時間送り
 #   [−][窓幅s][+]   : 表示時間幅±1s
+#   [−][±Gain µV][+]: Gain変更
 #   位置スライダ     : 時間位置（クリック/ドラッグ）
-#   情報行下段       : Gain / LTTB / PICK結果（スライダと重ならず固定位置）
+#   情報行下段       : LTTB / PICK結果
 
 use strict;
 use warnings;
@@ -36,7 +36,7 @@ my $PAGE_SEC_INIT = 10.0;   # ← 初期表示時間幅（秒）
 #   0.5  = 最速（20ms/frame、若干ぼけ）
 # ═══════════════════════════════════════════════════════════════════════
 $ENV{PDLCAIRO_RENDER_SCALE} //= 0.75;   # ← ここを変更
-use constant BTN_PX => 70;  # ボタン行の絶対ピクセル高さ（チャンネル数に依存しない）
+use constant BTN_PX => 55;  # ボタン行の絶対ピクセル高さ（チャンネル数に関係なく固定）
 
 # ═══════════════════════════════════════════════════════════════════════
 # 1. データ生成 / 読み込み
@@ -113,32 +113,42 @@ my $DATA_MS  = $n_samples * 1000.0 / $srate;
 # 2. 状態管理
 # ═══════════════════════════════════════════════════════════════════════
 # %state キー:
-#   0        : スライダ0（廃止、無視）
-#   1        : スライダ1 → チャンネルオフセット (0..1)
 #   _pos     : 時間位置 (0..1)
 #   _page_ms : 表示時間幅 (ms)
 #   _gain    : 振幅ゲイン (μV)
+#   _ch_off  : チャンネルオフセット（先頭チャンネルインデックス）
 
 my %state = (
-    0        => 0.0,
-    1        => 0.0,          # チャンネルオフセット先頭
     _pos     => 0.0,
     _page_ms => $PAGE_SEC_INIT * 1000.0,
     _gain    => 100.0,        # ±100 μV
+    _ch_off  => 0,
 );
 
-# チャンネルオフセット: スライダ1(0..1) → 先頭チャンネルインデックス
-sub ch_offset_from_state {
+# Gainステップ（対数的に変化）
+my @GAIN_STEPS = (10, 20, 50, 100, 150, 200, 300, 500);
+
+sub gain_step_down {
+    my $g = $_[0];
+    for my $s (reverse @GAIN_STEPS) { return $s if $s < $g }
+    return $GAIN_STEPS[0];   # 最小値以下なら最小値に固定
+}
+sub gain_step_up {
+    my $g = $_[0];
+    for my $s (@GAIN_STEPS) { return $s if $s > $g }
+    return $GAIN_STEPS[-1];  # 最大値以上なら最大値に固定
+}
+
+sub page_ms         { $_[0]{_page_ms} // ($PAGE_SEC_INIT * 1000.0) }
+sub gain_from_state { $_[0]{_gain}    // 100.0 }
+sub ch_off_from_state {
+    my $idx = $_[0]{_ch_off} // 0;
     my $max = $N_CH_ALL - $N_ROWS_VIS;
-    return 0 if $max <= 0;
-    my $v = $_[0]{1} // 0.0;
-    my $idx = int($v * $max + 0.5);
+    $max = 0 if $max < 0;
     $idx = 0    if $idx < 0;
     $idx = $max if $idx > $max;
     return $idx;
 }
-sub page_ms       { $_[0]{_page_ms} // ($PAGE_SEC_INIT * 1000.0) }
-sub gain_from_state { $_[0]{_gain} // 100.0 }
 sub tstart_from_state {
     my $max = $DATA_MS - page_ms($_[0]); $max = 0 if $max < 0;
     ($_[0]{_pos} // 0.0) * $max;
@@ -149,29 +159,40 @@ sub pos_from_tstart {
     my $v = $t_ms / $max;
     $v < 0.0 ? 0.0 : $v > 1.0 ? 1.0 : $v;
 }
-sub n_out_for_width { int($_[0] * 1) || 400 }  # 1px=1点（2倍は過剰）
+sub n_out_for_width { int($_[0] * 1) || 400 }
 
 # ═══════════════════════════════════════════════════════════════════════
 # 3. ボタン行 UI 定数（ボタン行 Axes の xlim=0..1 座標）
 # ═══════════════════════════════════════════════════════════════════════
 
-# ページボタン
+# ページボタン [◀] [▶]
 use constant { PREV_X0=>0.01, PREV_X1=>0.07, NEXT_X0=>0.08, NEXT_X1=>0.14,
-               BTN_Y0 =>0.55, BTN_Y1 =>0.95 };
+               BTN_Y0 =>0.15, BTN_Y1 =>0.85 };
 
 # 窓幅ボックス [−][値][+]
 use constant { WND_M_X0=>0.15, WND_M_X1=>0.19,
                WND_V_X0=>0.19, WND_V_X1=>0.28,
                WND_P_X0=>0.28, WND_P_X1=>0.32,
-               WND_Y0  =>0.55, WND_Y1  =>0.95 };
+               WND_Y0  =>0.15, WND_Y1  =>0.85 };
+
+# Gainボックス [−][±値µV][+]  ← NEW
+use constant { GAN_M_X0=>0.33, GAN_M_X1=>0.37,
+               GAN_V_X0=>0.37, GAN_V_X1=>0.47,
+               GAN_P_X0=>0.47, GAN_P_X1=>0.51,
+               GAN_Y0  =>0.15, GAN_Y1  =>0.85 };
+
+# チャンネルスクロールボタン [▲] [▼]  ← NEW
+use constant { CHU_X0=>0.52, CHU_X1=>0.57,
+               CHD_X0=>0.58, CHD_X1=>0.63,
+               CHB_Y0=>0.15, CHB_Y1=>0.85 };
 
 # 位置スライダ（時間）
-use constant { SLD_X0=>0.33, SLD_X1=>0.99,
-               SLD_CY=>0.78, SLD_TH=>0.09, SLD_NW=>0.007 };
+use constant { SLD_X0=>0.64, SLD_X1=>0.99,
+               SLD_CY=>0.50, SLD_TH=>0.09, SLD_NW=>0.007 };
 
-# 情報行（スライダ下）
-use constant INFO_Y1 => 0.52;   # 情報行1（ch情報・Gain）
-use constant INFO_Y2 => 0.12;   # 情報行2（PICK/Cursor）
+# 情報行
+use constant INFO_Y1 => 0.10;   # 情報行1（LTTB/ch情報）スライダ下
+use constant INFO_Y2 => -0.06;  # 情報行2（PICK/Cursor）最下部
 
 # ── 描画ヘルパー ──────────────────────────────────────────────────────
 
@@ -204,10 +225,10 @@ sub _draw_hslider {
     my $lx  = $nx < (SLD_X0+SLD_X1)/2 ? $nx + SLD_NW*4 : $nx - SLD_NW*4;
     my $ha  = $nx < (SLD_X0+SLD_X1)/2 ? 'left' : 'right';
     $ax->text($lx, SLD_CY + SLD_TH*3.0, $lbl,
-        ha=>\$ha, va=>'bottom', fontsize=>9, color=>'#2c3e50');
+        ha=>$ha, va=>'bottom', fontsize=>9, color=>'#2c3e50');
     $ax->text(SLD_X0, SLD_CY - SLD_TH*3.2, "0",
         ha=>'center', va=>'top', fontsize=>8, color=>'#888888');
-    \$ax->text(SLD_X1, SLD_CY - SLD_TH*3.2,
+    $ax->text(SLD_X1, SLD_CY - SLD_TH*3.2,
         sprintf("%.0fs", $data_ms/1000.0),
         ha=>'center', va=>'top', fontsize=>8, color=>'#888888');
 }
@@ -218,7 +239,7 @@ sub _sld_x_to_pos {
 }
 
 # ═══════════════════════════════════════════════════════════════════════
-# 4. render — 2 GridSpec 方式でボタン行高さを固定
+# 4. render — GridSpec 方式でボタン行高さを固定
 # ═══════════════════════════════════════════════════════════════════════
 
 my $render = sub {
@@ -231,7 +252,7 @@ my $render = sub {
     my $t_start  = tstart_from_state($state);
     my $t_end    = $t_start + $page_ms;
     $t_end       = $DATA_MS if $t_end > $DATA_MS;
-    my $ch_off   = ch_offset_from_state($state);
+    my $ch_off   = ch_off_from_state($state);
 
     my $idx0 = int($t_start / 1000.0 * $srate);
     my $idx1 = int($t_end   / 1000.0 * $srate) - 1;
@@ -248,10 +269,8 @@ my $render = sub {
     my $fig = figure(width => $w, height => $h);
 
     # ボタン行を絶対ピクセル高さ BTN_PX で確保
-    # height_ratios: 波形行は等分、ボタン行だけ小さい比率に換算
-    # 波形エリア高さ = h（全高）、ボタン行比率 = BTN_PX / ((h - BTN_PX) / N_ROWS_VIS)
-    my $wave_unit = ($h - BTN_PX) / $N_ROWS_VIS;   # 波形1行の高さ(px)
-    my $btn_ratio = BTN_PX / $wave_unit;             # 波形1行=1に対するボタン行比率
+    my $wave_unit = ($h - BTN_PX) / $N_ROWS_VIS;
+    my $btn_ratio = BTN_PX / $wave_unit;
     my @ratios = ((1) x $N_ROWS_VIS, $btn_ratio);
     my $gs = $fig->add_gridspec($N_ROWS_VIS + 1, 1,
         height_ratios => \@ratios,
@@ -264,6 +283,17 @@ my $render = sub {
     my $ax_btn = $fig->add_subplot($gs->at($N_ROWS_VIS, 0));
 
     # ── 波形チャンネル ────────────────────────────────────────────
+    # ラベル横書き方式: ylabel()廃止、xlim を左に拡張してデータ座標内にtext()
+    # label_ms: margin_left エリアをデータ座標幅に換算
+    #   draw_w = w - ml_wave - mr_wave、label_ms = ml_wave * page_ms / draw_w
+    my $ml_wave    = 52;
+    my $mr_wave    = 8;
+    my $draw_w     = $w - $ml_wave - $mr_wave;
+    $draw_w        = 1 if $draw_w < 1;
+    my $label_ms   = $ml_wave * $page_ms / $draw_w;   # marginエリア幅をms換算
+    my $xlim_left  = $t_start - $label_ms;            # xlim左端をラベル分だけ広げる
+    my $label_x    = $xlim_left + $label_ms * 0.45;   # ラベルを左端から45%の位置に配置
+
     for my $row (0 .. $N_ROWS_VIS-1) {
         my $ch_idx = $ch_off + $row;
         last if $ch_idx >= $N_CH_ALL;
@@ -276,13 +306,13 @@ my $render = sub {
             ($t_plot, $y_plot) = ($t_view, $y_full);
         }
         $ax->line($t_plot, $y_plot, color=>'#1a5276', lw=>0.8);
-        $ax->xlim($t_start, $t_end);
+        $ax->xlim($xlim_left, $t_end);   # 左端をラベル分拡張
         $ax->ylim($gain, -$gain);
-        # ytick: 0ライン非表示、±gain目盛りのみ
         $ax->tick_params(axis=>'x', labelbottom=>0, length=>0);
-        $ax->tick_params(axis=>'y', labelleft=>0, length=>0);
-        # チャンネル名: ylabel位置（枠外左）
-        $ax->ylabel($CH_NAMES[$ch_idx]);
+        $ax->tick_params(axis=>'y', labelleft=>0,   length=>0);
+        # 横書きラベル: データ座標内 (label_x, 0) に右寄せ横書きで描画
+        $ax->text($label_x, 0, $CH_NAMES[$ch_idx],
+            ha=>'center', va=>'center', fontsize=>9, color=>'#2c3e50');
     }
 
     # ── cursor_overlay ───────────────────────────────────────────
@@ -315,10 +345,10 @@ my $render = sub {
 
     # ── ボタン行 ──────────────────────────────────────────────────
     {
-        $ax_btn->xlim(0,1); $ax_btn->ylim(0,1);
+        $ax_btn->xlim(0,1); $ax_btn->ylim(-0.1, 1.0);
         $ax_btn->axis('off');
 
-        # ◀ ▶
+        # [◀] [▶] ページ送り
         _draw_button($ax_btn, PREV_X0, PREV_X1, BTN_Y0, BTN_Y1,
             "\x{25C0}", $t_start > 0);
         _draw_button($ax_btn, NEXT_X0, NEXT_X1, BTN_Y0, BTN_Y1,
@@ -335,25 +365,41 @@ my $render = sub {
             ha=>'center', va=>'center', fontsize=>10, color=>'#2c3e50');
         _draw_button($ax_btn, WND_P_X0, WND_P_X1, WND_Y0, WND_Y1, "+", 1);
 
-        # 位置スライダ
+        # Gain [−][±値µV][+]  ← NEW
+        _draw_button($ax_btn, GAN_M_X0, GAN_M_X1, GAN_Y0, GAN_Y1, "\x{2212}", 1);
+        $ax_btn->line(
+            pdl(GAN_V_X0,GAN_V_X1,GAN_V_X1,GAN_V_X0,GAN_V_X0),
+            pdl(GAN_Y0,GAN_Y0,GAN_Y1,GAN_Y1,GAN_Y0),
+            color=>'#888888', lw=>1.0);
+        $ax_btn->text((GAN_V_X0+GAN_V_X1)/2, (GAN_Y0+GAN_Y1)/2,
+            sprintf("\xB1%d\xB5V", $gain),
+            ha=>'center', va=>'center', fontsize=>10, color=>'#8e44ad');
+        _draw_button($ax_btn, GAN_P_X0, GAN_P_X1, GAN_Y0, GAN_Y1, "+", 1);
+
+        # チャンネルスクロール [▲] [▼]  ← NEW
+        my $ch_max = $N_CH_ALL - $N_ROWS_VIS;
+        _draw_button($ax_btn, CHU_X0, CHU_X1, CHB_Y0, CHB_Y1,
+            "\x{25B2}", $ch_max > 0 && $ch_off > 0);
+        _draw_button($ax_btn, CHD_X0, CHD_X1, CHB_Y0, CHB_Y1,
+            "\x{25BC}", $ch_max > 0 && $ch_off < $ch_max);
+
+        # 位置スライダ（時間）
         _draw_hslider($ax_btn, $state->{_pos} // 0.0,
                       $t_start, $page_ms, $DATA_MS);
 
-        # 情報行1: ch範囲 | Gain/LTTB （スライダ下段・左右）
-        my $ch_max = $N_CH_ALL - $N_ROWS_VIS;
+        # 情報行1: ch範囲 | LTTB
         my $ch_str = $ch_max > 0
             ? sprintf("ch %d\x{2013}%d / %d  |",
                 $ch_off+1, $ch_off+$N_ROWS_VIS, $N_CH_ALL)
             : sprintf("%d ch  |", $N_CH_ALL);
         my $lttb_str = ($n_lttb < $ns_view)
-            ? sprintf("Gain:\xB1%.0f\xB5V  LTTB:%d\x{2192}%d/ch",
-                $gain, $ns_view, $n_lttb)
-            : sprintf("Gain:\xB1%.0f\xB5V  Full:%d pts/ch", $gain, $ns_view);
-        $ax_btn->text(SLD_X0, INFO_Y1, $ch_str . "  " . $lttb_str,
+            ? sprintf("  LTTB:%d\x{2192}%d/ch", $ns_view, $n_lttb)
+            : sprintf("  Full:%d pts/ch", $ns_view);
+        $ax_btn->text(SLD_X0, INFO_Y1, $ch_str . $lttb_str,
             ha=>'left', va=>'top', fontsize=>8,
             color=>($n_lttb < $ns_view ? '#27ae60' : '#555555'));
 
-        # 情報行2: PICK/Cursor情報（重ならない下段）
+        # 情報行2: PICK/Cursor情報
         if (defined $pick_info) {
             $ax_btn->text(SLD_X0, INFO_Y2,
                 sprintf("%s  t=%.3f s  v=%.1f \xB5V  ch: %s",
@@ -364,30 +410,23 @@ my $render = sub {
         }
     }
 
-    # マージン手動設定（tight_layoutの自動計算を使わない）
-    # ylabel(チャンネル名)あり・xtick非表示に最適化
-    my $ml_wave = 52;
-    my $mr_wave = 8;
-    my $mt_wave = 3;
-    my $mb_wave = 3;
+    # マージン手動設定
+    # ylabel廃止でmargin_leftはCairoのframe枠線分だけあればよい
+    # ただし xlim 拡張でラベルがplot_rect内に描かれるので margin_left は最小でOK
+    my $mt_wave = 2;
+    my $mb_wave = 2;
     for my $ax (@axes) {
-        $ax->margin_left($ml_wave);
+        $ax->margin_left($ml_wave);   # $ml_wave は上部で定義済み
         $ax->margin_right($mr_wave);
         $ax->margin_top($mt_wave);
         $ax->margin_bottom($mb_wave);
     }
-    # ボタン行: axis('off')なので全マージン最小にしてplot矩形を最大化
-    # → image_frac_to_data がボタン行全体でヒットするようになる
     $ax_btn->margin_left(2);
     $ax_btn->margin_right(2);
     $ax_btn->margin_top(2);
     $ax_btn->margin_bottom(2);
 
-    # tight_layoutの自動呼び出しを抑制（_render_to内で再度呼ばれてマージンが上書きされるのを防ぐ）
     $fig->{_tight_done} = 1;
-
-    printf "render %.0fms  (n_lttb=%d ns_view=%d ch=%d w=%d)\n",
-        unless $is_save;
 
     return $fig;
 };
@@ -405,9 +444,10 @@ my $drv = PDL::Graphics::Cairo::Driver::GS->new(
 printf "EEG Raw Viewer\n";
 printf "  %d ch total, %d ch visible @ %.0fs window\n",
     $N_CH_ALL, $N_ROWS_VIS, $PAGE_SEC_INIT;
-printf "  スライダ1(垂直): チャンネルスクロール\n";
-printf "  (横スライダは現在未使用: giza-server側でCMD_NEWWIN拡張時に廃止予定)\n";
-printf "  [◀][▶]: 時間ページ送り  [−][+]: 窓幅変更\n\n";
+printf "  [◀][▶]: 時間ページ送り\n";
+printf "  [−][窓幅][+]: 表示時間幅変更\n";
+printf "  [−][±Gain][+]: 振幅ゲイン変更\n";
+printf "  [▲][▼]: チャンネルスクロール\n\n";
 
 $drv->show_interactive(
     init           => \%state,
@@ -418,10 +458,10 @@ $drv->show_interactive(
         my ($fx, $fy, $btn) = @_;
         return unless $btn == 1;
         my $ax_idx = $state{_cursor_ax_idx} // -1;
-        # ボタン行 = axes インデックス $N_ROWS_VIS
         return unless $ax_idx == $N_ROWS_VIS;
         my $bx = $state{_cursor_x} // -1;
         my $by = $state{_cursor_y} // -1;
+        # 位置スライダのドラッグ
         if ($bx >= SLD_X0 - SLD_NW*3 && $bx <= SLD_X1 + SLD_NW*3
             && $by >= SLD_CY - SLD_TH*3.5 && $by <= SLD_CY + SLD_TH*3.5) {
             $state{_pos} = _sld_x_to_pos($bx);
@@ -433,7 +473,7 @@ $drv->show_interactive(
         my $ax_idx = $state{_cursor_ax_idx} // -1;
 
         if ($ax_idx == $N_ROWS_VIS) {
-            # ボタン行
+            # ボタン行クリック
             my $bx = $state{_cursor_x} // -1;
             my $by = $state{_cursor_y} // 0.5;
 
@@ -443,7 +483,7 @@ $drv->show_interactive(
                 && $by <= SLD_CY + SLD_TH*3.5) {
                 $state{_pos} = _sld_x_to_pos($bx);
 
-            # ◀ Prev
+            # [◀] Prev ページ
             } elsif ($bx >= PREV_X0 && $bx <= PREV_X1
                      && $by >= BTN_Y0 && $by <= BTN_Y1) {
                 my $pg = page_ms(\%state);
@@ -452,7 +492,7 @@ $drv->show_interactive(
                 $state{_pos} = pos_from_tstart($t, $pg);
                 printf "  \x{25C0} t=%.1fs\n", $t/1000.0;
 
-            # ▶ Next
+            # [▶] Next ページ
             } elsif ($bx >= NEXT_X0 && $bx <= NEXT_X1
                      && $by >= BTN_Y0 && $by <= BTN_Y1) {
                 my $pg  = page_ms(\%state);
@@ -462,30 +502,62 @@ $drv->show_interactive(
                 $state{_pos} = pos_from_tstart($t, $pg);
                 printf "  \x{25B6} t=%.1fs\n", $t/1000.0;
 
-            # − 窓幅縮小
+            # [−] 窓幅縮小
             } elsif ($bx >= WND_M_X0 && $bx <= WND_M_X1
                      && $by >= WND_Y0 && $by <= WND_Y1) {
-                my $t0   = tstart_from_state(\%state);
-                my $new  = $state{_page_ms} - 1000.0;
-                $new     = 1000.0 if $new < 1000.0;
+                my $t0  = tstart_from_state(\%state);
+                my $new = $state{_page_ms} - 1000.0;
+                $new    = 1000.0 if $new < 1000.0;
                 $state{_page_ms} = $new;
                 $state{_pos}     = pos_from_tstart($t0, $new);
                 printf "  窓幅: %.0fs\n", $new/1000.0;
 
-            # + 窓幅拡大
+            # [+] 窓幅拡大
             } elsif ($bx >= WND_P_X0 && $bx <= WND_P_X1
                      && $by >= WND_Y0 && $by <= WND_Y1) {
-                my $t0   = tstart_from_state(\%state);
-                my $new  = $state{_page_ms} + 1000.0;
-                $new     = $DATA_MS if $new > $DATA_MS;
+                my $t0  = tstart_from_state(\%state);
+                my $new = $state{_page_ms} + 1000.0;
+                $new    = $DATA_MS if $new > $DATA_MS;
                 $state{_page_ms} = $new;
                 $state{_pos}     = pos_from_tstart($t0, $new);
                 printf "  窓幅: %.0fs\n", $new/1000.0;
+
+            # [−] Gain縮小（波形拡大）  ← NEW
+            } elsif ($bx >= GAN_M_X0 && $bx <= GAN_M_X1
+                     && $by >= GAN_Y0 && $by <= GAN_Y1) {
+                my $new = gain_step_down($state{_gain});
+                $state{_gain} = $new;
+                printf "  Gain: \xB1%d\xB5V\n", $new;
+
+            # [+] Gain拡大（波形縮小）  ← NEW
+            } elsif ($bx >= GAN_P_X0 && $bx <= GAN_P_X1
+                     && $by >= GAN_Y0 && $by <= GAN_Y1) {
+                my $new = gain_step_up($state{_gain});
+                $state{_gain} = $new;
+                printf "  Gain: \xB1%d\xB5V\n", $new;
+
+            # [▲] チャンネル上スクロール  ← NEW
+            } elsif ($bx >= CHU_X0 && $bx <= CHU_X1
+                     && $by >= CHB_Y0 && $by <= CHB_Y1) {
+                my $new = ($state{_ch_off} // 0) - 1;
+                $new = 0 if $new < 0;
+                $state{_ch_off} = $new;
+                printf "  ch offset: %d\n", $new;
+
+            # [▼] チャンネル下スクロール  ← NEW
+            } elsif ($bx >= CHD_X0 && $bx <= CHD_X1
+                     && $by >= CHB_Y0 && $by <= CHB_Y1) {
+                my $max = $N_CH_ALL - $N_ROWS_VIS;
+                $max    = 0 if $max < 0;
+                my $new = ($state{_ch_off} // 0) + 1;
+                $new    = $max if $new > $max;
+                $state{_ch_off} = $new;
+                printf "  ch offset: %d\n", $new;
             }
 
         } else {
             # 波形行 PICK
-            my $ch_idx = ch_offset_from_state(\%state) + $ax_idx;
+            my $ch_idx = ch_off_from_state(\%state) + $ax_idx;
             my $ch = ($ch_idx >= 0 && $ch_idx < $N_CH_ALL)
                 ? $CH_NAMES[$ch_idx] : '?';
             printf "PICK btn=%d ch=%s\n", $btn, $ch;

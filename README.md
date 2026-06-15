@@ -24,7 +24,7 @@ PDL::Graphics::Cairo (P:G:C) is a high-level 2D plotting library for [PDL](https
 
 ### Layouts
 - `subplots(M, N)` — uniform grid
-- `GridSpec` — non-uniform spanning panels, now with **`height_ratios`/`width_ratios`** for per-row/column size control
+- `GridSpec` — non-uniform spanning panels, with **`height_ratios`/`width_ratios`** for per-row/column size control
 - `subplot_mosaic("AAB\nCDB")` — string-defined layouts
 - `suptitle` — figure-level title
 
@@ -35,7 +35,7 @@ PDL::Graphics::Cairo (P:G:C) is a high-level 2D plotting library for [PDL](https
 
 ### Output
 - PNG (via `PDL::IO::PNG` or Cairo), PDF, SVG
-- Interactive display via `giza-server` (persistent window with tabs, sliders)
+- Interactive display via `giza-server` (persistent window with tabs, sliders, resize, cursor/pick)
 - Inline display in `App::PDL::Notebook` (via `$fig->to_inline`)
 
 ### Downsampling
@@ -79,7 +79,7 @@ $fig->save('plot.png');
 
 ## More examples
 
-### Spectrogram ( audio analysis)
+### Spectrogram (audio analysis)
 
 ```perl
 use PDL::Graphics::Cairo qw(subplots);
@@ -176,8 +176,8 @@ See the `examples/` directory:
 
 | File | Description |
 |---|---|
+| `eeg_viewer_raw.pl` | **MNE `raw.plot()`-style multi-channel EEG viewer** — page buttons, time-window control, amplitude gain, channel scroll, time-position slider, LTTB downsampling, cursor/pick overlay, resize support |
 | `example_gridspec.pl` | GridSpec, subplot_mosaic layouts |
-| `eeg_viewer_raw.pl` | MNE `raw.plot()`-style multi-channel EEG viewer; real-time LTTB, channel scroll, time window, page buttons |
 | `example_hexbin.pl` | 2D density, scatter vs hexbin comparison |
 | `example_colormap.pl` | ListedColormap, LogNorm, TwoSlopeNorm, BoundaryNorm |
 | `specgram_demo.pl` | Chirp, EEG-like, multi-tone spectrograms |
@@ -186,6 +186,31 @@ See the `examples/` directory:
 | `example_png.pl` | Basic plotting quickstart |
 | `example_gs.pl` | Interactive display via giza-server |
 | `example_gs_cursor_overlay.pl` | Cursor coordinate overlay with mouse tracking |
+
+### Running the EEG viewer
+
+```bash
+# Demo mode (synthetic 34-channel × 30 s data, no files needed)
+GIZA_SERVER=/path/to/giza_server \
+PDLCAIRO_RENDER_SCALE=0.75 \
+perl examples/eeg_viewer_raw.pl
+
+# Real data (Nihon Kohden .eeg, requires PDL::EEG)
+GIZA_SERVER=/path/to/giza_server \
+perl examples/eeg_viewer_raw.pl /path/to/recording.eeg
+```
+
+**Controls:**
+
+| Control | Action |
+|---|---|
+| `[◀]` `[▶]` | Page backward / forward by one time window |
+| `[−]` `[10s]` `[+]` | Shrink / expand time window (1 s steps) |
+| `[−]` `[±100µV]` `[+]` | Decrease / increase amplitude gain (log steps: 10→20→50→100→…→500 µV) |
+| `[▲]` `[▼]` | Scroll channels up / down |
+| Position slider | Jump to any time position |
+| Left-click (waveform) | PICK: snap cursor to nearest sample, show ch/time/value |
+| Mouse move (waveform) | Cursor overlay across all channels |
 
 ---
 
@@ -199,7 +224,7 @@ PDL::Graphics::Cairo        ← this library
 ├── Driver::GS              ← giza-server interactive display
 ├── ColorMap                ← built-in colormaps
 ├── ListedColormap          ← discrete color lists
-├── GridSpec                ← non-uniform subplot layout
+├── GridSpec                ← non-uniform subplot layout (height_ratios, width_ratios)
 ├── Transform::Linear/Log   ← data→pixel coordinate transforms
 ├── Scale::Log              ← log-scale tick placement
 └── Tick                    ← tick generation (nice_ticks, minor_ticks)
@@ -209,18 +234,20 @@ PDL::Graphics::Cairo        ← this library
 
 ## Performance (interactive EEG viewer, Apple Silicon M-series)
 
-Profiled with `eeg_viewer_raw.pl` (8 ch × 10 s × 1 kHz, 1100×900 window):
+Profiled with `eeg_viewer_raw.pl` (8 ch visible × 10 s × 1 kHz, 1100×900 window):
 
 | Step | Before | After | Change |
 |------|--------|-------|--------|
-| LTTB (8 ch) | 230 ms | 17 ms | `lttb_minmax` replaces Perl loop |
-| PNG compress | 40 ms | 5–7 ms | `PDL::IO::PNG` level 1 + FILTER_NONE |
+| LTTB (8 ch) | 230 ms | 17 ms | `lttb_minmax` replaces per-channel Perl loop |
+| PNG compress | 40 ms | 5–7 ms | `PDL::IO::PNG` level 1 + `FILTER_NONE` |
 | Cairo render | 60 ms | 12–22 ms | `PDLCAIRO_RENDER_SCALE=0.5–0.75` |
 | **Total/frame** | **~330 ms** | **~46 ms** | **~7× faster** |
 
-`PDLCAIRO_RENDER_SCALE` env var controls the render resolution (default 0.75):
-the viewer renders at a fraction of the window size; the Cocoa/Xlib viewer
-scales up automatically with no loss of interactivity.
+`PDLCAIRO_RENDER_SCALE` controls render resolution (default `0.75`): the figure
+is rendered at a fraction of the window size and scaled up by the Cocoa/Xlib
+viewer — no loss of interactivity.
+
+---
 
 ## Status
 
@@ -230,11 +257,12 @@ Active development. matplotlib API coverage:
 |---|---|
 | Plot types | ✅ 20+ types incl. hexbin, specgram, contour/contourf |
 | Axes decoration | ✅ tick_params, minor ticks, formatters, inset_axes |
-| Layouts | ✅ GridSpec, subplot_mosaic, suptitle |
+| Layouts | ✅ GridSpec (height_ratios/width_ratios), subplot_mosaic, suptitle |
 | Colormaps | ✅ 12 built-in + ListedColormap |
 | Normalization | ✅ Normalize, LogNorm, BoundaryNorm, TwoSlopeNorm |
 | Signal analysis | ✅ specgram (STFT, windowing, dB scale) |
-| Interactive | ✅ giza-server (tabs, sliders, resize, cursor/pick, zoom/pan) |
+| Interactive | ✅ giza-server (tabs, sliders, resize, cursor/pick) |
+| Reactive controls | ✅ `param` / `button` / `on_change` bridge for App::PDL::Notebook |
 | 3D plots | 🔲 not planned (use PDL::Graphics::Gnuplot) |
 | streamplot | 🔲 low priority |
 | spine control | 🔲 low priority |
@@ -247,7 +275,7 @@ To set expectations clearly:
 
 **Out of scope (by design):**
 - **3D plots** — surface, 3D scatter, wireframe → use `PDL::Graphics::Gnuplot` or `PDL::Graphics::TriD`
-- **Interactive pan/zoom** — mouse-driven navigation (giza-server sliders are separate)
+- **Interactive pan/zoom** — mouse-driven navigation (giza-server sliders are separate controls)
 - **Real-time animation** — frame-by-frame output is possible, but no animation API
 - **pandas-style DataFrames** — Perl has no DataFrame equivalent; use PDL ndarrays directly
 
