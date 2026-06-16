@@ -32,10 +32,11 @@ use IO::Socket::UNIX;
 use POSIX ();
 use PDL::Graphics::Cairo::Driver::Cairo;
 
-has width  => (is => 'rw', required => 1);   # rw: RESIZE 逆チャネルで更新する
-has height => (is => 'rw', required => 1);
-has title  => (is => 'ro', default  => sub { 'PDL::Graphics::Cairo' });
-has start  => (is => 'ro', default  => sub { 'auto' });  # auto|connect|launch
+has width   => (is => 'rw', required => 1);   # rw: RESIZE 逆チャネルで更新する
+has height  => (is => 'rw', required => 1);
+has title   => (is => 'ro', default  => sub { 'PDL::Graphics::Cairo' });
+has start   => (is => 'ro', default  => sub { 'auto' });  # auto|connect|launch
+has verbose => (is => 'ro', default  => sub { $ENV{PDLCAIRO_DEBUG} ? 1 : 0 });
 
 # ---- GSP プロトコル定数（giza-server-protocol.h と一致）----
 use constant {
@@ -286,7 +287,8 @@ sub _figure_to_png {
     my $bytes = $cairo->png_bytes;
     my $_t2 = Time::HiRes::time();
     printf "  png: cairo_render=%.0fms  png_compress=%.0fms  size=%dKB\n",
-        ($_t1-$_t0)*1000, ($_t2-$_t1)*1000, length($bytes)/1024;
+        ($_t1-$_t0)*1000, ($_t2-$_t1)*1000, length($bytes)/1024
+        if $self->verbose;
     return $bytes;
 }
 

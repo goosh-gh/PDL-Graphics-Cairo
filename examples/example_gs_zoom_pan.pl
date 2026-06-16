@@ -1,36 +1,38 @@
 #!/usr/bin/env perl
-# P:G:C09 段階B デモ — zoom/pan でデータ座標レベルの拡大縮小
+# examples/example_gs_zoom_pan.pl — interactive zoom/pan demo
 #
-# ピンチイン/アウト または Ctrl+スクロール で zoom
-# zoom中に2本指ドラッグで pan
-# ダブルクリックでリセット
+# Controls (macOS):
+#   pinch in/out or Ctrl+scroll  : zoom
+#   two-finger drag while zoomed : pan
+#   double-click                 : reset to full view
 #
-# zoom_pan_redraw => 1 を指定すると:
-#   - giza-server の zoom/pan 操作を検出して自動再描画
-#   - render の $state に以下のキーが入る:
-#       _zoom_xlim_lo/_zoom_xlim_hi  ... zoom後の x 表示範囲
-#       _zoom_ylim_lo/_zoom_ylim_hi  ... zoom後の y 表示範囲
-#       _zoom, _pan_x, _pan_y        ... zoom/pan の生の値
-#   - render 側でこれを xlim/ylim に適用することで高解像度再描画
-#   - zoom=1/pan=0にリセットされると _zoom_xlim* キーは消える
+# How zoom_pan_redraw => 1 works:
+#   - giza-server detects zoom/pan gestures and sends GSP_MSG_ZOOM
+#   - Driver::GS writes the new view range into $state:
+#       _zoom_xlim_lo / _zoom_xlim_hi  ... new x display range
+#       _zoom_ylim_lo / _zoom_ylim_hi  ... new y display range
+#       _zoom, _pan_x, _pan_y          ... raw zoom/pan values
+#   - render applies these to xlim/ylim for full-resolution redraw
+#   - when reset (zoom=1, pan=0), the _zoom_xlim_* keys are removed
 
-use strict; use warnings;
+use strict;
+use warnings;
 use PDL;
 use PDL::Graphics::Cairo qw(subplots);
 use PDL::Graphics::Cairo::Driver::GS;
 
-# --- データ: 細かい構造を含む波形（zoom で見えてくる） ---
-my $x = sequence(2000) / 200;          # 0..10、2000点
-my $y = sin($x * 3) * exp(-$x/5)      # 減衰正弦
-      + 0.15 * sin($x * 37)           # 高周波ノイズ（zoom で見える）
-      + 0.05 * sin($x * 120);         # さらに高周波
+# --- Data: waveform with fine structure revealed by zooming in ---
+my $x = sequence(2000) / 200;          # 0..10, 2000 points
+my $y = sin($x * 3) * exp(-$x/5)      # damped sine
+      + 0.15 * sin($x * 37)           # high-freq component (visible when zoomed)
+      + 0.05 * sin($x * 120);         # even higher frequency
 
-# --- render コールバック ---
+# --- Render callback ---
 my $render = sub {
     my ($state, $w, $h) = @_;
     my ($fig, $ax) = subplots(1, 1, width => $w, height => $h);
 
-    # zoom_pan_redraw が xlim/ylim を state に書いてくれる
+    # zoom_pan_redraw writes the current view range into $state
     my $xlo = $state->{_zoom_xlim_lo} // 0;
     my $xhi = $state->{_zoom_xlim_hi} // 10;
     my $ylo = $state->{_zoom_ylim_lo} // -1.3;
@@ -39,7 +41,7 @@ my $render = sub {
     $ax->xlim($xlo, $xhi);
     $ax->ylim($ylo, $yhi);
 
-    # 表示範囲内のデータだけ描画（高速化）
+    # Draw only data within the visible range (performance optimization)
     my $margin = ($xhi - $xlo) * 0.05;
     my $mask   = ($x >= $xlo - $margin) & ($x <= $xhi + $margin);
     my $xv = $x->where($mask);
@@ -49,29 +51,29 @@ my $render = sub {
     $ax->set_xlabel('x');
     $ax->set_ylabel('y');
 
-    # zoom状態の表示
+    # Show zoom state in plot
     if (defined $state->{_zoom} && $state->{_zoom} > 1.01) {
         my $zmsg = sprintf("zoom=%.1fx  x=[%.3f, %.3f]", $state->{_zoom}, $xlo, $xhi);
         $ax->text($xlo + ($xhi-$xlo)*0.02, $yhi - ($yhi-$ylo)*0.05,
             $zmsg, ha=>'left', va=>'top', fontsize=>10, color=>'darkgreen');
     } else {
-        $ax->set_title('ピンチ/Ctrl+スクロールでzoom、2本指ドラッグでpan、ダブルクリックでリセット');
+        $ax->set_title('pinch / Ctrl+scroll to zoom  |  two-finger drag to pan  |  double-click to reset');
     }
 
     $fig->tight_layout;
     return $fig;
 };
 
-# --- インタラクティブ起動 ---
+# --- Launch interactive viewer ---
 my $drv = PDL::Graphics::Cairo::Driver::GS->new(
     width  => 900,
     height => 500,
-    title  => 'P:G:C09 zoom/pan',
+    title  => 'zoom/pan demo',
 );
 
-print "ピンチイン/アウト または Ctrl+スクロールでzoom\n";
-print "zoom中に2本指ドラッグでpan\n";
-print "ダブルクリックでリセット\n";
+print "pinch in/out or Ctrl+scroll to zoom\n";
+print "two-finger drag to pan\n";
+print "double-click to reset\n\n";
 
 $drv->show_interactive(
     render          => $render,

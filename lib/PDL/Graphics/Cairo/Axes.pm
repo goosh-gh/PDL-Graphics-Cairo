@@ -64,9 +64,10 @@ has margin_bottom => (is => 'rw', default => sub { 56 });
 #
 
 # ------------------------------------------------------------------
-has title  => (is => 'rw', default => sub { '' });
-has xlabel => (is => 'rw', default => sub { '' });
-has ylabel => (is => 'rw', default => sub { '' });
+has title           => (is => 'rw', default => sub { '' });
+has xlabel          => (is => 'rw', default => sub { '' });
+has ylabel          => (is => 'rw', default => sub { '' });
+has ylabel_rotation => (is => 'rw', default => sub { 90 });  # 0=横書き 90=縦書き（デフォルト）
 
 # ------------------------------------------------------------------
 # 'linear' / 'log'
@@ -1161,6 +1162,9 @@ sub _normalize_groups {
 # ---- text --------------------------------------------------------
 sub text {
     my ($self, $x, $y, $str, %opt) = @_;
+    # va='center' は Cairo valign='middle' に正規化
+    my $va = $opt{va} // 'bottom';
+    $va = 'middle' if $va eq 'center';
     push @{ $self->_queue }, {
         type   => 'annot',
         x      => $x,  y   => $y,
@@ -1168,7 +1172,7 @@ sub text {
         color  => $self->_parse_color($opt{color} // 'black'),
         size   => $opt{fontsize} // 11,
         align  => $opt{ha}       // 'left',
-        valign => $opt{va}       // 'bottom',
+        valign => $va,
         angle  => $opt{rotation} // 0,
     };
     return $self;
@@ -1278,7 +1282,7 @@ sub legend {
 
 sub set_title  { my ($s,$t,%o) = @_; $s->title($t);  return $s }
 sub set_xlabel { my ($s,$t,%o) = @_; $s->xlabel($t); return $s }
-sub set_ylabel { my ($s,$t,%o) = @_; $s->ylabel($t); return $s }
+sub set_ylabel { my ($s,$t,%o) = @_; $s->ylabel($t); $s->ylabel_rotation($o{rotation}) if exists $o{rotation}; return $s }
 
 sub set_grid {
     my ($self, $on, %opt) = @_;
@@ -2828,11 +2832,19 @@ sub _draw_labels {
             align=>'center', valign=>'top');
     }
 
-    # Y 90
+    # Y ラベル（ylabel_rotation=90で縦書き、0で横書き）
     if ($self->ylabel ne '') {
         $b->set_font(size => 11);
-        $b->text($ml - 30, ($mt+$mb)/2, $self->ylabel,
-            align=>'center', valign=>'bottom', angle=>90);
+        my $rot = $self->ylabel_rotation // 90;
+        if ($rot == 0) {
+            # 横書き: 枠左端から少し左、縦中央、右寄せ
+            $b->text($ml - 4, ($mt+$mb)/2, $self->ylabel,
+                align=>'right', valign=>'center', angle=>0);
+        } else {
+            # 縦書き（デフォルト動作を維持）
+            $b->text($ml - 30, ($mt+$mb)/2, $self->ylabel,
+                align=>'center', valign=>'bottom', angle=>$rot);
+        }
     }
 }
 

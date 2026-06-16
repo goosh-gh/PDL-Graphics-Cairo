@@ -176,7 +176,8 @@ See the `examples/` directory:
 
 | File | Description |
 |---|---|
-| `eeg_viewer_raw.pl` | **MNE `raw.plot()`-style multi-channel EEG viewer** — page buttons, time-window control, amplitude gain, channel scroll, time-position slider, LTTB downsampling, cursor/pick overlay, resize support |
+| `eeg_viewer_raw.pl` | **MNE `raw.plot()`-style multi-channel EEG viewer** — page buttons, time-window control, amplitude gain, channel scroll, polarity toggle, time-position slider, LTTB downsampling, cursor/pick overlay, resize support |
+| `eeg_viewer_raw.jp.pl` | Japanese-commented version of `eeg_viewer_raw.pl` |
 | `example_gridspec.pl` | GridSpec, subplot_mosaic layouts |
 | `example_hexbin.pl` | 2D density, scatter vs hexbin comparison |
 | `example_colormap.pl` | ListedColormap, LogNorm, TwoSlopeNorm, BoundaryNorm |
@@ -185,6 +186,7 @@ See the `examples/` directory:
 | `example_stats.pl` | Statistical plots (boxplot, violin, histogram) |
 | `example_png.pl` | Basic plotting quickstart |
 | `example_gs.pl` | Interactive display via giza-server |
+| `example_gs_zoom_pan.pl` | Interactive zoom/pan: pinch/scroll to zoom, two-finger drag to pan, double-click to reset; demonstrates `zoom_pan_redraw => 1` |
 | `example_gs_cursor_overlay.pl` | Cursor coordinate overlay with mouse tracking |
 
 ### Running the EEG viewer
@@ -208,9 +210,20 @@ perl examples/eeg_viewer_raw.pl /path/to/recording.eeg
 | `[−]` `[10s]` `[+]` | Shrink / expand time window (1 s steps) |
 | `[−]` `[±100µV]` `[+]` | Decrease / increase amplitude gain (log steps: 10→20→50→100→…→500 µV) |
 | `[▲]` `[▼]` | Scroll channels up / down |
+| `[neg↑]` / `[pos↑]` | Toggle polarity: negative-up (EEG convention) ↔ positive-up |
 | Position slider | Jump to any time position |
 | Left-click (waveform) | PICK: snap cursor to nearest sample, show ch/time/value |
 | Mouse move (waveform) | Cursor overlay across all channels |
+
+**Optional arguments (Nihon Kohden files):**
+
+```bash
+# Load only block 1 (0-indexed)
+perl examples/eeg_viewer_raw.pl recording.eeg --block=1
+
+# Load and concatenate blocks 0 and 1
+perl examples/eeg_viewer_raw.pl recording.eeg --blocks=0,1
+```
 
 ---
 
@@ -225,6 +238,7 @@ PDL::Graphics::Cairo        ← this library
 ├── ColorMap                ← built-in colormaps
 ├── ListedColormap          ← discrete color lists
 ├── GridSpec                ← non-uniform subplot layout (height_ratios, width_ratios)
+├── LTTB                    ← downsampling: lttb() and lttb_minmax() (MinMax-LTTB)
 ├── Transform::Linear/Log   ← data→pixel coordinate transforms
 ├── Scale::Log              ← log-scale tick placement
 └── Tick                    ← tick generation (nice_ticks, minor_ticks)
@@ -261,7 +275,7 @@ Active development. matplotlib API coverage:
 | Colormaps | ✅ 12 built-in + ListedColormap |
 | Normalization | ✅ Normalize, LogNorm, BoundaryNorm, TwoSlopeNorm |
 | Signal analysis | ✅ specgram (STFT, windowing, dB scale) |
-| Interactive | ✅ giza-server (tabs, sliders, resize, cursor/pick) |
+| Interactive | ✅ giza-server (tabs, sliders, resize, cursor/pick, zoom/pan on macOS) |
 | Reactive controls | ✅ `param` / `button` / `on_change` bridge for App::PDL::Notebook |
 | 3D plots | 🔲 not planned (use PDL::Graphics::Gnuplot) |
 | streamplot | 🔲 low priority |
@@ -275,7 +289,7 @@ To set expectations clearly:
 
 **Out of scope (by design):**
 - **3D plots** — surface, 3D scatter, wireframe → use `PDL::Graphics::Gnuplot` or `PDL::Graphics::TriD`
-- **Interactive pan/zoom** — mouse-driven navigation (giza-server sliders are separate controls)
+- **Mouse-gesture pan/zoom** — available via `zoom_pan_redraw => 1` in `show_interactive()`: pinch/scroll on macOS (Cocoa) sends `GSP_MSG_ZOOM` to `Driver::GS`, which updates `xlim/ylim` and redraws at full resolution; Xlib/GTK3 wiring not yet implemented
 - **Real-time animation** — frame-by-frame output is possible, but no animation API
 - **pandas-style DataFrames** — Perl has no DataFrame equivalent; use PDL ndarrays directly
 
