@@ -176,7 +176,7 @@ See the `examples/` directory:
 
 | File | Description |
 |---|---|
-| `eeg_viewer_raw.pl` | **MNE `raw.plot()`-style multi-channel EEG viewer** — page buttons, time-window control, amplitude gain, channel scroll, polarity toggle, time-position slider, LTTB downsampling, cursor/pick overlay, resize support |
+| `eeg_viewer_raw.pl` | **MNE `raw.plot()`-style multi-channel EEG viewer (giza-server)** — page buttons, time-window control, amplitude gain, channel scroll, polarity toggle, time-position slider, LTTB downsampling, cursor/pick overlay, resize support |
 | `eeg_viewer_raw.jp.pl` | Japanese-commented version of `eeg_viewer_raw.pl` |
 | `example_gridspec.pl` | GridSpec, subplot_mosaic layouts |
 | `example_hexbin.pl` | 2D density, scatter vs hexbin comparison |
@@ -191,6 +191,8 @@ See the `examples/` directory:
 
 ### Running the EEG viewer
 
+**giza-server version** (native window, full cursor/pick/zoom/pan):
+
 ```bash
 # Demo mode (synthetic 34-channel × 30 s data, no files needed)
 GIZA_SERVER=/path/to/giza_server \
@@ -202,7 +204,20 @@ GIZA_SERVER=/path/to/giza_server \
 perl examples/eeg_viewer_raw.pl /path/to/recording.eeg
 ```
 
-**Controls:**
+**App-PDL-Notebook version** (browser UI, ~7 ms/frame — see [App-PDL-Notebook](https://github.com/goosh-gh/App-PDL-Notebook)):
+
+```perl
+# Inside a notebook cell:
+use lib '/path/to/PDL-EEG/lib';
+use PDL;
+local @ARGV = ('/path/to/recording.eeg');   # omit for demo mode
+do '/path/to/App-PDL-Notebook/examples/notebook_eeg_raw.pl';
+```
+
+Browser sliders (Position, Window, Gain, Ch offset, Neg-up) trigger live PNG
+re-renders via `param`/`on_change`/`to_inline`. No giza-server required.
+
+**Controls (giza-server version):**
 
 | Control | Action |
 |---|---|
