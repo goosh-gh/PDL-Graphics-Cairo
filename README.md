@@ -275,7 +275,7 @@ Active development. matplotlib API coverage:
 | Colormaps | ✅ 12 built-in + ListedColormap |
 | Normalization | ✅ Normalize, LogNorm, BoundaryNorm, TwoSlopeNorm |
 | Signal analysis | ✅ specgram (STFT, windowing, dB scale) |
-| Interactive | ✅ giza-server (tabs, sliders, resize, cursor/pick, zoom/pan on macOS) |
+| Interactive | ✅ giza-server (tabs, sliders, resize, cursor/pick, zoom/pan on macOS; zoom on Xlib — pan incomplete) |
 | Reactive controls | ✅ `param` / `button` / `on_change` bridge for App::PDL::Notebook |
 | 3D plots | 🔲 not planned (use PDL::Graphics::Gnuplot) |
 | streamplot | 🔲 low priority |
@@ -289,7 +289,7 @@ To set expectations clearly:
 
 **Out of scope (by design):**
 - **3D plots** — surface, 3D scatter, wireframe → use `PDL::Graphics::Gnuplot` or `PDL::Graphics::TriD`
-- **Mouse-gesture pan/zoom** — available via `zoom_pan_redraw => 1` in `show_interactive()`: pinch/scroll on macOS (Cocoa) sends `GSP_MSG_ZOOM` to `Driver::GS`, which updates `xlim/ylim` and redraws at full resolution; Xlib/GTK3 wiring not yet implemented
+- **Mouse-gesture pan/zoom** — available via `zoom_pan_redraw => 1` in `show_interactive()`: pinch/scroll sends `GSP_MSG_ZOOM` to `Driver::GS`, which updates `xlim/ylim` and redraws at full resolution; zoom confirmed on macOS (Cocoa) and Xlib; pan incomplete on Xlib
 - **Real-time animation** — frame-by-frame output is possible, but no animation API
 - **pandas-style DataFrames** — Perl has no DataFrame equivalent; use PDL ndarrays directly
 
