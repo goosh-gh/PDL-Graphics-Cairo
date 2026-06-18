@@ -442,7 +442,32 @@ sub tight_layout {
     # Build GS axes lookup for skip
     my %gs_ax_set = map { $_ => 1 } map { $_->{ax} } @{ $self->_gs_axes };
 
+    # uniform_margins => 1 用の事前走査:
+    # 「全パネルで同じマージンに揃える」が目的のオプションなので、
+    # グリッド内のどのパネルかに関わらず、ylabel/xlabel を持つパネルが
+    # 1つでもあれば全パネルで同じだけマージンを広げる。
+    # （列/行ごとに ylabel 有無で個別判定すると、ylabel のある列/行だけ
+    #   プロット領域が狭くなり、グリッド全体が不均一に見えてしまうため。
+    #   5x5 EEGグリッドで左列のみylabelを付けた際に左列だけ幅が狭くなる
+    #   不具合の修正。）
+    my $grid_has_ylabel = 0;
+    my $grid_has_xlabel = 0;
+    if ($opt{uniform_margins}) {
+        for my $ax (@{ $self->axes_list }) {
+            $grid_has_ylabel = 1 if $ax->ylabel ne '';
+            $grid_has_xlabel = 1 if $ax->xlabel ne '';
+        }
+    }
+
     for my $ax (@{ $self->axes_list }) {
+        # twinx/twiny の戻り値(twin object): マージンは draw() 内で
+        # 親(_twin_of)と常に揃えられるため、ここでの個別計算は不要。
+        # 親側のマージン計算で twin の存在(上側 or 右側の追加余白)を
+        # 考慮するので、ここでは何もせずスキップする。
+        if ($ax->_is_twin) {
+            next;
+        }
+
         # Inset axes: fixed position, use minimal margins
         if ($ax->_is_inset) {
             $ax->margin_left(28);  $ax->margin_right(8);
@@ -465,12 +490,26 @@ sub tight_layout {
             my $ml = ($c0 == 0 ? 60 : 44);
             $ml = 72 if $ax->ylabel ne '';
             $ml = int($ml * 0.75) if $gw < 200;
-            my $mr = $ax->_colorbar ? 68 : 14;
             my $mb = ($r1 == $nr ? 58 : 36);
             $mb = 66 if $ax->xlabel ne '';
             $mb = int($mb * 0.8) if $gh < 150;
             my $mt = $ax->title ne '' ? 34 : 18;
             $mt = 44 if $r0 == 0 && ($self->{_suptitle_text} // '') ne '';
+            my $mr = 14;
+            # colorbar_location に応じて、実際にcolorbarが描かれる側の
+            # マージンを拡張する。以前は colorbar の有無だけで常に mr
+            # (右マージン)を拡張していたため、location=>'left'/'top'/
+            # 'bottom' を指定してもその側のマージンが確保されず、
+            # colorbar がylabel領域やfigure外にはみ出す不具合があった。
+            if ($ax->_colorbar) {
+                my $cbloc = $ax->colorbar_location // 'right';
+                my $extra = ($ax->colorbar_label // '') ne '' ? 40 : 0; # label分の追加余白
+                if    ($cbloc eq 'right')  { $mr = 68 + $extra; }
+                elsif ($cbloc eq 'left')   { $ml += 75 + $extra; }
+                elsif ($cbloc eq 'top')    { $mt += 50 + $extra; }
+                elsif ($cbloc eq 'bottom') { $mb += 50 + $extra; }
+                else                       { $mr = 68 + $extra; }
+            }
             $ax->margin_left($ml);  $ax->margin_right($mr);
             $ax->margin_bottom($mb); $ax->margin_top($mt);
             next;
@@ -487,27 +526,106 @@ sub tight_layout {
 
         # 左マージン: Y軸ラベル有無で変化
         # uniform_margins => 1: 内側値で全パネルを揃える（外縁余白はpadで確保）
+        # 注意: uniform_margins 指定時は個別 Axes の ylabel 有無ではなく
+        # グリッド全体の有無（事前走査した $grid_has_ylabel）で判定する。
+        # これにより、ylabel を一部のパネルにしか付けていなくても
+        # グリッド全体で同じマージンが確保され、列ごとの幅の不均一を防ぐ。
         my $ml = ($opt{uniform_margins})
             ? int(36 * $scale_w + 0.5)
             : ($col == 0 ? int(56 * $scale_w + 0.5) : int(36 * $scale_w + 0.5));
-        $ml = int(70 * $scale_w + 0.5) if $ax->ylabel ne "";
-        $ml = int(70 * $scale_w + 0.5) if $ax->ylabel ne '';
+        if ($opt{uniform_margins}) {
+            # uniform_margins 時は単一figure用の固定値(70px)ではなく、
+            # 縦書きylabel+tickラベルが収まる実用上の最小値に近い値を使う。
+            # 70px のままだとパネルが小さい多パネルグリッド(5x5等)で
+            # 隙間が不必要に広がり、空間効率が悪化する。
+            $ml = int(52 * $scale_w + 0.5) if $grid_has_ylabel;
+        } else {
+            $ml = int(70 * $scale_w + 0.5) if $ax->ylabel ne '';
+        }
         $ml = 28 if $ml < 28;   # 最小値
 
         # 右マージン
         my $mr = $ax->_colorbar ? 72 : (exists $ax->{_right_ylabel} && $ax->{_right_ylabel} ne "") ? 110 : int(10 * $scale_w + 8);
 
-        # 下マージン: X軸ラベル有無で変化
+        # uniform_margins 時、title/xlabel のフォントと固定オフセットを
+        # 縮小する「コンパクトモード」を有効化する（_draw_labels側で使用）。
+        # これにより mt+mb の合計を 90px→78px 程度まで圧縮できる。
+        $ax->_compact_labels($opt{uniform_margins} ? 1 : 0);
+
+        # 下マージン: X軸ラベル有無で変化（uniform_margins時はグリッド全体で判定）
         my $mb = ($opt{uniform_margins})
             ? int(28 * $scale_h + 0.5)
             : ($row == $nrows-1 ? int(48 * $scale_h + 0.5) : int(28 * $scale_h + 0.5));
-        $mb = int(56 * $scale_h + 0.5) if $ax->xlabel ne '';
+        if ($opt{uniform_margins}) {
+            # コンパクトモードの xlabel は plot_bottom+38 の位置、
+            # フォント9pt(高さ≈11px)+視覚的余白(4px)を加えた53pxが必要量。
+            # （詳細は _draw_labels のコンパクト分岐コメントを参照）
+            $mb = int(53 * $scale_h + 0.5) if $grid_has_xlabel;
+        } else {
+            $mb = int(56 * $scale_h + 0.5) if $ax->xlabel ne '';
+        }
         $mb = 20 if $mb < 20;
 
         # 上マージン: タイトル有無で変化
-        my $mt = $ax->title ne '' ? int(32 * $scale_h + 0.5) : int(16 * $scale_h + 0.5);
+        # uniform_margins 時はコンパクトモードのタイトル
+        # (オフセット11+フォント11pt高さ≈14px)で 25px 程度が必要量。
+        my $mt = $ax->title ne ''
+            ? int(($opt{uniform_margins} ? 25 : 32) * $scale_h + 0.5)
+            : int(16 * $scale_h + 0.5);
         $mt = int(40 * $scale_h + 0.5) if $row == 0 && $self->_suptitle_text ne '';
         $mt = 12 if $mt < 12;
+
+        # colorbar_location に応じて、実際にcolorbarが描かれる側の
+        # マージンを拡張する。以前は colorbar の有無だけで mr(右マージン)
+        # を常に拡張していたため(上の $mr 計算)、location=>'left'/'top'/
+        # 'bottom' を指定してもその側のマージンが確保されず、colorbar が
+        # ylabel領域やfigure外にはみ出す不具合があった。
+        # mr は既に colorbar 用に72px確保されているので、right以外の
+        # location時はそれを通常値に戻し、該当する側を拡張する。
+        if ($ax->_colorbar) {
+            my $cbloc = $ax->colorbar_location // 'right';
+            my $extra = ($ax->colorbar_label // '') ne '' ? 40 : 0;
+            if ($cbloc eq 'left') {
+                $mr = int(10 * $scale_w + 8);  # right側はcolorbar不要なので通常値に戻す
+                # 68px ではcolorbar本体がY軸数値ラベルと数px差しかなく
+                # 重なって見える不具合があったため75pxに調整
+                # （_draw_colorbar側のcx計算 ml-47-pad-cw との組み合わせで
+                #   Y軸数値ラベルから安全マージンを確保する）
+                $ml += 75 + $extra;
+            } elsif ($cbloc eq 'top') {
+                $mr = int(10 * $scale_w + 8);
+                $mt += 50 + $extra;
+            } elsif ($cbloc eq 'bottom') {
+                $mr = int(10 * $scale_w + 8);
+                $mb += 50 + $extra;
+            } else {  # right (デフォルト)
+                $mr += $extra;
+            }
+            warn sprintf("[DEBUG tight_layout colorbar] cbloc=%s ml=%s mr=%s mt=%s mb=%s\n",
+                $cbloc, $ml, $mr, $mt, $mb) if $ENV{PGC_DEBUG_LABELS};
+        }
+
+        # twinx()/twiny() が呼ばれている場合、第2軸(上のX軸 or 右のY軸)
+        # 用のスペースをこの親のマージンに追加で確保する。
+        # tight_layout は twin オブジェクト自体をスキップする
+        # (上の "if ($ax->_is_twin) { next; }" 参照)ため、第2軸の余白は
+        # 必ず親側のマージン計算で確保しなければならない。
+        # 以前はこの処理が一切なく、twin の第2軸目盛り・ラベルが
+        # タイトルや反対側のY軸ラベルと重なる不具合があった。
+        # _twin_axes は1つの親に対してtwinx()/twiny()を両方呼んだ場合
+        # 両方のtwinオブジェクトを保持する配列。
+        for my $twin (@{ $ax->_twin_axes }) {
+            my $twin_type = $twin->_twin_type // '';
+            if ($twin_type eq 'y') {
+                # twiny: 上に第2X軸の目盛り(約16px)+ラベル(約20px)
+                $mt += 36 + ($twin->xlabel ne '' ? 20 : 0);
+            } else {
+                # twinx: 右に第2Y軸の目盛り数値(約36px)+ラベル(約20px)
+                $mr += 36 + ($twin->ylabel ne '' ? 20 : 0);
+            }
+            warn sprintf("[DEBUG tight_layout twin] twin_type=%s mt=%s mr=%s twin_xlabel='%s'\n",
+                $twin_type, $mt, $mr, $twin->xlabel) if $ENV{PGC_DEBUG_LABELS};
+        }
 
         # cell が小さいとき margin が描画域を食い尽くして $mt>$mb/$ml>$mr になる。
         # X/Y それぞれ合計が cell の 80% を超えないようクランプする。

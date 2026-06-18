@@ -334,6 +334,14 @@ sub _flush {
     return unless $_state{fig};
     return if $_state{buffering};
     my $fig = $_state{fig};
+
+    # pglab/cpgmtxt によるylabel設定は _build_panels/_apply_pgplot_margins
+    # 実行後(各pgenvループの中)に行われることが多いため、保存直前に
+    # 改めて _apply_pgplot_margins() を呼び、ylabel有無に応じたmlの
+    # 動的拡張(_apply_pgplot_margins内のhas_ylabel判定)を最終状態で
+    # 反映させる。
+    _apply_pgplot_margins();
+
     #  Axes 1 Figure 
     my $has_content = grep { defined $_->xmin } @{ $fig->axes_list };
     return unless $has_content;
@@ -342,13 +350,32 @@ sub _flush {
      if ($t eq 'osx' || $t eq 'gs') {
         # ドライバ一本化: レガシーな /osx デバイスと新規 /gs デバイスは
         # どちらも giza_server 経由で表示する（Driver::GS が auto-spawn）。
-        $fig->tight_layout();
+        # 以前はここで明示的に $fig->tight_layout() を呼んでいたが、
+        # これは _build_panels/_apply_pgplot_margins で設定済みの
+        # PGPLOT流マルチパネル配置(fig_x/fig_y等)を 1x1 前提で
+        # 上書きしてしまい、全パネルが重なって描画される不具合の
+        # 原因だった（PNG保存経路の _render_to と同じ問題）。
+        # PGPLOT経路はレイアウトを自前で計算済みなので、ここでは
+        # 呼ばず、_tight_done を立てて show() 内部の自動呼び出しも
+        # 抑制する。
+        $fig->{_tight_done} = 1;
         $fig->show(backend => 'gs');
      } else {
+        $fig->{_tight_done} = 1;
         $fig->show(terminal => $t);
      }
 
     } else {
+        # _render_to は tight_layout が未実行(_tight_done未セット)だと
+        # 自動的に tight_layout() を呼んでしまう。tight_layout() は
+        # 各Axesの fig_x/fig_y/width/height を Figure の _nrows/_ncols
+        # (PGPLOT経路では未設定=1x1扱い)に基づいて再計算し直すため、
+        # _build_panels/_apply_pgplot_margins で設定した PGPLOT 流の
+        # マルチパネル配置(fig_x=col*cw等)が全パネル(0,0)に統一されて
+        # しまい、結果として全サブプロットが重なって描かれる不具合になる。
+        # PGPLOT経路は自前でレイアウトを計算済みなので、_tight_done を
+        # 立てて _render_to 側の自動 tight_layout を抑制する。
+        $fig->{_tight_done} = 1;
         $fig->save($_state{outfile});
     }
 }
@@ -378,10 +405,29 @@ sub _apply_pgplot_margins {
     # YminX mb 
     # mt: (8px) + (2px) = 10px
     # mb: X(8px) + (3px) + Y(4px) = 15px → 18px
-    my $ml = $nx > 4 ? 22 : 30;
+    # ml: ylabel('uV'等)の縦書きgap(19px)に対して数値ラベルとの
+    # 重なりを避ける安全マージンを確保するため、nx>4時も22→26pxに調整。
+    my $ml = $nx > 4 ? 26 : 30;
     my $mr = $nx > 4 ?  4 :  6;
-    my $mt = $ny > 4 ? 14 : 18;
-    my $mb = $ny > 4 ? 22 : 26;
+    my $mt = $ny > 4 ? 16 : 20;
+    # mb: 数値ラベル(pad6+tick_ext3+2+高さ10=21px)に加えて
+    # xlabel文字自体(オフセット23+高さ10=33px)を収める必要があるため、
+    # 当初の22/26pxでは不足する。34/30px程度に調整する。
+    my $mb = $ny > 4 ? 30 : 34;
+
+    # ylabel('uV'等)を持つパネルが1つでもあれば、ml をさらに拡張する。
+    # _draw_labels の縦書きylabel gap(19+tick_w、tick_wは数値ラベル文字幅の
+    # 実測値で2-3桁では12-18px程度になる)に対し、上記の固定ml(26-30px)
+    # では安全マージンが数px〜マイナスしかなく、ylabelがプロット枠の
+    # すぐ際や枠内に描かれてしまう不具合があった。
+    # ylabelがある場合のみ、実測を待たずに安全側の固定値(58px)へ拡張する。
+    # （_apply_pgplot_margins は pglab 呼び出し前後の両方で呼ばれるため、
+    #  まだ ylabel 未設定の初回呼び出し時は通常の ml のままになるが、
+    #  _flush() 直前にも呼び直すことで pglab 後の最終状態を反映する。）
+    my $has_ylabel = grep { ($_->ylabel // '') ne '' } @{ $_state{axes} };
+    if ($has_ylabel) {
+        $ml = $nx > 4 ? 50 : 58;
+    }
 
     for my $ax (@{ $_state{axes} }) {
         $ax->margin_left($ml);
@@ -389,6 +435,16 @@ sub _apply_pgplot_margins {
         $ax->margin_top($mt);
         $ax->margin_bottom($mb);
 
+        # _compact_labels(2): _draw_labels に PGPLOT 専用の超コンパクトな
+        # title/xlabel フォント・オフセットを使わせる(Axes.pm参照)。
+        $ax->_compact_labels(2);
+
+        # 数値ラベル(tick)自体も縮小しないと、上記の小さい mb/mt
+        # (PGPLOT伝統の値)に対してラベルが飛び出してしまう。
+        # pad/labelsize を縮め、tick位置をmb/mtの確保範囲内に収める。
+        # 数値ラベル位置 = mb + tick_ext(3) + pad + 2 なので、
+        # pad=6, tick_ext=3 で mb+11 となり mb=22-26px の範囲に収まる。
+        $ax->tick_params(labelsize => 8, pad => 6, length => 3);
     }
 }
 

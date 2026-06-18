@@ -353,6 +353,25 @@ sub errorbar_y {
 
 #
 
+# errorbar_y の水平版。$xe_lo/$xe_hi は画面座標系での左右オフセット（px）。
+# cap は縦線で描く（errorbar_y の cap が横線であることと対称）。
+sub errorbar_x {
+    my ($self, $xp, $yp, $xe_lo, $xe_hi, $caph) = @_;
+    $caph //= 4;
+    my $cr = $self->{cr};
+    $cr->move_to($xp - $xe_lo, $yp);
+    $cr->line_to($xp + $xe_hi, $yp);
+    $cr->stroke;
+    $cr->move_to($xp - $xe_lo, $yp - $caph);
+    $cr->line_to($xp - $xe_lo, $yp + $caph);
+    $cr->stroke;
+    $cr->move_to($xp + $xe_hi, $yp - $caph);
+    $cr->line_to($xp + $xe_hi, $yp + $caph);
+    $cr->stroke;
+}
+
+#
+
 sub grid_line_h {
     my ($self, $x1, $x2, $yp, $color, $alpha) = @_;
     $color //= [0.8, 0.8, 0.8];

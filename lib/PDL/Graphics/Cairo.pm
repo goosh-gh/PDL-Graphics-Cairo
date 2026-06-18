@@ -106,8 +106,11 @@ sub subplots {
     }
     my $fig  = PDL::Graphics::Cairo::Figure->new(%args);
     my @axes = $fig->subplots($nrows, $ncols);
-    # MxN のとき @axes は ArrayRef のリスト。フラット Axes と混同しないよう案内。
-    if ($nrows > 1 && $ncols > 1) {
+    # MxN のとき @axes は ArrayRef のリスト。フラット Axes と混同しないよう
+    # 案内する。常時警告するとmake test等の出力が読みにくくなるため、
+    # PGC_DEBUG_LABELS環境変数が設定されているときのみ表示する
+    # (他のデバッグ用warnと同じ制御方式に統一)。
+    if ($nrows > 1 && $ncols > 1 && $ENV{PGC_DEBUG_LABELS}) {
         warn "PDL::Graphics::Cairo: subplots($nrows,$ncols) — "
            . "return value contains ArrayRefs, not Axes objects.\n"
            . "  my (\$fig, \@rows) = subplots($nrows,$ncols);\n"

@@ -12,15 +12,18 @@ PDL::Graphics::Cairo (P:G:C) is a high-level 2D plotting library for [PDL](https
 ## Features
 
 ### Plot types
-`line` · `scatter` · `bar` / `barh` · `hist` · `errorbar` · `fill_between` · `step` · `stem` · `imshow` · `contour` · `contourf` · `pie` · `boxplot` · `violin` · `quiver` · `heatmap` · `stackplot` · `eventplot` · `hexbin` · `specgram` · and more
+`line` · `scatter` · `bar` / `barh` · `hist` · `errorbar` · `fill_between` · `step` · `stem` · `imshow` · `contour` · `contourf` · `pcolormesh` / `pcolor` · `pie` · `boxplot` · `violin` · `quiver` · `heatmap` · `stackplot` · `eventplot` · `hexbin` · `specgram` · `plot_date` · and more
 
 ### Axes & decoration
 - Auto-scaling with `tight_layout`; `uniform_margins => 1` option ensures all panels have identical plot-area dimensions in multi-panel grids (avoids the default asymmetry where edge panels receive larger margins)
 - Linear / log scale (`set_xscale`, `set_yscale`, `semilogy`, `loglog`)
 - Tick control: `tick_params`, minor ticks, `xaxis_formatter` / `yaxis_formatter`
-- Twin axes: `twinx`, `twiny`
+- Date/time axis: `plot_date` accepts UNIX epoch values or `DateTime` objects; tick spacing and label format (`HH:MM`, `Mon DD`, `Mon YYYY`, `YYYY`) are chosen automatically based on the data range
+- Twin axes: `twinx` (shared X, independent Y on the right), `twiny` (shared Y, independent X on top) — combinable on the same parent Axes
 - Inset axes: `inset_axes`
 - Annotations: `annotate`, `axhline`, `axvline`, `axhspan`, `axvspan`, `text`
+- `scatter` marker styles: `o s ^ v < > d + x p h * P X` (14 styles, covering most matplotlib marker shorthands)
+- `bar` / `barh` error bars (`yerr`, symmetric or `yerr_low`/`yerr_high` for asymmetric) and grouped bars (call `bar()` multiple times with shifted `x` and a shared `width`, matplotlib-style)
 
 ### Layouts
 - `subplots(M, N)` — uniform grid
@@ -32,6 +35,8 @@ PDL::Graphics::Cairo (P:G:C) is a high-level 2D plotting library for [PDL](https
 - Built-in colormaps: `viridis`, `plasma`, `jet`, `hot`, `cool`, `gray`, `RdBu`, `inferno`, `magma`, `coolwarm`
 - `ListedColormap` — discrete color lists
 - `Normalize`, `LogNorm`, `BoundaryNorm`, `TwoSlopeNorm` — data-to-color mapping
+- `colorbar(label => '...')` — colorbar with an optional title, placed on any side (`top`/`bottom`/`left`/`right`)
+- `pcolormesh` / `pcolor` — pseudocolor plots on a non-uniform grid (unlike `imshow`, cell boundaries don't need to be equally spaced)
 
 ### Output
 - PNG (via `PDL::IO::PNG` or Cairo), PDF, SVG
@@ -133,6 +138,25 @@ $ax->hexbin($x, $y, gridsize => 30, cmap => 'plasma');
 $ax->xlabel('X'); $ax->ylabel('Y');
 $fig->tight_layout;
 $fig->save('hexbin.png');
+```
+
+### Non-uniform grid with pcolormesh
+
+```perl
+use PDL::Graphics::Cairo qw(subplots);
+
+# Cell boundary coordinates — unlike imshow, these don't need to be
+# evenly spaced. $z's shape is (n_rows, n_cols) = (y-cells, x-cells).
+my $x = pdl(0, 1, 3, 7, 15, 31);   # 5 cells, doubling width
+my $y = pdl(0, 1, 2, 4, 8);        # 4 cells, doubling height
+my $z = sequence(4, 5);
+
+my ($fig, $ax) = subplots(1, 1, width => 600, height => 450);
+$ax->pcolormesh($x, $y, $z, cmap => 'viridis');
+$ax->colorbar(label => 'value');
+$ax->xlabel('x'); $ax->ylabel('y');
+$fig->tight_layout;
+$fig->save('pcolormesh.png');
 ```
 
 ### Custom colormaps and normalization
@@ -284,7 +308,7 @@ Active development. matplotlib API coverage:
 
 | Category | Status |
 |---|---|
-| Plot types | ✅ 20+ types incl. hexbin, specgram, contour/contourf |
+| Plot types | ✅ 20+ types incl. hexbin, specgram, contour/contourf, pcolormesh, plot_date |
 | Axes decoration | ✅ tick_params, minor ticks, formatters, inset_axes |
 | Layouts | ✅ GridSpec (height_ratios/width_ratios), subplot_mosaic, suptitle |
 | Colormaps | ✅ 12 built-in + ListedColormap |
@@ -304,9 +328,11 @@ To set expectations clearly:
 
 **Out of scope (by design):**
 - **3D plots** — surface, 3D scatter, wireframe → use `PDL::Graphics::Gnuplot` or `PDL::Graphics::TriD`
-- **Mouse-gesture pan/zoom** — available via `zoom_pan_redraw => 1` in `show_interactive()`: pinch/scroll sends `GSP_MSG_ZOOM` to `Driver::GS`, which updates `xlim/ylim` and redraws at full resolution; zoom confirmed on macOS (Cocoa) and Xlib; pan incomplete on Xlib
 - **Real-time animation** — frame-by-frame output is possible, but no animation API
 - **pandas-style DataFrames** — Perl has no DataFrame equivalent; use PDL ndarrays directly
+
+**Implemented via giza-server (not P:G:C/Cairo alone):**
+- **Mouse-gesture pan/zoom** — P:G:C only renders static PNG/PDF/SVG; interactive pan/zoom is provided by the companion [giza-server](https://github.com/goosh-gh/giza-server) process plus `Driver::GS`. `show_interactive(zoom_pan_redraw => 1)` sends `GSP_MSG_ZOOM` to `Driver::GS`, which updates `xlim`/`ylim` and redraws at full resolution. Zoom confirmed on macOS (Cocoa) and Xlib; pan confirmed on macOS, incomplete on Xlib.
 
 **Not yet implemented:**
 - `streamplot` — streamlines for vector fields
