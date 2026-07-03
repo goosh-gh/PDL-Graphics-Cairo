@@ -186,6 +186,7 @@ has _yformatter  => (is => 'rw', default => sub { undef });
 has _tick_params    => (is => 'rw', default => sub { {} });
 has _minor_ticks_on => (is => 'rw', default => sub { 0 });
 has _minor_n        => (is => 'rw', default => sub { 5 });
+has _facecolor      => (is => 'rw', default => sub { undef });  # set_facecolor() 用
 
 # _resolve_cmap($cmap_spec) -- accept string name or object
 # Returns a ColorMap or ListedColormap object
@@ -204,9 +205,18 @@ sub _resolve_cmap {
 
 sub _next_color {
     my ($self) = @_;
-    my $c = $COLOR_CYCLE[$self->_color_idx % scalar @COLOR_CYCLE];
+    # rcParams に '_color_cycle' があればそれを優先（style.use() 連携）
+    my $cycle = $PDL::Graphics::Cairo::_RCPARAMS{_color_cycle};
+    my @cycle_colors;
+    if ($cycle && ref($cycle) eq 'ARRAY' && @$cycle) {
+        @cycle_colors = @$cycle;
+    } else {
+        @cycle_colors = @COLOR_CYCLE;
+    }
+    my $c = $cycle_colors[$self->_color_idx % scalar @cycle_colors];
     $self->_color_idx($self->_color_idx + 1);
-    return $c;
+    # 文字列カラー('#rrggbb')はparse、配列参照はそのまま
+    return ref($c) ? $c : $self->_parse_color($c);
 }
 
 # : 'red' / '#rrggbb' / [r,g,b]
@@ -406,6 +416,9 @@ sub line {
         linestyle => $opt{linestyle}  // $opt{ls} // 'solid',
         alpha     => $opt{alpha}      // 1.0,
         label     => $opt{label}      // undef,
+        marker    => $opt{marker}     // undef,  # 'o','s','^','d','+','x' or undef=no marker
+        ms        => $opt{markersize} // $opt{ms} // 4,
+        fill      => (($opt{fillstyle}//'full') eq 'none') ? 0 : 1,
     };
     $self->_expand_range($x, $y);
     if (defined $opt{label}) {
@@ -645,6 +658,7 @@ sub scatter {
         marker => $opt{marker} // 'o',
         alpha  => $opt{alpha}  // 0.8,
         label  => $opt{label}  // undef,
+        fill   => (($opt{fillstyle}//'full') eq 'none') ? 0 : 1,
         # c  PDL 
         cdata  => (ref($opt{c}) && $opt{c}->isa('PDL')) ? $opt{c} : undef,
         cmap   => $opt{cmap}   // 'viridis',
@@ -822,6 +836,7 @@ sub errorbar {
         marker => $opt{marker}    // 'o',
         ms     => $opt{markersize}// 4,
         label  => $opt{label}     // undef,
+        fill   => (($opt{fillstyle}//'full') eq 'none') ? 0 : 1,
     };
     my $ylo = defined($yerr) ? ($y - $yerr)->min : $y->min;
     my $yhi = defined($yerr) ? ($y + $yerr)->max : $y->max;
@@ -842,14 +857,37 @@ sub fill_between {
     my $color = exists $opt{color}
         ? $self->_parse_color($opt{color}) : $self->_next_color();
 
+    # where: PDL boolean マスク (1=塗りつぶす, 0=塗らない)
+    # matplotlib の fill_between(x, y1, y2, where=y1>y2) に相当。
+    # マスクが指定された場合は連続した True 区間ごとに個別 polygon を作る。
+    my $mask = $opt{where};   # PDL or undef
+
     push @{ $self->_queue }, {
         type  => 'fill_between',
         x     => $x, y1 => $y1, y2 => $y2,
         color => $color,
         alpha => $opt{alpha} // 0.3,
         label => $opt{label} // undef,
+        mask  => $mask,
     };
-    $self->_expand_range($x, $y1->append($y2));
+    if (defined $mask) {
+        # マスクが True の点の y1/y2 範囲だけを expand_range に含める
+        my $m = $mask->isa('PDL') ? $mask : pdl($mask);
+        my $xi  = $x->where($m);
+        my $y1i = $y1->where($m);
+        my $y2i = $y2->where($m);
+        $self->_expand_range($xi, $y1i->append($y2i)) if $xi->nelem > 0;
+    } else {
+        $self->_expand_range($x, $y1->append($y2));
+    }
+    if (defined $opt{label}) {
+        push @{ $self->_legends }, {
+            type  => 'fill',
+            color => $color,
+            alpha => $opt{alpha} // 0.3,
+            label => $opt{label},
+        };
+    }
     return $self;
 }
 
@@ -1402,6 +1440,46 @@ sub set_title  { my ($s,$t,%o) = @_; $s->title($t);  return $s }
 sub set_xlabel { my ($s,$t,%o) = @_; $s->xlabel($t); return $s }
 sub set_ylabel { my ($s,$t,%o) = @_; $s->ylabel($t); $s->ylabel_rotation($o{rotation}) if exists $o{rotation}; return $s }
 
+# set_facecolor($color) — matplotlib ax.set_facecolor() 相当
+# 軸プロット領域の背景色を設定する。'white','#EAEAF2' 等を受け付ける。
+# rcParams['axes.facecolor'] のデフォルト値を個別 Axes でオーバーライドする
+# 用途。seaborn スタイルの薄グレー背景、dark_background 等と組み合わせて使う。
+sub set_facecolor {
+    my ($self, $color) = @_;
+    $self->_facecolor($self->_parse_color($color));
+    return $self;
+}
+
+# set_position([left, bottom, width, height]) — matplotlib ax.set_position() 相当
+# Figure fraction 座標 (0-1) で Axes の位置・サイズを直接指定する。
+# tight_layout() を呼ばずに細かい配置を制御したいときに使う。
+# $pos は [left, bottom, width, height] の arrayref。
+# (matplotlib の Bbox 形式: 原点が左下)
+sub set_position {
+    my ($self, $pos) = @_;
+    die "set_position: need [left, bottom, width, height] arrayref\n"
+        unless ref($pos) eq 'ARRAY' && @$pos == 4;
+
+    my ($left, $bottom, $w_frac, $h_frac) = @$pos;
+    # Figure サイズを取得 (Figure への参照があれば使う)
+    my ($fw, $fh) = (800, 600);  # デフォルト
+    if (my $fig = $self->_figure) {
+        $fw = $fig->width;
+        $fh = $fig->height;
+    }
+    # matplotlib は Y 原点=下端 (bottom)、P:G:C は Y 原点=上端 (fig_y=top)
+    my $new_x = int($left   * $fw);
+    my $new_y = int((1 - $bottom - $h_frac) * $fh);  # bottom → screen top
+    my $new_w = int($w_frac * $fw);
+    my $new_h = int($h_frac * $fh);
+
+    $self->{fig_x}  = $new_x;
+    $self->{fig_y}  = $new_y;
+    $self->{width}  = $new_w;
+    $self->{height} = $new_h;
+    return $self;
+}
+
 sub set_grid {
     my ($self, $on, %opt) = @_;
     $self->grid($on // 1);
@@ -1512,10 +1590,24 @@ sub draw {
 
     # ---  ---
 #    $self->_draw_grid($backend, $tr, $ml,$mt,$mr,$mb) if $self->grid;  # change 2026/5/25 for Axis(off)
+    # --- プロット領域背景 (facecolor) ---
+    # set_facecolor() または rcParams['axes.facecolor'] に従って塗りつぶす。
+    # デフォルト white は Cairo::ImageSurface の白背景と同じなので実質 no-op。
+    # dark_background スタイルや seaborn スタイルで有効になる。
+    if (!$self->{_axis_off}) {
+        my $fc = $self->_facecolor;
+        unless (defined $fc) {
+            my $rcp_fc = $PDL::Graphics::Cairo::_RCPARAMS{'axes.facecolor'} // 'white';
+            $fc = $self->_parse_color($rcp_fc) unless $rcp_fc eq 'white';
+        }
+        if (defined $fc) {
+            $backend->set_color(@$fc, 1.0);
+            $backend->rect_fill($ml, $mt, $mr - $ml, $mb - $mt);
+            $backend->set_color(0, 0, 0, 1.0);  # 前景色を黒に戻す
+        }
+    }
+
     $self->_draw_grid($backend, $tr, $ml,$mt,$mr,$mb) if $self->grid && !$self->{_axis_off};
-
-
-    $self->_draw_grid($backend, $tr, $ml,$mt,$mr,$mb) if $self->grid;
 
     # --- ---
     $backend->save;
@@ -1619,6 +1711,16 @@ sub _render_cmd {
         $b->set_linestyle($cmd->{linestyle}, $cmd->{lw});
         $b->polyline($xd, $yd);
         $b->set_linestyle('solid');
+        # marker: marker引数が指定されていれば各点にマーカーを描く
+        if (defined $cmd->{marker}) {
+            my $fill = $cmd->{fill} // 1;
+            my $ms   = $cmd->{ms}   // 4;
+            $b->set_linewidth(0.8);
+            for my $i (0 .. $cmd->{x}->nelem - 1) {
+                $b->marker($xd->at($i), $yd->at($i), $ms, $cmd->{marker}, $fill);
+            }
+            $b->set_linewidth(1.5);
+        }
     }
 
     elsif ($type eq 'specgram') {
@@ -1752,7 +1854,8 @@ sub _render_cmd {
             $b->set_linewidth(0.5);
             # matplotlib s = area in pt^2, radius = sqrt(s/pi)
             my $radius = sqrt($cmd->{size} / 3.14159265) || 1;
-            $b->marker($xp, $yp, $radius, $cmd->{marker}, 1);
+            my $fill = $cmd->{fill} // 1;
+            $b->marker($xp, $yp, $radius, $cmd->{marker}, $fill);
         }
     }
 
@@ -1845,7 +1948,8 @@ sub _render_cmd {
         #
 
         for my $i (0 .. $cmd->{x}->nelem - 1) {
-            $b->marker($xd->at($i), $yd->at($i), $cmd->{ms}, $cmd->{marker}, 1);
+            my $fill = $cmd->{fill} // 1;
+            $b->marker($xd->at($i), $yd->at($i), $cmd->{ms}, $cmd->{marker}, $fill);
         }
         #
 
@@ -1898,13 +2002,57 @@ sub _render_cmd {
 
     elsif ($type eq 'fill_between') {
         #  →  → polygon
-        my $n  = $cmd->{x}->nelem;
-        my $xf = $cmd->{x}->append($cmd->{x}->slice("-1:0:-1"));
-        my $yf = $cmd->{y1}->append($cmd->{y2}->slice("-1:0:-1"));
-        my $xd = $tr->x($xf);
-        my $yd = $tr->y($yf);
+        # mask が指定されている場合: 連続した True 区間ごとに polygon を分割して描く。
+        # mask なし: 従来通り全区間を1つの polygon で描く。
+        my $x  = $cmd->{x};
+        my $y1 = $cmd->{y1};
+        my $y2 = $cmd->{y2};
         $b->set_color(@{$cmd->{color}}, $cmd->{alpha});
-        $b->filled_polygon($xd, $yd);
+
+        if (defined $cmd->{mask}) {
+            my $mask = $cmd->{mask};
+            $mask = pdl($mask) unless $mask->isa('PDL');
+            my $n = $x->nelem;
+            # 連続した True 区間を抽出して、それぞれ polygon を描く
+            my $in_seg = 0;
+            my (@seg_x, @seg_y1, @seg_y2);
+            for my $i (0 .. $n-1) {
+                if ($mask->at($i)) {
+                    push @seg_x,  $x->at($i);
+                    push @seg_y1, $y1->at($i);
+                    push @seg_y2, $y2->at($i);
+                    $in_seg = 1;
+                } else {
+                    if ($in_seg && @seg_x) {
+                        my $xs  = pdl(@seg_x);
+                        my $ys1 = pdl(@seg_y1);
+                        my $ys2 = pdl(@seg_y2);
+                        my $xf  = $xs->append($xs->slice("-1:0:-1"));
+                        my $yf  = $ys1->append($ys2->slice("-1:0:-1"));
+                        $b->filled_polygon($tr->x($xf), $tr->y($yf));
+                        @seg_x = @seg_y1 = @seg_y2 = ();
+                    }
+                    $in_seg = 0;
+                }
+            }
+            # 末尾まで True だった区間
+            if ($in_seg && @seg_x) {
+                my $xs  = pdl(@seg_x);
+                my $ys1 = pdl(@seg_y1);
+                my $ys2 = pdl(@seg_y2);
+                my $xf  = $xs->append($xs->slice("-1:0:-1"));
+                my $yf  = $ys1->append($ys2->slice("-1:0:-1"));
+                $b->filled_polygon($tr->x($xf), $tr->y($yf));
+            }
+        } else {
+            # mask なし: 従来通り
+            my $n  = $x->nelem;
+            my $xf = $x->append($x->slice("-1:0:-1"));
+            my $yf = $y1->append($y2->slice("-1:0:-1"));
+            my $xd = $tr->x($xf);
+            my $yd = $tr->y($yf);
+            $b->filled_polygon($xd, $yd);
+        }
     }
 
 
@@ -2832,7 +2980,14 @@ sub _draw_frame {
             my $lsize    = $tp->{x_labelsize}     // 10;
             my $lshow    = $tp->{x_labelbottom}   // 1;
             my $lshow_t  = $tp->{x_labeltop}      // 0;
-            my $pad      = $tp->{x_pad}           // 16;
+            # pad: 目盛り線の先端からラベルまでの隙間(px)。
+            # matplotlibのデフォルト(xtick.major.pad=3.5pt≈4-5px)相当に
+            # 合わせる。以前は16→10だったが、Driver::Cairo::text()の
+            # valign='top'実装バグ(2026-06-19修正)により、修正前は
+            # ラベルが意図せず上にせり出して詰まって見えていた。
+            # バグ修正後は計算式通りの位置に描かれるようになったため、
+            # 同じ見た目の隙間を保つには pad 自体を縮める必要がある。
+            my $pad      = $tp->{x_pad}           // 4;
             my $rot      = $tp->{x_labelrotation} // $self->{_xtick_rot} // 0;
             my @lc       = defined($tp->{x_labelcolor})
                 ? @{ $self->_parse_color($tp->{x_labelcolor}) }
@@ -3281,6 +3436,14 @@ sub _draw_legend {
         elsif ($lg->{type} eq 'rect') {
             $b->rect_fill($x0, $y0-6, $pw, 12);
             $b->set_color(0,0,0);
+            $b->set_linewidth(0.5);
+            $b->rect_stroke($x0, $y0-6, $pw, 12);
+        }
+        elsif ($lg->{type} eq 'fill') {
+            # fill_between の凡例: 半透明の塗りパッチ
+            $b->set_color(@{$lg->{color}}, $lg->{alpha} // 0.3);
+            $b->rect_fill($x0, $y0-6, $pw, 12);
+            $b->set_color(@{$lg->{color}}, 1.0);
             $b->set_linewidth(0.5);
             $b->rect_stroke($x0, $y0-6, $pw, 12);
         }

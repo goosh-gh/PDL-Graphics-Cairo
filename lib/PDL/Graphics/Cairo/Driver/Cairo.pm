@@ -33,6 +33,7 @@ has width  => (is => 'ro', required => 1);
 has height => (is => 'ro', required => 1);
 has file      => (is => 'ro', default  => sub { 'out.png' });
 has dpi    => (is => 'ro', default  => sub { 96 });
+has scale  => (is => 'ro', default  => sub { 1.0 });  # savefig(dpi=>) 用スケール因数
 
 # -------------------------------------------------------------
 # BUILD
@@ -98,10 +99,19 @@ sub BUILD {
     $self->{cr}      = $cr;
     $self->{surface} = $surface;
 
-    # Pango — デフォルトフォント: Helvetica Neue (macOS) / Arial / Sans フォールバック
+    # dpi scale: 1.0 以外のとき全座標をスケール変換して高解像度出力
+    if ($self->scale != 1.0) {
+        $cr->scale($self->scale, $self->scale);
+    }
+
+    # Pango — デフォルトフォントは rcParams['font.family'] から取得
+    # (rcParams未設定時は 'Helvetica Neue' フォールバック)
     $self->{pango}   = Pango::Cairo::create_layout($cr);
-    $self->{font_family} = 'Helvetica Neue';
-    $self->{font_size}   = 11;
+    {
+        my $rcp = \%PDL::Graphics::Cairo::_RCPARAMS;
+        $self->{font_family} = $rcp->{'font.family'} // 'Helvetica Neue';
+        $self->{font_size}   = $rcp->{'font.size'}   // 11;
+    }
     $self->{font_weight} = 'normal';
     $self->{font_slant}  = 'normal';
     $self->_update_pango_font();
@@ -423,8 +433,17 @@ sub text {
     $dx = -$w/2 if $align  eq 'center';
     $dx = -$w   if $align  eq 'right';
     $dy = -$h/2 if $valign eq 'middle';
-    $dy = -$h   if $valign eq 'top';
-    # bottom y=0Pango $h
+    # valign='top': 基準点をテキスト上端に合わせる → 描画開始点(左上)は
+    # そのまま基準点 (dy=0)。
+    # valign='bottom': 基準点をテキスト下端に合わせる → 描画開始点は
+    # 基準点よりテキスト高さ$h分上 (dy=-$h)。
+    # NOTE (2026-06-19 修正): 旧実装は top/bottom 両方が dy=-$h になっており
+    # 実質的に同じ動作(="bottom"相当)だった。X軸下側ラベル(valign=>'top'
+    # で「目盛り線のすぐ下から書き始めたい」という意図)が、実際には
+    # テキストが上にせり出して目盛り線と重なって見える原因になっていた。
+    # labelsize を大きくするほど $h が増え、ズレ量(=$h)も大きくなるため
+    # 重なりが目立ちやすかった。
+    $dy = 0     if $valign eq 'top';
     $dy = -$h   if $valign eq 'bottom';
 
     $cr->move_to($dx, $dy);

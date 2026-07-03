@@ -208,11 +208,17 @@ sub add_gridspec {
 }
 
 sub add_subplot {
-    my ($self, $nrows_or_cell, $ncols, $idx) = @_;
+    my ($self, $nrows_or_cell, $ncols, $idx, %opt) = @_;
     if (ref($nrows_or_cell) && $nrows_or_cell->isa('PDL::Graphics::Cairo::GridSpecCell')) {
         my $cell = $nrows_or_cell;
         my ($fig_x, $fig_y, $w, $h) = $cell->pixel_rect;
-        my $ax = PDL::Graphics::Cairo::Axes->new(
+        my $ax_class = ($opt{projection} // '') eq 'polar'
+            ? 'PDL::Graphics::Cairo::PolarAxes'
+            : 'PDL::Graphics::Cairo::Axes';
+        if ($ax_class eq 'PDL::Graphics::Cairo::PolarAxes') {
+            require PDL::Graphics::Cairo::PolarAxes;
+        }
+        my $ax = $ax_class->new(
             width => $w, height => $h,
             fig_x => $fig_x, fig_y => $fig_y,
         );
@@ -228,6 +234,28 @@ sub add_subplot {
     }
     my ($nrows, $ncols2, $idx2) = ($nrows_or_cell, $ncols, $idx);
     $nrows //= 1;  $ncols2 //= 1;  $idx2 //= 1;
+    # projection キーワードは %opt から取る
+    if (($opt{projection} // '') eq 'polar') {
+        require PDL::Graphics::Cairo::PolarAxes;
+        my $fw = $self->width;
+        my $fh = $self->height;
+        my $pad_x = 20;
+        my $pad_y = 20;
+        my $top_pad = 10;
+        my $cell_w = ($fw - $pad_x * ($ncols2+1)) / $ncols2;
+        my $cell_h = ($fh - $pad_y * ($nrows+1) - $top_pad) / $nrows;
+        my $row = int(($idx2-1) / $ncols2);
+        my $col = ($idx2-1) % $ncols2;
+        my $fig_x = $pad_x + $col * ($cell_w + $pad_x);
+        my $fig_y = $top_pad + $pad_y + $row * ($cell_h + $pad_y);
+        my $ax = PDL::Graphics::Cairo::PolarAxes->new(
+            width => $cell_w, height => $cell_h,
+            fig_x => $fig_x,  fig_y  => $fig_y,
+        );
+        push @{ $self->axes_list }, $ax;
+        $ax->_figure($self);
+        return $ax;
+    }
     return $self->subplot($nrows, $ncols2, $idx2);
 }
 
@@ -298,11 +326,19 @@ sub _render_to {
 }
 
 sub save {
-    my ($self, $file) = @_;
+    my ($self, $file, %opt) = @_;
+
+    # dpi指定があれば幅・高さをスケールして高解像度PNGを生成する
+    my $scale = 1.0;
+    if (defined $opt{dpi}) {
+        my $base_dpi = $self->dpi // 96;
+        $scale = $opt{dpi} / $base_dpi;
+    }
 
     my $driver = PDL::Graphics::Cairo::Driver::Cairo->new(
-        width  => $self->width,
-        height => $self->height,
+        width  => int($self->width  * $scale),
+        height => int($self->height * $scale),
+        scale  => $scale,
         file   => $file,
     );
     $self->_render_to($driver);
@@ -378,7 +414,91 @@ sub add_axes {
 # ------------------------------------------------------------------
 # savefig — save() matplotlib 
 # ------------------------------------------------------------------
-sub savefig { goto &save }
+sub savefig {
+    my ($self, $file, %opt) = @_;
+    return $self->save($file, %opt);
+}
+
+# ------------------------------------------------------------------
+# subplots_adjust(%opt)  — マージン手動調整 (matplotlib互換)
+# left/right/top/bottom: 0-1のfraction座標 (left=0.1 → 10%余白)
+# wspace/hspace: subplot間スペース(fraction of subplot幅/高さ)
+# ------------------------------------------------------------------
+sub subplots_adjust {
+    my ($self, %opt) = @_;
+
+    my $fw = $self->width;
+    my $fh = $self->height;
+
+    # fraction → pixel変換。matplotlib と同じ座標系:
+    #   left/right: Figure幅に対する割合 (0=左端, 1=右端)
+    #   top/bottom: Figure高さに対する割合 (0=下端, 1=上端) ← 注意: Figureのy
+    my $left   = defined $opt{left}   ? int($opt{left}   * $fw) : undef;
+    my $right  = defined $opt{right}  ? int($opt{right}  * $fw) : undef;
+    my $bottom = defined $opt{bottom} ? int((1 - $opt{bottom}) * $fh) : undef;
+    my $top    = defined $opt{top}    ? int((1 - $opt{top})    * $fh) : undef;
+
+    my $nrows = $self->_nrows || 1;
+    my $ncols = $self->_ncols || 1;
+
+    # top 未指定時のデフォルト: suptitle() が設定されている場合、その分の
+    # 余白(subplot()内のtop_padと同じ40px)を確保する。指定しないと
+    # suptitleとパネル1のタイトルが重なってしまう。
+    my $default_top = (($self->{_suptitle_text} // '') ne '') ? 40 : 0;
+
+    my $area_left   = $left   // 0;
+    my $area_top    = $top    // $default_top;
+    my $area_right  = $right  // $fw;
+    my $area_bottom = $bottom // $fh;
+
+    my $wspace = $opt{wspace} // 0.2;
+    my $hspace = $opt{hspace} // 0.2;
+
+    my $total_w = $area_right - $area_left;
+    my $total_h = $area_bottom - $area_top;
+
+    # セル間ギャップをpxに変換
+    my $cell_w = $total_w / ($ncols + ($ncols-1)*$wspace);
+    my $cell_h = $total_h / ($nrows + ($nrows-1)*$hspace);
+    my $gap_w  = $cell_w * $wspace;
+    my $gap_h  = $cell_h * $hspace;
+
+    my %gs_ax_set = map { $_ => 1 } map { $_->{ax} } @{ $self->_gs_axes };
+
+    for my $ax (@{ $self->axes_list }) {
+        next if $ax->_is_twin;
+        next if $ax->_is_inset;
+        next if $gs_ax_set{$ax};
+
+        # 現在のfig_xからどの行・列かを逆引き
+        my $col = ($ncols <= 1) ? 0
+            : int(($ax->fig_x - $area_left + ($cell_w+$gap_w)*0.5) / ($cell_w+$gap_w));
+        my $row = ($nrows <= 1) ? 0
+            : int(($ax->fig_y - $area_top  + ($cell_h+$gap_h)*0.5) / ($cell_h+$gap_h));
+        $col = 0 if $col < 0; $col = $ncols-1 if $col >= $ncols;
+        $row = 0 if $row < 0; $row = $nrows-1 if $row >= $nrows;
+
+        my $new_x = $area_left + $col * ($cell_w + $gap_w);
+        my $new_y = $area_top  + $row * ($cell_h + $gap_h);
+
+        $ax->{fig_x}  = $new_x;
+        $ax->{fig_y}  = $new_y;
+        $ax->{width}  = $cell_w;
+        $ax->{height} = $cell_h;
+    }
+
+    $self->{_tight_done} = 1;  # tight_layout再実行を抑制
+    return $self;
+}
+
+# ------------------------------------------------------------------
+# set_facecolor($color)  — Figure背景色 (matplotlib互換)
+# ------------------------------------------------------------------
+sub set_facecolor {
+    my ($self, $color) = @_;
+    $self->{_facecolor} = $color;
+    return $self;
+}
 
 # ------------------------------------------------------------------
 # clf — Figure 
@@ -433,8 +553,16 @@ sub tight_layout {
 
     #
 
-    my $cell_w = ($right - $left) / $ncols;
-    my $cell_h = ($bottom - $top) / $nrows;
+    # cell_w/cell_h: パネル本体のサイズ。h_pad/w_pad は隣接パネル間の
+    # 「外枠から外枠までの隙間」(px)として確保する。
+    # 例: nrows=2 なら 1箇所の縦ギャップ(h_pad)を差し引いた残りを
+    # 2分割する。これにより上段パネルの margin_bottom(xlabel領域)と
+    # 下段パネルの margin_top(title領域)が隙間なく隣接して重なる、
+    # という不具合(2026-06-19 報告)を防ぐ。
+    # 以前は h_pad/w_pad が定義されているだけで一切使われておらず、
+    # 2行以上のレイアウトで上下パネルが詰まって重なる根本原因になっていた。
+    my $cell_w = (($right - $left) - $w_pad * ($ncols - 1)) / $ncols;
+    my $cell_h = (($bottom - $top) - $h_pad * ($nrows - 1)) / $nrows;
 
     #  Axes  margin 
     # Y Axes  margin_left 
@@ -465,6 +593,11 @@ sub tight_layout {
         # 親側のマージン計算で twin の存在(上側 or 右側の追加余白)を
         # 考慮するので、ここでは何もせずスキップする。
         if ($ax->_is_twin) {
+            next;
+        }
+
+        # PolarAxes: 独自の描画ロジックを持つのでマージン計算不要
+        if ($ax->isa('PDL::Graphics::Cairo::PolarAxes')) {
             next;
         }
 
@@ -515,8 +648,9 @@ sub tight_layout {
             next;
         }
         # Axes  fig_x/fig_y 
-        my $col = int(($ax->fig_x - $left + $cell_w * 0.5) / $cell_w);
-        my $row = int(($ax->fig_y - $top  + $cell_h * 0.5) / $cell_h);
+        # (cell_w+w_pad)/(cell_h+h_pad) を1セル分の周期として逆算する。
+        my $col = int(($ax->fig_x - $left + ($cell_w+$w_pad) * 0.5) / ($cell_w+$w_pad));
+        my $row = int(($ax->fig_y - $top  + ($cell_h+$h_pad) * 0.5) / ($cell_h+$h_pad));
         $col = 0 if $col < 0; $col = $ncols-1 if $col >= $ncols;
         $row = 0 if $row < 0; $row = $nrows-1 if $row >= $nrows;
 
@@ -648,8 +782,9 @@ sub tight_layout {
         $ax->margin_top($mt);
 
         # Axes 
-        my $new_x = $left + $col * $cell_w;
-        my $new_y = $top  + $row * $cell_h;
+        # (cell_w+w_pad)/(cell_h+h_pad) を1セル分の周期として配置する。
+        my $new_x = $left + $col * ($cell_w + $w_pad);
+        my $new_y = $top  + $row * ($cell_h + $h_pad);
         # fig_x/fig_y  ro 
         $ax->{fig_x}  = $new_x;
         $ax->{fig_y}  = $new_y;
