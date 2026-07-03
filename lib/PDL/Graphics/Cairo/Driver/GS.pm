@@ -388,7 +388,19 @@ sub show_interactive {
     binmode($sock);                       # バイナリ確実（crlf/encoding 層を排除）
 
     my $seq = 0;
-    _send_msg($sock, GSP_MSG_NEWWIN, pack('L L', $self->width, $self->height), $seq++);
+    # NEWWIN payload: gsp_newwin_t (w,h) にスライダ初期つまみ位置を添付する。
+    # 末尾に gsp_slider_t レコード [uint8 id][f< val] を並べると、giza_server が
+    # 生成時点で正しいつまみ位置で窓を作る（既定0.0→initへ跳ぶチラつきを回避）。
+    # val は正規化 [0,1]。8バイトだけの旧 NEWWIN とは後方互換。
+    my $newwin = pack('L L', $self->width, $self->height);
+    for my $id (sort { $a <=> $b } keys %$state) {
+        next unless $id =~ /\A[0-9]+\z/;          # スライダidは非負整数のみ（_cursor_* 等を除外）
+        my $v = $state->{$id};
+        next unless defined $v && $v =~ /\A-?[0-9.eE+]+\z/;  # 数値のみ
+        $v = 0 if $v < 0; $v = 1 if $v > 1;       # クランプ [0,1]
+        $newwin .= pack('C f<', $id, $v);
+    }
+    _send_msg($sock, GSP_MSG_NEWWIN, $newwin, $seq++);
     $self->_recv_ack_sys($sock, 'NEWWIN');
     _send_msg($sock, GSP_MSG_TITLE, $self->title, $seq++);   # fire-and-forget
 

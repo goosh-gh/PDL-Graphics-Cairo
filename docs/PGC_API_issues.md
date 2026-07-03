@@ -60,11 +60,8 @@ for my $i (0 .. $nchan-1) {
 ---
 
 ### #4 add_subplot の欠如 (P:G:C07, 2026-06-12, commit 8447420)
-
 **問題:** matplotlib ユーザーが必ず試す `$fig->add_subplot(R, C, idx)` がなくエラーになっていた。
-
 **解決:** `subplot()` への委譲エイリアスとして実装。1-based idx。
-
 ```perl
 my $ax = $fig->add_subplot(2, 3, 4);  # 2x3グリッドの4番目(1-based)
 ```
@@ -72,11 +69,27 @@ my $ax = $fig->add_subplot(2, 3, 4);  # 2x3グリッドの4番目(1-based)
 ---
 
 ### #5 yticks 降順スキップバグ (P:G:C06, commit c84b2e7)
-
 **問題:** `next if $yp > $mb - 2;` が最下tick以外をスキップしていた。
-
 **解決:** 絶対値ギャップチェックに修正。
 
+---
+
+### #6 giza-server スライダ幾何/init 修正 (giza-server16, 2026-07-03)
+**問題:** giza-server の対話ビューアで、横（時間）・縦（ゲイン）スライダの
+つまみ位置と返り値がズレていた。縦つまみは上端付近に張り付き、横つまみを
+左端までドラッグしても 0.0 でなく約 0.5 が返った（EEG raw viewer で ~927.7s
+記録の左端が「463.9s」と表示）。起動時つまみ位置も client の `init` と不一致。
+**原因:** giza-server 側の2点（`Driver::GS` は無実。受信値を `$state` に
+入れるだけ）。(1) ビューアの `NSSlider` が正弦波デモの値域（k=0.5..8.0,
+A=0.1..1.0）と init=1.0 のままで、client は値を正規化 [0,1] として扱うため、
+左端で minValue=0.5 が返り、init=1.0 が縦を上端に写した（上下反転でも
+つまみ幅オフセットでもなく、値域と init の取り違え）。(2) `init` は Perl
+`$state` にしか無く、初期つまみ位置をビューアへ伝える口が無かった。
+**解決:** giza-server のスライダを正規化 [0,1] 化（min=0.0/max=1.0、意味付けは
+client）。初期つまみ位置は `NEWWIN` ペイロード末尾の任意 `gsp_slider_t`
+レコードで client から供給し、`Driver::GS::show_interactive` の
+`init => { id => value }` をこの経路で送出。EEG raw viewer で検証（左端=0.0s、
+gain init 0.5 で縦つまみ中央）。
 ---
 
 ## 既知の挙動・注意事項

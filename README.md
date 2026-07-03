@@ -40,7 +40,7 @@ PDL::Graphics::Cairo (P:G:C) is a high-level 2D plotting library for [PDL](https
 
 ### Output
 - PNG (via `PDL::IO::PNG` or Cairo), PDF, SVG
-- Interactive display via `giza-server` (persistent window with tabs, sliders, resize, cursor/pick)
+- Interactive display via `giza-server` (persistent window with tabs, sliders, resize, cursor/pick). Slider values arrive normalized `[0,1]` (the client assigns each slider's meaning); `show_interactive(init => { 0 => ..., 1 => ... })` sets each slider's initial thumb position.
 - Inline display in `App::PDL::Notebook` (via `$fig->to_inline`)
 
 ### Downsampling
