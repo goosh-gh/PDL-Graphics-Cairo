@@ -48,7 +48,7 @@ use PDL;
 use PDL::Graphics::Cairo qw(figure);
 use Exporter 'import';
 
-our $VERSION = '0.10';
+our $VERSION = '0.1';
 
 #
 

@@ -1,6 +1,20 @@
 Revision history for PDL-Graphics-Cairo
 
-{{NEXT}}
+0.1  2026-07-11
+    - New plotting features since 0.01 (see t/08-t/32 for coverage):
+        * contour (Marching Squares) alongside contourf
+        * specgram (STFT spectrogram)
+        * hexbin density plots
+        * GridSpec / subplot_mosaic layouts; inset_axes
+        * polar projection (PolarAxes)
+        * pcolormesh (non-uniform quad mesh)
+        * plot_date; scatter marker styles; grouped bar charts with yerr
+        * style.use() presets + rcParams
+        * minor ticks and tick_params
+        * ListedColormap and Normalize variants (LogNorm / BoundaryNorm)
+        * fill_between(where=) and fillstyle
+        * twiny (twin y-axis), with label-rotation fixes
+        * LTTB downsampling for large series
     - PDL::IO::PNG is now optional, not a hard dependency. Driver::Cairo
       previously did an unconditional `use PDL::IO::PNG qw(wpng)`, so the
       module failed to load on systems without it. It now loads PDL::IO::PNG

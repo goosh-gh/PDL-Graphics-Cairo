@@ -7,3 +7,5 @@
 ^PDL-Graphics-Cairo-[\d.]+\.tar\.gz$
 ^cover_db/
 ^\.DS_Store
+^download/
+^MANIFEST\.bak$

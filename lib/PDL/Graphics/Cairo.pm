@@ -3,7 +3,7 @@ package PDL::Graphics::Cairo;
 use strict;
 use warnings;
 
-our $VERSION = '0.11';
+our $VERSION = '0.1';
 
 use Exporter;
 our @EXPORT_OK = qw(figure subplots subplot_mosaic imread
@@ -312,7 +312,7 @@ PDL::Graphics::Cairo - matplotlib-inspired 2D plotting for PDL using Cairo
 
 =head1 VERSION
 
-0.10
+0.1
 
 =head1 SYNOPSIS
 
