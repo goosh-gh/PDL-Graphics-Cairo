@@ -9,3 +9,6 @@
 ^\.DS_Store
 ^download/
 ^MANIFEST\.bak$
+\.DS_Store$
+\.bak$
+^Makefile\.PL\.old$

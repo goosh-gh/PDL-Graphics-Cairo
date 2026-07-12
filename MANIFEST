@@ -20,7 +20,6 @@ docs/matplotlib_comparison.md
 docs/PGC_API_issues.md
 docs/PGPLOT_compatibility_en.md
 docs/PGPLOT_compatibility_ja.md
-examples/.DS_Store
 examples/eeg_viewer.pl
 examples/eeg_viewer_raw.pl
 examples/eeg_viewer_static.pl
@@ -64,6 +63,7 @@ lib/PDL/Graphics/Cairo/Compat/Gnuplot.pm
 lib/PDL/Graphics/Cairo/Driver/Cairo.pm
 lib/PDL/Graphics/Cairo/Driver/Gnuplot.pm
 lib/PDL/Graphics/Cairo/Driver/GS.pm
+lib/PDL/Graphics/Cairo/Driver/GS3D.pm
 lib/PDL/Graphics/Cairo/Driver/OSX.pm
 lib/PDL/Graphics/Cairo/Figure.pm
 lib/PDL/Graphics/Cairo/Geometry/Polyline.pm
@@ -78,9 +78,7 @@ lib/PDL/Graphics/Cairo/Transform/Linear.pm
 lib/PDL/Graphics/Cairo/Transform/Log.pm
 LICENSE
 Makefile.PL
-Makefile.PL.old
 MANIFEST			This list of files
-MANIFEST.bak
 MANIFEST.SKIP
 matplotlib.pl
 README.ja.md
@@ -128,3 +126,6 @@ t/29_fillstyle_where.t
 t/30_polar.t
 t/31_tick_params_pixel_verify.t
 t/32_tight_layout_gap.t
+tools/demo_gs3d_electrodes.pl
+tools/verify_gs3d.pl
+tools/verify_gs3d_projection.pl
