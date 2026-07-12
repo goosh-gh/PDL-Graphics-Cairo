@@ -41,6 +41,7 @@ PDL::Graphics::Cairo (P:G:C) is a high-level 2D plotting library for [PDL](https
 ### Output
 - PNG (via `PDL::IO::PNG` or Cairo), PDF, SVG
 - Interactive display via `giza-server` (persistent window with tabs, sliders, resize, cursor/pick). Slider values arrive normalized `[0,1]` (the client assigns each slider's meaning); `show_interactive(init => { 0 => ..., 1 => ... })` sets each slider's initial thumb position.
+- Interactive **3D point-cloud viewer** via `Driver::GS3D` (see [3D](#3d-drivergs3d) below) — quaternion trackball rotation, wheel zoom; macOS (Cocoa) and Linux (Xlib)
 - Inline display in `App::PDL::Notebook` (via `$fig->to_inline`)
 
 ### Downsampling
@@ -266,6 +267,62 @@ perl examples/eeg_viewer_raw.pl recording.eeg --blocks=0,1
 
 ---
 
+## 3D (Driver::GS3D)
+
+Interactive 3D **point-cloud** viewer built on `giza-server`. Intended for spatial
+layouts such as EEG electrode montages — not a general 3D plotting API (no surface
+or wireframe; see "What P:G:C does NOT do").
+
+```perl
+use PDL;
+use PDL::Graphics::Cairo::Driver::GS3D;
+
+my $drv = PDL::Graphics::Cairo::Driver::GS3D->new(
+    scene  => { points => $pts,        # [N,3] world XYZ
+                colors => $rgb,        # [N,3] 0..1
+                labels => \@names },
+    width  => 700, height => 700,
+);
+$drv->run;                              # blocks; drives the interactive loop
+```
+
+**Controls**
+
+| Input | Action |
+|---|---|
+| Drag | Trackball rotation (quaternion — no gimbal lock, no poles) |
+| Wheel / pinch | Zoom |
+| `r` | Reset to the canonical view |
+| `p` | Toggle perspective / orthographic |
+
+**Canonical view** (what `r` restores): Fp at top, T3 on screen-left, T4 on
+screen-right, Cz centred and nearest the viewer — the conventional EEG
+topographic orientation, seen from above.
+
+**Platforms:** macOS (Cocoa) and Linux (Xlib), at feature parity. Pan is not yet
+implemented on either. Requires a `giza-server` built with 3D support.
+
+**Try it:**
+
+```bash
+GIZA_SERVER=/path/to/giza_server perl tools/demo_gs3d_electrodes.pl \
+    --elc /path/to/standard_1020.elc
+```
+
+The hemispheres are coloured asymmetrically (T3 orange, T4 cyan) on purpose: a
+symmetric head cannot reveal a mirrored projection, so chirality bugs would pass
+unnoticed.
+
+**Verification** — the rotation and projection are checked numerically rather
+than by eye:
+
+```bash
+perl tools/verify_gs3d.pl              # structure, quaternion invariants, POD
+perl tools/verify_gs3d_projection.pl   # canonical view, pole-free 2pi sweeps
+```
+
+---
+
 ## Architecture
 
 ```
@@ -273,7 +330,8 @@ PDL::Graphics::Cairo        ← this library
 ├── Figure                  ← canvas, layout (subplots, GridSpec, mosaic)
 ├── Axes                    ← one subplot: plots, axes, ticks, legends
 ├── Driver::Cairo           ← Cairo surface rendering (PNG/PDF/SVG)
-├── Driver::GS              ← giza-server interactive display
+├── Driver::GS              ← giza-server interactive display (2D)
+├── Driver::GS3D            ← giza-server interactive 3D point cloud (trackball)
 ├── ColorMap                ← built-in colormaps
 ├── ListedColormap          ← discrete color lists
 ├── GridSpec                ← non-uniform subplot layout (height_ratios, width_ratios)
@@ -314,9 +372,10 @@ Active development. matplotlib API coverage:
 | Colormaps | ✅ 12 built-in + ListedColormap |
 | Normalization | ✅ Normalize, LogNorm, BoundaryNorm, TwoSlopeNorm |
 | Signal analysis | ✅ specgram (STFT, windowing, dB scale) |
-| Interactive | ✅ giza-server (tabs, sliders, resize, cursor/pick, zoom/pan on macOS; zoom on Xlib — pan incomplete) |
+| Interactive (2D) | ✅ giza-server (tabs, sliders, resize, cursor/pick, zoom/pan on macOS; zoom on Xlib — pan incomplete) |
+| Interactive (3D) | ✅ `Driver::GS3D` — point cloud, trackball rotation, wheel zoom; macOS + Linux (pan not yet implemented) |
 | Reactive controls | ✅ `param` / `button` / `on_change` bridge for App::PDL::Notebook |
-| 3D plots | 🔲 not planned (use PDL::Graphics::Gnuplot) |
+| 3D surface / wireframe | 🔲 not planned (use PDL::Graphics::Gnuplot) — but interactive 3D **point clouds** are supported, see `Driver::GS3D` |
 | streamplot | 🔲 low priority |
 | spine control | 🔲 low priority |
 
@@ -327,7 +386,8 @@ Active development. matplotlib API coverage:
 To set expectations clearly:
 
 **Out of scope (by design):**
-- **3D plots** — surface, 3D scatter, wireframe → use `PDL::Graphics::Gnuplot` or `PDL::Graphics::TriD`
+- **3D surface / wireframe plots** — `surf`, `mesh`, 3D contours → use `PDL::Graphics::Gnuplot` or `PDL::Graphics::TriD`.
+  Note: interactive 3D **point clouds** (e.g. EEG electrode montages) *are* supported via `Driver::GS3D` — see the 3D section above.
 - **Real-time animation** — frame-by-frame output is possible, but no animation API
 - **pandas-style DataFrames** — Perl has no DataFrame equivalent; use PDL ndarrays directly
 
