@@ -84,8 +84,13 @@ sub count_red_pixels_in_region {
 
     my ($pdl, $w, $h) = load_png_pixels('/tmp/_tp_test_color_default.png');
     my $bottom_band_red = count_red_pixels_in_region($pdl, 0, $w-1, $h-100, $h-1);
-    is($bottom_band_red, 0,
-        "tick_params default (no color override): no red pixels in tick area");
+    # 「デフォルトでは赤くない」を絶対 0 で主張すると、アンチエイリアスの
+    # 端数(黒い軸線・目盛り数字の縁が赤判定の閾値をかすめた画素)で落ちる。
+    # Cairo のラスタライズはプラットフォームで差があり、実測で macOS=0、
+    # Ubuntu ARM64=1 だった。デフォルトが本当に赤ければ数百個出る
+    # (Test 1 の color=>'red' で 229)ので、ノイズ床を許容する形にする。
+    cmp_ok($bottom_band_red, '<', 10,
+        "tick_params default (no color override): 赤ピクセルは AA 端数レベル (got $bottom_band_red)");
 }
 
 # ------------------------------------------------------------------
