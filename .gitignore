@@ -65,3 +65,5 @@ _Inline/
 *_test.png
 aspect_equal_test.png
 bench_cairo.pl
+.DS_Store
+MANIFEST.bak
