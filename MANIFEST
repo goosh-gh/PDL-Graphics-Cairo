@@ -129,3 +129,5 @@ t/32_tight_layout_gap.t
 tools/demo_gs3d_electrodes.pl
 tools/verify_gs3d.pl
 tools/verify_gs3d_projection.pl
+lib/PDL/Graphics/Cairo/TextLayout.pm
+examples/verify_text_ml.pl

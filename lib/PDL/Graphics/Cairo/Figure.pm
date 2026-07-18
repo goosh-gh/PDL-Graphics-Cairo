@@ -10,6 +10,7 @@ use warnings;
 use Moo;
 use PDL::Graphics::Cairo::GridSpec;
 use PDL::Graphics::Cairo::Axes;
+use PDL::Graphics::Cairo::TextLayout qw(estimate_max_line_px);
 use PDL::Graphics::Cairo::Driver::Cairo;
 use PDL::Graphics::Cairo::Driver::Gnuplot;
 
@@ -643,6 +644,18 @@ sub tight_layout {
                 elsif ($cbloc eq 'bottom') { $mb += 50 + $extra; }
                 else                       { $mr = 68 + $extra; }
             }
+            # カスタム y 目盛りラベルが margin_left に収まるよう下限を確保
+            # (主経路と同じ。tight_layout は描画前で text_width 実測不可)。
+            if ($ax->_yticklabels && @{ $ax->_yticklabels }) {
+                my $lsize = $ax->_tick_params->{y_labelsize} // 10;
+                my $need  = 0;
+                for my $lab (@{ $ax->_yticklabels }) {
+                    my $w = estimate_max_line_px($lab, $lsize);
+                    $need = $w if $w > $need;
+                }
+                $need = int($need + 0.5) + 15;
+                $ml   = $need if $need > $ml;
+            }
             $ax->margin_left($ml);  $ax->margin_right($mr);
             $ax->margin_bottom($mb); $ax->margin_top($mt);
             next;
@@ -677,6 +690,26 @@ sub tight_layout {
             $ml = int(70 * $scale_w + 0.5) if $ax->ylabel ne '';
         }
         $ml = 28 if $ml < 28;   # 最小値
+
+        # カスタム y 目盛りラベル (yticks(vals,labels) / set_yticklabels) が
+        # 固定ヒューリスティック margin_left に収まらず左端で切れるのを防ぐ。
+        # tight_layout は描画前に走り backend($b)が無いため text_width を
+        # 実測できないので、最長行の文字数からラベル占有幅を見積もり、
+        # それを下回らないよう margin_left の下限を引き上げる。
+        # 複数行ラベル "name\n(scale)" は estimate_max_line_px が最長行で
+        # 評価するので、横方向は単一行と同じ扱いになる (縦の重なりは別問題で
+        # 呼び出し側が行数を制御する)。
+        if ($ax->_yticklabels && @{ $ax->_yticklabels }) {
+            my $lsize = $ax->_tick_params->{y_labelsize} // 10;
+            my $need  = 0;
+            for my $lab (@{ $ax->_yticklabels }) {
+                my $w = estimate_max_line_px($lab, $lsize);
+                $need = $w if $w > $need;
+            }
+            # tick_ext(~3) + y_pad(~10) + 2 + 予備 の合計 ~15px を上乗せ。
+            $need = int($need + 0.5) + 15;
+            $ml   = $need if $need > $ml;
+        }
 
         # 右マージン
         my $mr = $ax->_colorbar ? 72 : (exists $ax->{_right_ylabel} && $ax->{_right_ylabel} ne "") ? 110 : int(10 * $scale_w + 8);

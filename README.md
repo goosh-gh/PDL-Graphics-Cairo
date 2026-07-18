@@ -22,6 +22,7 @@ PDL::Graphics::Cairo (P:G:C) is a high-level 2D plotting library for [PDL](https
 - Twin axes: `twinx` (shared X, independent Y on the right), `twiny` (shared Y, independent X on top) — combinable on the same parent Axes
 - Inset axes: `inset_axes`
 - Annotations: `annotate`, `axhline`, `axvline`, `axhspan`, `axvspan`, `text`
+- Multi-line text: `text()` splits on `\n` with `halign` (`left`/`right`/`center`), `valign` (`top`/`middle`/`bottom`), and `line_spacing`; rotated blocks stack correctly (`angle=0` vertical, `angle=90` side-by-side). Custom y-tick labels (e.g. `"name\n(scale)"`) reserve left margin from their longest line so `tight_layout` does not clip them
 - `scatter` marker styles: `o s ^ v < > d + x p h * P X` (14 styles, covering most matplotlib marker shorthands)
 - `bar` / `barh` error bars (`yerr`, symmetric or `yerr_low`/`yerr_high` for asymmetric) and grouped bars (call `bar()` multiple times with shifted `x` and a shared `width`, matplotlib-style)
 
@@ -368,6 +369,7 @@ Active development. matplotlib API coverage:
 |---|---|
 | Plot types | ✅ 20+ types incl. hexbin, specgram, contour/contourf, pcolormesh, plot_date |
 | Axes decoration | ✅ tick_params, minor ticks, formatters, inset_axes |
+| Text & labels | ✅ multi-line `text()` with halign / valign / line_spacing; longest-line margin reservation for y-tick labels |
 | Layouts | ✅ GridSpec (height_ratios/width_ratios), subplot_mosaic, suptitle |
 | Colormaps | ✅ 12 built-in + ListedColormap |
 | Normalization | ✅ Normalize, LogNorm, BoundaryNorm, TwoSlopeNorm |

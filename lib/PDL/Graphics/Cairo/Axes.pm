@@ -18,6 +18,7 @@ use strict;
 use warnings;
 use Moo;
 use PDL;
+use PDL::Graphics::Cairo::TextLayout qw(ml_layout ml_max_width);
 # PDL exports hist; override with our method
 no warnings "redefine";
 # List::Util  min/max  PDL 
@@ -1318,8 +1319,12 @@ sub _normalize_groups {
 # ---- text --------------------------------------------------------
 sub text {
     my ($self, $x, $y, $str, %opt) = @_;
-    # va='center' は Cairo valign='middle' に正規化
-    my $va = $opt{va} // 'bottom';
+    # 水平/垂直そろえ: matplotlib 系 (ha/va) と本エコシステム由来 (halign/
+    # valign) の両綴りを受ける。以前は ha/va しか読まず、halign/valign 指定は
+    # 黙って default(left/bottom) に落ちていた（＝「halign に頼るな」の罠の実体）。
+    my $ha = $opt{ha} // $opt{halign} // 'left';
+    my $va = $opt{va} // $opt{valign} // 'bottom';
+    # 'center' 正規化: 水平は 'center' のまま backend が解釈、垂直は 'middle'。
     $va = 'middle' if $va eq 'center';
     push @{ $self->_queue }, {
         type   => 'annot',
@@ -1327,11 +1332,36 @@ sub text {
         str    => $str,
         color  => $self->_parse_color($opt{color} // 'black'),
         size   => $opt{fontsize} // 11,
-        align  => $opt{ha}       // 'left',
+        align  => $ha,
         valign => $va,
         angle  => $opt{rotation} // 0,
+        # 複数行 ("a\nb") 時の行送り倍率。matplotlib 既定と同じ 1.2。
+        line_spacing => $opt{line_spacing} // 1.2,
     };
     return $self;
+}
+
+# ------------------------------------------------------------------
+# 複数行テキスト描画ヘルパー (実体は TextLayout.pm、backend 非依存)
+# ------------------------------------------------------------------
+# _text_ml($b,$x,$y,$str,%opt): "a\nb" を行分割し、行送り・halign・valign
+# 縦センタリング・回転を解決して backend text() へ流す薄いラッパ。
+# レイアウト計算そのものは ml_layout() (PDL::Graphics::Cairo::TextLayout) に
+# 委譲する。単一行はそのまま素通し = 既存描画とピクセル一致(後方互換)。
+sub _text_ml {
+    my ($self, $b, $x, $y, $str, %opt) = @_;
+    for my $op (ml_layout($x, $y, $str, %opt)) {
+        my ($sx, $sy, $line, $al, $va, $ang) = @$op;
+        $b->text($sx, $sy, $line, align => $al, valign => $va, angle => $ang);
+    }
+    return $self;
+}
+
+# _text_width_ml($b,$str): 複数行ラベルの「最長行」の幅(px)。
+# tight_layout / ylabel 配置のマージン確保で最長行が切れないよう使う。
+sub _text_width_ml {
+    my ($self, $b, $str) = @_;
+    return ml_max_width($str, sub { $b->text_width($_[0]) });
 }
 
 # ---- hline / vline -----------------------------------------------
@@ -2144,10 +2174,14 @@ sub _render_cmd {
         $b->set_font(size => $cmd->{size});
         my $xd = $tr->x(pdl($cmd->{x}))->at(0);
         my $yd = $tr->y(pdl($cmd->{y}))->at(0);
-        $b->text($xd, $yd, $cmd->{str},
-            align  => $cmd->{align},
-            valign => $cmd->{valign},
-            angle  => $cmd->{angle});
+        # 複数行対応: "a\nb" は _text_ml が行分割・行送り・valign 縦センタリング
+        # まで面倒を見る。単一行はそのまま backend text() に素通し(後方互換)。
+        $self->_text_ml($b, $xd, $yd, $cmd->{str},
+            align        => $cmd->{align},
+            valign       => $cmd->{valign},
+            angle        => $cmd->{angle},
+            size         => $cmd->{size},
+            line_spacing => $cmd->{line_spacing});
     }
 
     elsif ($type eq 'hline') {
@@ -2999,14 +3033,14 @@ sub _draw_frame {
             if ($lshow) {
                 $b->set_color(@lc);
                 $b->set_font(size => $lsize);
-                $b->text($xp, $mb + $tick_ext + $pad + 2, $xlbs[$i],
-                    align=>'center', valign=>'top', angle=>$rot);
+                $self->_text_ml($b, $xp, $mb + $tick_ext + $pad + 2, $xlbs[$i],
+                    align=>'center', valign=>'top', angle=>$rot, size=>$lsize);
             }
             if ($lshow_t) {
                 $b->set_color(@lc);
                 $b->set_font(size => $lsize);
-                $b->text($xp, $mt - $tick_ext - $pad - 2, $xlbs[$i],
-                    align=>'center', valign=>'bottom', angle=>$rot);
+                $self->_text_ml($b, $xp, $mt - $tick_ext - $pad - 2, $xlbs[$i],
+                    align=>'center', valign=>'bottom', angle=>$rot, size=>$lsize);
             }
         }
         $prev_xp_right = $xp + $half_w;
@@ -3144,12 +3178,13 @@ sub _draw_frame {
             if ($lshow_l) {
                 $b->set_color(@lc);
                 $b->set_font(size => $lsize);
-                $b->text($ml - $tick_ext - $pad - 2, $txt_y, $ylbs[$i],
-                    align=>'right', valign=>'middle', angle=>$rot);
+                $self->_text_ml($b, $ml - $tick_ext - $pad - 2, $txt_y, $ylbs[$i],
+                    align=>'right', valign=>'middle', angle=>$rot, size=>$lsize);
                 # ylabel 配置時の重なり防止用に、回転なしラベルの最大幅を記録する。
+                # 複数行 ("name\n(scale)") では最長行の幅を採る (_text_width_ml)。
                 # rot!=0（縦書き等）の場合は左方向の占有幅が変わるため対象外とする。
                 if ($rot == 0) {
-                    my $w = eval { $b->text_width($ylbs[$i]) } // 0;
+                    my $w = $self->_text_width_ml($b, $ylbs[$i]);
                     $self->{_y_ticklabel_maxw} = $w
                         if !defined($self->{_y_ticklabel_maxw})
                         || $w > $self->{_y_ticklabel_maxw};
@@ -3158,8 +3193,8 @@ sub _draw_frame {
             if ($lshow_r) {
                 $b->set_color(@lc);
                 $b->set_font(size => $lsize);
-                $b->text($mr + $tick_ext + $pad + 2, $txt_y, $ylbs[$i],
-                    align=>'left', valign=>'middle', angle=>$rot);
+                $self->_text_ml($b, $mr + $tick_ext + $pad + 2, $txt_y, $ylbs[$i],
+                    align=>'left', valign=>'middle', angle=>$rot, size=>$lsize);
             }
         }
         $prev_yp = $yp;
