@@ -1347,10 +1347,24 @@ sub text {
 # _text_ml($b,$x,$y,$str,%opt): "a\nb" を行分割し、行送り・halign・valign
 # 縦センタリング・回転を解決して backend text() へ流す薄いラッパ。
 # レイアウト計算そのものは ml_layout() (PDL::Graphics::Cairo::TextLayout) に
-# 委譲する。単一行はそのまま素通し = 既存描画とピクセル一致(後方互換)。
+# 委譲する。
+#
+# halign(right/center) は backend の align 実装に依存せず、ここで text_width を
+# 実測して明示的な左アンカー座標に解決する(Xlib/giza-server は align=>'right'を
+# honor しないため。2026-07-19)。よって最終的に backend へ渡す align は常に
+# 'left'。左寄せは幅測定不要なのでスキップする。呼び出し側は set_font 済みで
+# あること(幅測定のため)。
 sub _text_ml {
     my ($self, $b, $x, $y, $str, %opt) = @_;
-    for my $op (ml_layout($x, $y, $str, %opt)) {
+    my $align = $opt{align} // 'left';
+
+    my $widths;
+    if ($align ne 'left') {
+        my @lines = split /\n/, (defined $str ? $str : ''), -1;
+        $widths = [ map { eval { $b->text_width($_) } // 0 } @lines ];
+    }
+
+    for my $op (ml_layout($x, $y, $str, %opt, widths => $widths)) {
         my ($sx, $sy, $line, $al, $va, $ang) = @$op;
         $b->text($sx, $sy, $line, align => $al, valign => $va, angle => $ang);
     }

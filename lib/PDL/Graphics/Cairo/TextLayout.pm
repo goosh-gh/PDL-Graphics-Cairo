@@ -24,7 +24,15 @@ our @EXPORT_OK = qw(ml_layout ml_max_width estimate_max_line_px);
 use constant PI => 3.14159265358979;
 
 # ml_layout($x, $y, $str, %opt) → 各行の draw op のリスト
-#   返り値: ( [$sx, $sy, $line, $align, $valign, $angle], ... )
+#   返り値: ( [$sx, $sy, $line, 'left', $valign, $angle], ... )
+#
+# 重要: 返る op の水平そろえは常に 'left'(左アンカー)。halign(right/center)は
+# ここで text 幅を使って明示的な左アンカー座標に「解決」する。これは
+# backend の align=>'right'/'center' 実装に依存しないための設計 ——
+# Xlib/giza-server backend は align を honor せず常に左アンカーで描くため、
+# 委譲方式だと Cocoa と挙動が食い違う(2026-07-19 Ubuntu で判明)。左アンカー
+# 描画と text_width はどの backend も持つ最も原始的な操作なので、これで
+# プラットフォーム非依存になる。
 #
 # %opt:
 #   align         : 'left' | 'right' | 'center'   (default 'left')  ← halign
@@ -32,20 +40,21 @@ use constant PI => 3.14159265358979;
 #   angle         : 度。正=反時計回り                 (default 0)
 #   size          : フォントサイズ(px相当)。行高の算出に使う (default 11)
 #   line_spacing  : 行送り倍率                       (default 1.2)
+#   widths        : [w0,w1,...] 各行の実測幅(px)。省略時は 0 = 左アンカー相当。
+#                   right/center を正しく解決するには呼び出し側が渡すこと。
 #
-# 設計上の要点:
-#   * 水平そろえは各行の $align として backend に委譲する。右寄せなら各行の
-#     右端が $x に、center なら各行が $x を中心に揃う。行ごとに幅が違っても
-#     正しく揃うので、ここで幅を測る必要は無い。
-#   * 垂直方向: 行高 LH = size * line_spacing、行数 N。ブロック全高 N*LH を
-#     valign に応じて配置し、各行は valign='middle' で中心を合わせる。
-#       top    : ブロック上端がアンカー $y
-#       bottom : ブロック下端がアンカー $y
-#       middle : ブロック中心がアンカー $y
-#   * 回転: ローカル(回転前)座標での縦オフセット(下向き正) $dy を、
-#     screen 座標へ  screen_x = $x - $dy*sin(th) ,  screen_y = $y + $dy*cos(th)
-#     (th = -angle*PI/180) で写す。angle=0 で縦積み、angle=90 で横並び。
-#   * 単一行 (\n 無し) は元の valign のまま素通し = 既存描画のピクセル一致。
+# 設計:
+#   * 水平: ローカル(回転前)の読み方向を +x とし、halign オフセット
+#       left=0, right=-w_i, center=-w_i/2 を各行の左アンカーに適用。
+#   * 垂直: 行高 LH=size*line_spacing、行数 N。ブロック全高 N*LH を valign に
+#     応じて配置(top=上端が$y, bottom=下端が$y, middle=中心が$y)。各行は
+#     valign='middle' で中心合わせ。
+#   * 回転: ローカル(dx,dy)→screen を
+#       sx = x + dx*cos(th) - dy*sin(th)
+#       sy = y + dx*sin(th) + dy*cos(th)   (th = -angle*PI/180)
+#     で写す。angle=0 縦積み、angle=90 横並び。
+#   * 単一行(\n 無し)は valign を元のまま保持(後方互換)。水平は widths[0] で
+#     解決するが、align='left' 指定なら幅不要でそのまま。
 sub ml_layout {
     my ($x, $y, $str, %o) = @_;
     my $align  = $o{align}        // 'left';
@@ -53,28 +62,44 @@ sub ml_layout {
     my $angle  = $o{angle}        // 0;
     my $size   = $o{size}         // 11;
     my $lsp    = $o{line_spacing} // 1.2;
+    my $widths = $o{widths};
 
     my @lines = split /\n/, (defined $str ? $str : ''), -1;
-
-    # 単一行: 後方互換のため valign をそのまま返す。
-    return ([$x, $y, $str, $align, $valign, $angle]) if @lines <= 1;
-
-    my $LH = $size * $lsp;
-    my $N  = scalar @lines;
-
-    my $top = ($valign eq 'top')    ?  0
-            : ($valign eq 'bottom') ? -$N * $LH
-            :                         -$N * $LH / 2;   # middle / center
 
     my $th = -$angle * PI / 180;
     my ($s, $c) = (sin($th), cos($th));
 
+    # halign → ローカル +x オフセット(左アンカー基準)
+    my $hoff = sub {
+        my $w = shift // 0;
+        return 0      if $align eq 'left';
+        return -$w    if $align eq 'right';
+        return -$w/2;             # center
+    };
+
+    # 単一行: valign を保持したまま、水平だけ解決(後方互換)。
+    if (@lines <= 1) {
+        my $w  = $widths ? ($widths->[0] // 0) : 0;
+        my $dx = $hoff->($w);
+        my $sx = $x + $dx * $c;
+        my $sy = $y + $dx * $s;
+        return ([$sx, $sy, $str, 'left', $valign, $angle]);
+    }
+
+    my $LH = $size * $lsp;
+    my $N  = scalar @lines;
+    my $top = ($valign eq 'top')    ?  0
+            : ($valign eq 'bottom') ? -$N * $LH
+            :                         -$N * $LH / 2;   # middle / center
+
     my @ops;
     for my $i (0 .. $#lines) {
+        my $w  = $widths ? ($widths->[$i] // 0) : 0;
+        my $dx = $hoff->($w);
         my $dy = $top + $i * $LH + $LH / 2;   # 行 i の中心(ローカル下向き正)
-        my $sx = $x - $dy * $s;
-        my $sy = $y + $dy * $c;
-        push @ops, [$sx, $sy, $lines[$i], $align, 'middle', $angle];
+        my $sx = $x + $dx * $c - $dy * $s;
+        my $sy = $y + $dx * $s + $dy * $c;
+        push @ops, [$sx, $sy, $lines[$i], 'left', 'middle', $angle];
     }
     return @ops;
 }
