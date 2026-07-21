@@ -27,7 +27,26 @@ package PDL::Graphics::Cairo::Driver::GS3D;
 #       type   => 'scatter',
 #       points => $xyz,      # PDL [N, 3]
 #       colors => $rgb,      # PDL [N, 3] 0-1
+#       # --- 面(P:EEG18で追加。省略可。points/lines/labels と併用可)---
+#       mesh   => {
+#           verts   => $vc,        # PDL [Nv,3]  頂点(mm)
+#           faces   => $tri,       # PDL [Nf,3]  三角面 index(0/1-based 自動)
+#           color   => [0.85,0.78,0.70],  # 基本色 0-1(省略時は暖色グレー)
+#         # colors  => $fc,        # PDL [Nf,3]  面ごとの基本色(color より優先)
+#           light   => [0.3,0.4,1.0],     # view 空間の光方向(既定 前上右)
+#           ambient => 0.25,
+#           winding => 'auto',     # 'auto'|'ccw'|'cw'  外向き法線の決め方
+#           alpha   => 255,
+#           fill_step => 1,        # 走査間隔(px)。継ぎ目が出たら 0.5 に
+#       },
 #   };
+#
+#   面は z バッファ無し環境向けのソフトウェアパイプライン(投影→バックフェース
+#   カリング→面デプスソート=画家のアルゴリズム→flat Lambert→スキャンライン塗り)
+#   で描く。塗りは既存の「線分プリミティブ」に落とすので giza-server 側は無改変。
+#   凸メッシュ(頭皮 ≈1082頂点)は綺麗。凹メッシュ(皮質・脳溝で自己遮蔽)は
+#   面ソートだとアーティファクトが出る(正確な遮蔽は .obj→Blender を使う)。
+#   幾何スカラー部は PDL::Graphics::Cairo::Mesh3D に分離(headless 検証可)。
 #   my $drv = PDL::Graphics::Cairo::Driver::GS3D->new(
 #       scene  => $scene,
 #       width  => 600,
@@ -43,6 +62,10 @@ our $VERSION = '0.2';   # <- Cairo.pm 本体の版表記に合わせて調整
 
 use PDL;
 use PDL::Basic qw(sequence);
+use PDL::Graphics::Cairo::Mesh3D qw(
+    detect_face_base face_normal lambert shade_color scanline_spans
+    bbox_offscreen nearest_index_2d
+);   # 面描画の幾何コア(PDL 非依存・headless 検証済み)
 use Time::HiRes qw(time sleep);   # 組み込みtime()をミリ秒精度版で上書き。
                                    # PDL/PDL::Basicにtime/sleep同名関数は
                                    # 無いので衝突なし。sleepも小数秒対応版に
@@ -56,6 +79,12 @@ use constant {
     # 末尾に統合した(ちらつき修正、_send_3d_frame参照)。欠番として
     # コメントだけ残し、0x26は再利用しない。
     GSP_MSG_3D_CLEAR => 0x27,
+
+    # 親 Driver::GS と同値の逆チャネル通知(サーバ→クライアント)。3D 窓でも
+    # サーバはこれらを送っているが従来 _recv_ack_3d が読み捨てていた。無改変で活用:
+    GSP_MSG_RESIZE   => 0x16,   # 窓リサイズ (w,h uint32) → width/height 更新で再センタリング
+    GSP_MSG_PICK     => 0x19,   # クリック (fx,fy 画像比率, btn) → 頂点 pick に使う
+    GSP_MSG_CURSOR   => 0x18,   # カーソル移動(未使用、将来のホバー表示用)
 
     NEWWIN_FLAG_3D   => 0x01,   # NEWWINペイロードに乗せる3Dモードフラグ（TODO: クライアント側対応）
 
@@ -127,6 +156,11 @@ sub new {
 
     $self->{zoom}        = $args{zoom}   // DEFAULT_ZOOM;
     $self->{perspective} = $args{perspective} // 1;
+    $self->{on_pick}     = $args{on_pick};   # クリック pick 時: ($vertex_index,$x,$y,$z) を受ける
+    $self->{on_hover}    = $args{on_hover};   # カーソル移動時: ($vertex_index,$x,$y,$z)→表示文字列を返す
+    $self->{seeds}       = [];               # multi-seed: pick した頂点のリスト(EMSE 的なシード群)
+    $self->{readout}     = undef;            # カーソル下の x,y,z + area 名(右上表示)
+    $self->{_cursor}     = undef;            # 直近カーソル(fx,fy)
 
     # XYZ軸定義: PDL規則(2)により [4,3] 形 (dim0=4点/N点、dim1=XYZ) で統一する。
     #
@@ -325,6 +359,221 @@ sub _rotate_points {
 }
 
 # ============================================================
+# 面(三角メッシュ)→ 線分レコード列(P:EEG18)
+#
+# z バッファの無い giza-server で面を出すためのソフトウェアパイプライン。
+# 面を「水平スキャンラインの束(=線分プリミティブ)」に落とすことで、
+# ワイヤプロトコル(GSP_MSG_3D_FRAME の線分レコード)も giza-server 側の
+# ラスタライザも一切触らずに solid + flat-Lambert 陰影を実現する。
+#
+# 手順: 頂点回転(PDL)→ 投影(_project)→ 面ごとに
+#        バックフェースカリング(回転後法線の z 符号)
+#        → 面デプス(回転後 z 平均)で画家ソート(奥→手前)
+#        → view 空間光で flat Lambert → スキャンライン塗り。
+#
+# 返り値: @lines_data 互換の hashref 列(x0,y0,x1,y1,depth,rgba)。
+#         呼び出し側(_send_3d_frame)がこれを軸より前(=奥)に unshift する。
+#
+# 罠(申し送りより): 凸(頭皮)は綺麗、凹(皮質)は面ソートで自己遮蔽が壊れる。
+#                    大規模メッシュ(75K)は u16 線分上限のため fill_step で間引く
+#                    (間引くと横縞が出る=向き確認用途向け。厳密遮蔽は Blender)。
+# ============================================================
+use constant _MESH_FILL_BUDGET => 60000;   # u16(65535)から軸/枠の余白を引いた塗り線分の上限
+
+sub _mesh_lines {
+    my ($self, $rot) = @_;
+    my $m = $self->{scene}{mesh} or return [];
+    my $verts = $m->{verts} // die "scene.mesh.verts required\n";
+    my $faces = $m->{faces} // die "scene.mesh.faces required\n";
+
+    my $base_rgb = $m->{color}   // [0.85, 0.78, 0.70];   # 暖色グレー(頭皮っぽく)
+    my $light    = $m->{light}   // [0.3, 0.4, 1.0];      # view 空間: 前上右から
+    my $ambient  = defined $m->{ambient} ? $m->{ambient} : 0.25;
+    my $alpha    = defined $m->{alpha}   ? $m->{alpha}   : 255;
+    my $step     = $m->{fill_step} && $m->{fill_step} > 0 ? $m->{fill_step} : 1;
+    my $per_face = $m->{colors};                          # PDL [Nf,3] または undef
+
+    # ---- 回転 + 投影(バッチは PDL、以降はスカラーで回す)----
+    my $rv = $self->_rotate_points($rot, $verts);         # [Nv,3] 回転後 3D
+    my ($sxp, $syp, $dzp) = $self->_project($rv);         # 投影後スクリーン + depth(=回転後 z)
+    my @SX = $sxp->list; my @SY = $syp->list;
+    my @RX = $rv->slice(',(0)')->list;
+    my @RY = $rv->slice(',(1)')->list;
+    my @RZ = $rv->slice(',(2)')->list;                    # 法線 z・面デプス用
+
+    # ---- 面 index を Perl 配列へ。0/1-based 自動判定 ----
+    my @I0 = $faces->slice(',(0)')->list;
+    my @I1 = $faces->slice(',(1)')->list;
+    my @I2 = $faces->slice(',(2)')->list;
+    my $nf = scalar @I0;
+    my $fmin = $faces->min;
+    my $fbase = detect_face_base($fmin);
+    if ($fbase) { $_-- for (@I0, @I1, @I2); }             # 1-based → 0-based
+
+    # ---- 外向きワインディング符号(回転不変なので原座標で 1 回だけ決めてキャッシュ)----
+    my $wind = $m->{winding} // 'auto';
+    my $wsign;
+    if    ($wind eq 'ccw') { $wsign = +1; }
+    elsif ($wind eq 'cw')  { $wsign = -1; }
+    else {                                                # auto: 法線が重心から外向きか多数決
+        $wsign = $self->{_mesh_wsign};
+        unless (defined $wsign) {
+            my @VX = $verts->slice(',(0)')->list;
+            my @VY = $verts->slice(',(1)')->list;
+            my @VZ = $verts->slice(',(2)')->list;
+            my $nv = scalar @VX;
+            my ($cx,$cy,$cz) = (0,0,0);
+            $cx += $_ for @VX; $cy += $_ for @VY; $cz += $_ for @VZ;
+            $cx/=$nv; $cy/=$nv; $cz/=$nv;
+            my $acc = 0;
+            for my $f (0 .. $nf-1) {
+                my ($a,$b,$c) = ($I0[$f],$I1[$f],$I2[$f]);
+                my ($nx,$ny,$nz) = face_normal(
+                    [$VX[$a],$VY[$a],$VZ[$a]],
+                    [$VX[$b],$VY[$b],$VZ[$b]],
+                    [$VX[$c],$VY[$c],$VZ[$c]]);
+                my ($fx,$fy,$fz) = (($VX[$a]+$VX[$b]+$VX[$c])/3 - $cx,
+                                    ($VY[$a]+$VY[$b]+$VY[$c])/3 - $cy,
+                                    ($VZ[$a]+$VZ[$b]+$VZ[$c])/3 - $cz);
+                my $dot = $nx*$fx + $ny*$fy + $nz*$fz;     # >0 なら法線が外向き
+                $acc += ($dot >= 0 ? 1 : -1);
+            }
+            $wsign = ($acc >= 0) ? +1 : -1;               # 多数が外向きなら +1、逆なら反転
+            $self->{_mesh_wsign} = $wsign;
+        }
+    }
+
+    # ---- 面ごと: カリング → デプス → 陰影。front かつ画面内だけ集める ----
+    my $W = $self->width;
+    my $H = $self->height;
+    my @vis = (0) x scalar(@SX);     # pick 用: front 面に属する頂点を可視とマーク
+    my @front;   # [depth, [SXa,SXb,SXc],[SYa,SYb,SYc], rgba]
+    for my $f (0 .. $nf-1) {
+        my ($a,$b,$c) = ($I0[$f],$I1[$f],$I2[$f]);
+        # バックフェースカリング: 回転後法線 z(× winding 符号)がカメラ(+Z)向きか
+        my ($nx,$ny,$nz) = face_normal(
+            [$RX[$a],$RY[$a],$RZ[$a]],
+            [$RX[$b],$RY[$b],$RZ[$b]],
+            [$RX[$c],$RY[$c],$RZ[$c]]);
+        next unless $nz * $wsign > 0;                     # 裏面は捨てる
+
+        my $fsx = [$SX[$a],$SX[$b],$SX[$c]];
+        my $fsy = [$SY[$a],$SY[$b],$SY[$c]];
+        # ビューポートカリング: 画面外の面はスキャンライン化しない(強拡大で本数が
+        # 爆発して縞になるのを防ぐ。可視ピクセルだけ塗れば予算に収まり step=1 を保てる)
+        next if bbox_offscreen($fsx, $fsy, $W, $H);
+        $vis[$a] = $vis[$b] = $vis[$c] = 1;               # 可視頂点(pick 候補)
+
+        my $depth = ($RZ[$a] + $RZ[$b] + $RZ[$c]) / 3;    # 画家ソート用(回転後 z)
+
+        # flat Lambert(法線は front 向きに揃えてから)
+        my $I = lambert($nx*$wsign, $ny*$wsign, $nz*$wsign,
+                        $light->[0], $light->[1], $light->[2], $ambient);
+        my $rgb = $base_rgb;
+        if (defined $per_face) {
+            $rgb = [ $per_face->at($f,0), $per_face->at($f,1), $per_face->at($f,2) ];
+        }
+        my $rgba = shade_color($rgb, $I, $alpha);
+
+        push @front, [ $depth, $fsx, $fsy, $rgba ];
+    }
+    # pick(クリック)用に投影と可視マスクを保存。次フレームまで有効。
+    $self->{_mesh_proj} = { sx => \@SX, sy => \@SY, vis => \@vis };
+    return [] unless @front;
+
+    # 画家ソート: depth 昇順(奥→手前)
+    @front = sort { $a->[0] <=> $b->[0] } @front;
+
+    # ---- スキャンライン塗り。総本数が u16 予算超なら step を自動で上げる ----
+    # 概算は各 front 面の投影高さ合計だが、ビューポートに収まる分だけ数える
+    # (画面外の巨大面を数えて過剰間引きするのを防ぐ)。
+    my $est = 0;
+    for my $t (@front) {
+        my $sy = $t->[2];
+        my ($lo,$hi) = ($sy->[0],$sy->[0]);
+        for my $i (1,2) { $lo=$sy->[$i] if $sy->[$i]<$lo; $hi=$sy->[$i] if $sy->[$i]>$hi; }
+        $lo = 0    if $lo < 0;                            # 縦クリップして概算
+        $hi = $H   if $hi > $H;
+        $est += int(($hi-$lo)/$step) + 1 if $hi > $lo;
+    }
+    if ($est > _MESH_FILL_BUDGET) {
+        my $scale = $est / _MESH_FILL_BUDGET;
+        $step *= $scale;                                  # 間引き(横縞が出るが上限は守る)
+        unless ($self->{_budget_warned}) {                # スパム防止: 初回のみ告知
+            warn sprintf("Driver::GS3D: on-screen mesh fill can exceed budget %d at high zoom ".
+                         "(e.g. ~%d lines, step=%.2f). Minor striping; fundamental to painter's ".
+                         "fill without a z-buffer. (Further occurrences suppressed.)\n",
+                         _MESH_FILL_BUDGET, $est, $step);
+            $self->{_budget_warned} = 1;
+        }
+    }
+
+    # 初回のみ、面塗りの負荷を報告(PDLCAIRO_DEBUG=1)。
+    if ($self->verbose && !$self->{_mesh_diag_done}) {
+        printf STDERR "[GS3D mesh] front=%d/%d faces on-screen, ~%d fill-lines/frame, step=%.2f, view=%dx%d\n",
+            scalar(@front), $nf, $est, $step, $W, $H;
+        $self->{_mesh_diag_done} = 1;
+    }
+
+    my @out;
+    for my $t (@front) {
+        my ($depth, $sx, $sy, $rgba) = @$t;
+        for my $span (scanline_spans($sx, $sy, $step, $W, $H)) {   # ビューポートにクリップ
+            my ($y, $xL, $xR) = @$span;
+            push @out, {
+                x0 => $xL, y0 => $y,
+                x1 => $xR, y1 => $y,
+                depth => $depth,
+                rgba  => $rgba,
+            };
+        }
+    }
+    return \@out;
+}
+
+# カーソル下の可視頂点の x,y,z(+ on_hover が返す area 名)を右上表示用にまとめる。
+sub _hover_readout {
+    my ($self, $px, $py) = @_;
+    my $proj = $self->{_mesh_proj} or return;
+    my ($idx, $dist) = nearest_index_2d($proj->{sx}, $proj->{sy}, $px, $py, $proj->{vis});
+    if ($idx < 0) { $self->{readout} = undef; return; }
+    my $verts = $self->{scene}{mesh}{verts};
+    my ($x, $y, $z) = ($verts->at($idx,0), $verts->at($idx,1), $verts->at($idx,2));
+    my $area = $self->{on_hover} ? $self->{on_hover}->($idx, $x, $y, $z) : undef;
+    $self->{readout} = sprintf('x=%.1f y=%.1f z=%.1f%s',
+        $x, $y, $z, (defined $area && length $area) ? "  $area" : '');
+}
+
+# ============================================================
+# 頂点 pick: スクリーン座標 (px,py) に最も近い可視メッシュ頂点を選ぶ。
+#
+# giza-server の 3D 窓がクリック(移動<3px)を GSP_MSG_PICK(fx,fy 画像比率)で
+# 送ってくる。run() が fx*width, fy*height に変換して本メソッドを呼ぶ。直近フレーム
+# の投影 _mesh_proj(可視頂点マスク付き)に対し最近傍を取り、front-facing のみを候補
+# にするので裏側の頂点は選ばれない。選択頂点は緑ハイライト+on_pick コールバック。
+# ============================================================
+sub _pick_at_screen {
+    my ($self, $px, $py) = @_;
+    my $proj = $self->{_mesh_proj} or return;      # まだ 1 フレームも描いてない
+    my ($idx, $dist) = nearest_index_2d($proj->{sx}, $proj->{sy}, $px, $py, $proj->{vis});
+    return if $idx < 0;                            # 可視頂点が無い
+
+    my $verts = $self->{scene}{mesh}{verts};
+    my ($x, $y, $z) = ($verts->at($idx,0), $verts->at($idx,1), $verts->at($idx,2));
+
+    # on_pick は解剖ラベル等の文字列を返せる(返り値をシード表示ラベルに使う)。
+    # 第5引数 = これで何個目のシードになるか(0-based)。
+    my $n = scalar @{ $self->{seeds} };
+    my $ret = $self->{on_pick} ? $self->{on_pick}->($idx, $x, $y, $z, $n) : undef;
+    my $label = (defined $ret && !ref $ret) ? $ret : sprintf('v%d', $idx);
+
+    push @{ $self->{seeds} }, { index => $idx, x => $x, y => $y, z => $z, label => $label };
+
+    printf STDERR "[GS3D pick] seed %d: vertex %d @ (%.1f, %.1f, %.1f) mm  [%s]  (%.1f px)\n",
+        $n + 1, $idx, $x, $y, $z, $label, $dist;
+}
+
+# ============================================================
 # フレームをGSPで送信
 # ============================================================
 sub _send_3d_frame {
@@ -475,8 +724,57 @@ sub _send_3d_frame {
         }
     }
 
+    # ---- hover readout: カーソル下の x,y,z + area 名を隅に表示 ----
+    if (defined $self->{readout}) {
+        push @label_recs, {
+            x => 12, y => 20,                 # 左上(長い文字列でも切れにくい)
+            rgb => [235, 235, 245],
+            text => $self->{readout},
+        };
+    }
+
+    # ---- multi-seed ハイライト: pick した各頂点を色分けで表示(最前面)----
+    if (@{ $self->{seeds} }) {
+        # シードを見分けやすい配色(緑・橙・シアン・マゼンタ・黄…を循環)
+        my @pal = ([80,255,120],[255,170,40],[80,220,255],[255,90,220],[240,240,80],[160,120,255]);
+        my $si = 0;
+        for my $sd (@{ $self->{seeds} }) {
+            my $rp = $self->_rotate_points($rot, pdl([[$sd->{x}],[$sd->{y}],[$sd->{z}]]));
+            my ($sx, $sy, $depth) = $self->_project($rp);
+            my $col = $pal[$si % @pal];
+            push @points_data, {
+                x => $sx->at(0), y => $sy->at(0),
+                depth => 1e9,                          # 常に最前面
+                size  => $self->{zoom} * 7,
+                rgba  => [ @$col, 255 ],
+            };
+            push @label_recs, {
+                x => $sx->at(0) + 8, y => $sy->at(0) + 8,
+                rgb => [ map { int(($_+255)/2) } @$col ],   # 明るめのラベル色
+                text => sprintf('%d:%s', $si + 1, $sd->{label}),
+            };
+            $si++;
+        }
+    }
+
+    # ---- 面(メッシュ)を最背面に差し込む (P:EEG18) ----
+    # 面の塗り線分を @lines_data の先頭へ unshift することで、軸・ワイヤ・点より
+    # 先(=奥)に描かれる。giza-server は受信順に描くので、これで面が背景、
+    # 電極点・軸が前面になる(向き確認に最適)。
+    if (exists $scene->{mesh}) {
+        unshift @lines_data, @{ $self->_mesh_lines($rot) };
+    }
+
     # ---- ペイロードのパック ----
     # gsp_3d_frame_hdr_t: n_lines(u16) n_points(u16) flags(u8) cx(f32) cy(f32) = 13 bytes
+    # n_lines は u16。超えると pack('S') が折り返しサーバが誤カウント→破損するので、
+    # ここで防御的に切り詰める(_mesh_lines の予算 60000 は通常これに掛からない)。
+    if (@lines_data > 65535) {
+        warn sprintf("Driver::GS3D: %d line records exceed u16 max; truncating to 65535.\n",
+                     scalar @lines_data);
+        # 先頭(=奥の面塗り)を優先的に残し、末尾を捨てる。軸・点は別枠なので消えない。
+        splice(@lines_data, 65535);
+    }
     my $nl  = scalar @lines_data;
     my $np  = scalar @points_data;
     my $cx  = $self->width / 2;
@@ -603,8 +901,33 @@ sub run {
                     $self->{qrot} = [ 0, 0, 0, 1 ];
                     $self->{rot}  = _q_to_rot(@{$self->{qrot}});
                     $self->{zoom} = DEFAULT_ZOOM;
+                } elsif ($inp->{key} == ord('c') || $inp->{key} == ord('C')) {
+                    # シードを全消去(multi-seed のやり直し)。
+                    $self->{seeds} = [];
+                    print STDERR "[GS3D pick] seeds cleared\n";
+                    $self->{on_seeds_cleared}->() if $self->{on_seeds_cleared};
+                } elsif ($inp->{key} == ord('u') || $inp->{key} == ord('U')) {
+                    # 直前のシードを取り消す(誤クリックの undo)。
+                    if (@{ $self->{seeds} }) {
+                        my $s = pop @{ $self->{seeds} };
+                        printf STDERR "[GS3D pick] undo seed (was vertex %d)\n", $s->{index};
+                    }
                 }
             }
+        }
+
+        # クリック pick: 3D 窓でクリック(移動<3px)すると giza-server が GSP_MSG_PICK
+        # (fx,fy 画像比率)を送る。直近フレームの投影 _mesh_proj に対し最近傍可視頂点を選ぶ。
+        if ($input->{pick} && $self->{scene}{mesh}) {
+            $self->_pick_at_screen($input->{pick}{fx} * $self->width,
+                                   $input->{pick}{fy} * $self->height);
+        }
+
+        # hover readout: カーソル下の頂点の x,y,z + area 名を右上に出す(クリック前の確認)。
+        if ($input->{cursor} && $self->{scene}{mesh}) {
+            $self->{_cursor} = $input->{cursor};
+            $self->_hover_readout($input->{cursor}{fx} * $self->width,
+                                  $input->{cursor}{fy} * $self->height);
         }
 
         # --- フレームレート制限 (2026-06-20追加、実機計測で8800fps相当
@@ -694,6 +1017,25 @@ sub _recv_ack_3d {
         elsif ($type == PDL::Graphics::Cairo::Driver::GS::GSP_MSG_ERR()) {
             warn "Driver::GS3D: server error: $payload\n";
             return $result;
+        }
+        elsif ($type == GSP_MSG_RESIZE) {
+            # サーバ発の窓リサイズ通知 (w,h uint32)。width/height(親の rw 属性)を
+            # 更新すれば、次フレームの _project と frame header の cx/cy が
+            # 自動で新しい中心(w/2,h/2)になる=拡大しても中心が動かず左上が
+            # 先に切れる問題が解消。giza-server 側は無改変。
+            my ($w, $h) = unpack('L L', $payload);
+            $self->width($w)  if $w;
+            $self->height($h) if $h;
+        }
+        elsif ($type == GSP_MSG_PICK) {
+            # サーバ発のクリック通知 (fx,fy 画像比率 [0,1], btn)。最新の 1 つを保持。
+            my ($fx, $fy, $btn) = unpack('f< f< C', $payload);
+            $result->{pick} = { fx => $fx, fy => $fy, btn => $btn };
+        }
+        elsif ($type == GSP_MSG_CURSOR) {
+            # サーバ発のカーソル移動 (fx,fy 画像比率)。最新の 1 つだけ保持(hover readout 用)。
+            my ($fx, $fy, $btn) = unpack('f< f< C', $payload);
+            $result->{cursor} = { fx => $fx, fy => $fy };
         }
         # 想定外の型は読み捨ててループ継続（ACKを待ち続ける）
     }
