@@ -62,6 +62,7 @@ our $VERSION = '0.2';   # <- Cairo.pm 本体の版表記に合わせて調整
 
 use PDL;
 use PDL::Basic qw(sequence);
+use PDL::Primitive;               # indadd (vertex-normal accumulation for Gouraud)
 use PDL::Graphics::Cairo::Mesh3D qw(
     detect_face_base face_normal lambert shade_color scanline_spans
     bbox_offscreen nearest_index_2d
@@ -122,6 +123,15 @@ use constant {
     # 常時チラつく)。MIN_FRAME_INTERVALで明示的に頭打ちする
     # (60fps相当 = 1/60秒間隔)。
     MIN_FRAME_INTERVAL => 1.0 / 60,
+
+    # REVIEW NOTE (2026-07-23, adaptive LOD): ドラッグ(回転/ズーム)中は
+    # 粗メッシュ(coarse LOD)で軽く回し、操作が IDLE_SEC 秒止まったら
+    # 高精細メッシュ(fine LOD)に一度だけ差し替える(progressive refinement)。
+    # run() は元々 60fps で常時再描画するので、_send_3d_frame の前に
+    # scene->{mesh} を差し替えるだけで成立する(select タイムアウト不要)。
+    # 回転の体感速度は coarse で、静止画の精細さは fine で決まる=グルグルの
+    # 速度を落とさずに止めた瞬間だけ精緻化される。lod は new(lod=>{...}) で有効化。
+    IDLE_SEC => 0.15,
 };
 
 # ============================================================
@@ -161,6 +171,37 @@ sub new {
     $self->{seeds}       = [];               # multi-seed: pick した頂点のリスト(EMSE 的なシード群)
     $self->{readout}     = undef;            # カーソル下の x,y,z + area 名(右上表示)
     $self->{_cursor}     = undef;            # 直近カーソル(fx,fy)
+
+    # fill span を「高さ=step の帯(filled bar)」で描くと、拡大時の横縞
+    # (step>1 の行間隙間)が消える。既定 on。giza-server が frame flag 0x04 を
+    # 解さない旧版なら 1px stroke に落ちるだけ(前方・後方互換)。thick_fill=>0 で無効。
+    $self->{thick_fill} = defined $args{thick_fill} ? $args{thick_fill} : 1;
+
+    # 描画モード: 'line'(既定=スキャンライン線塗り, fail-safe) | 'zbuffer'(三角
+    # ラスタライザ + Gouraud + z バッファ = 脳溝の遮蔽が正確・襞が滑らか)。
+    # 実行時に切替可能。zbuffer は giza-server が三角セクション(flags 0x08)を
+    # 解する新版のときだけ面が出る。旧版なら面は出ないが破綻しない(後方互換)。
+    $self->{render} = $args{render} // 'line';
+
+    # シーン中心(pivot): 位置回転時にここを原点へ移す=脳を画面中心に置き、回転軸も
+    # 脳の中心にする。demo が mesh 重心を渡す。既定 undef=原点(従来動作)。[N,3] に
+    # ブロードキャストするため [1,3] で保持。
+    $self->{_pivot} = (defined $args{pivot} && ref $args{pivot})
+        ? pdl($args{pivot})->dummy(0)     # [3] -> [1,3]
+        : undef;
+
+    # --- adaptive LOD (progressive refinement) ---------------------------
+    # lod => { coarse => \%mesh, fine => \%mesh } を渡すと、run() が
+    # ドラッグ中は coarse、操作が IDLE_SEC 止まったら fine に差し替える。
+    # 既定表示(idle)は fine。pick/hover は常に fine に対して解決する
+    # (run/_pick_at_screen 参照)ので、pick の頂点 index は fine メッシュ
+    # 基準で一意になり、呼び出し側の in_from(ローカル→75K 対応)と噛み合う。
+    if ($args{lod}) {
+        $self->{_lod}         = $args{lod};
+        $self->{_lod_state}   = 'fine';
+        $self->{_last_motion} = 0;
+        $self->{scene}{mesh}  = $args{lod}{fine};   # idle の見た目を既定に
+    }
 
     # XYZ軸定義: PDL規則(2)により [4,3] 形 (dim0=4点/N点、dim1=XYZ) で統一する。
     #
@@ -354,8 +395,20 @@ sub _project {
 # 数学的に正しい結果と一致することを確認済み。
 # ============================================================
 sub _rotate_points {
-    my ($self, $rot, $pts_n3) = @_;       # $pts_n3: [N,3]
+    my ($self, $rot, $pts_n3) = @_;       # $pts_n3: [N,3] 位置
+    # pivot(シーン重心)を原点へ移してから回転する。これで脳の中心を軸に回り、
+    # 投影も脳を画面中心に置く(電極は co-registered なので一緒に動き頭皮に載る)。
+    # 真の MNI 座標は _hover/_pick が生 verts を直読するので不変。方向ベクトル
+    # (法線)は平行移動できないので _rotate_dirs を使うこと。
+    my $pv = $self->{_pivot};
+    $pts_n3 = $pts_n3 - $pv if defined $pv;
     return $rot x $pts_n3;                 # [N,3] そのまま、転置不要
+}
+
+# 方向ベクトル(法線等)の回転。pivot は引かない(平行移動しない)。
+sub _rotate_dirs {
+    my ($self, $rot, $vecs_n3) = @_;
+    return $rot x $vecs_n3;
 }
 
 # ============================================================
@@ -515,6 +568,11 @@ sub _mesh_lines {
         $self->{_mesh_diag_done} = 1;
     }
 
+    # fill 帯の高さ = ceil(step)。step>1 でも行間に隙間を残さない(拡大時の横縞対策)。
+    # _send_3d_frame が thick_fill 時にこの w をワイヤの depth スロットへ載せ、
+    # giza-server が frame flag 0x04 で「高さ w の filled bar」として塗る。
+    my $fillw = ($step <= 1) ? 1 : int($step + 0.9999);
+
     my @out;
     for my $t (@front) {
         my ($depth, $sx, $sy, $rgba) = @$t;
@@ -524,6 +582,7 @@ sub _mesh_lines {
                 x0 => $xL, y0 => $y,
                 x1 => $xR, y1 => $y,
                 depth => $depth,
+                w     => $fillw,
                 rgba  => $rgba,
             };
         }
@@ -576,6 +635,134 @@ sub _pick_at_screen {
 # ============================================================
 # フレームをGSPで送信
 # ============================================================
+# ============================================================
+# 頂点法線(Gouraud 用)。面法線を各頂点へ indadd で集約し正規化、重心外向きに
+# 全体符号を合わせる(winding 非依存で表が明・裏が暗)。原座標で1回だけ計算し
+# メッシュ hashref にキャッシュ($m->{_vnorm})。LOD で別メッシュに切り替わっても
+# 各メッシュが自分の法線を持つので取り違えない。
+# ============================================================
+sub _compute_vnormals {
+    my ($verts, $faces) = @_;                 # [Nv,3], [Nf,3]
+    my $Nv = $verts->dim(0);
+    my $fb = detect_face_base($faces->min);
+    my $F  = $fb ? ($faces - $fb) : $faces;   # 0-based
+    my $a  = $F->slice(',(0)')->flat->long;
+    my $b  = $F->slice(',(1)')->flat->long;
+    my $c  = $F->slice(',(2)')->flat->long;
+    my $Va = $verts->dice_axis(0,$a);
+    my $e1 = $verts->dice_axis(0,$b) - $Va;
+    my $e2 = $verts->dice_axis(0,$c) - $Va;
+    my ($e1x,$e1y,$e1z) = ($e1->slice(',(0)'),$e1->slice(',(1)'),$e1->slice(',(2)'));
+    my ($e2x,$e2y,$e2z) = ($e2->slice(',(0)'),$e2->slice(',(1)'),$e2->slice(',(2)'));
+    my $fn = cat($e1y*$e2z-$e1z*$e2y, $e1z*$e2x-$e1x*$e2z, $e1x*$e2y-$e1y*$e2x);   # [Nf,3]
+    my @vn;
+    for my $k (0..2) {
+        my $acc = zeroes($Nv); my $fk = $fn->slice(",($k)")->sever;
+        indadd($fk,$a,$acc); indadd($fk,$b,$acc); indadd($fk,$c,$acc);
+        push @vn, $acc;
+    }
+    my $vn  = cat(@vn);                         # [Nv,3]
+    my $len = sqrt(($vn*$vn)->slice(',(0)')+($vn*$vn)->slice(',(1)')+($vn*$vn)->slice(',(2)'));
+    $vn = $vn / ($len->dummy(1) + 1e-12);
+    my $rad = $verts - $verts->average->dummy(0);
+    my $al  = $vn->slice(',(0)')*$rad->slice(',(0)')
+            + $vn->slice(',(1)')*$rad->slice(',(1)')
+            + $vn->slice(',(2)')*$rad->slice(',(2)');
+    return $vn * (($al->avg < 0) ? -1 : 1);     # 外向きに揃える
+}
+
+# ============================================================
+# 面(三角メッシュ)→ 三角レコード列(z-buffer 描画, P:EEG18 案③)。
+#
+# _mesh_lines のスキャンライン化の代わりに面を投影三角形として送り、giza-server
+# 側の z バッファ・ラスタライザが Gouraud 補間で塗る。これで (1)脳溝の遮蔽が
+# z バッファで正確、(2)頂点法線 Gouraud で襞が滑らか、(3)線分でないので横縞が
+# 原理的に出ない。頂点色 = 頂点法線を view 空間へ回転 → Lambert(I=ambient+
+# (1-ambient)*max(0,N.L)) → albedo(mesh->{vcolors} があれば頂点ごと, 無ければ
+# base 単色) × I。返り値 = [ [ [x,y,z,r,g,b]×3 ], ... ](z 大きいほど手前)。
+# backface/viewport カリングは _mesh_lines と同じ(閉曲面なので安全, z バッファが
+# 残りの重なりを正しく解決)。pick 用に _mesh_proj も同じ形で保存。
+# ============================================================
+sub _mesh_tris {
+    my ($self, $rot) = @_;
+    my $m = $self->{scene}{mesh} or return [];
+    my $verts = $m->{verts} // die "scene.mesh.verts required\n";
+    my $faces = $m->{faces} // die "scene.mesh.faces required\n";
+
+    my $base_rgb = $m->{color}   // [0.85, 0.78, 0.70];
+    my $light    = $m->{light}   // [0.3, 0.4, 1.0];
+    my $ambient  = defined $m->{ambient} ? $m->{ambient} : 0.25;
+    my $vcolors  = $m->{vcolors};                        # 頂点ごと albedo [Nv,3] or undef
+
+    my $rv = $self->_rotate_points($rot, $verts);
+    my ($sxp, $syp, $dzp) = $self->_project($rv);
+    my @SX = $sxp->list; my @SY = $syp->list; my @DZ = $dzp->list;
+    my @RX = $rv->slice(',(0)')->list;
+    my @RY = $rv->slice(',(1)')->list;
+    my @RZ = $rv->slice(',(2)')->list;
+
+    my @I0 = $faces->slice(',(0)')->list;
+    my @I1 = $faces->slice(',(1)')->list;
+    my @I2 = $faces->slice(',(2)')->list;
+    my $nf = scalar @I0;
+    my $fbase = detect_face_base($faces->min);
+    if ($fbase) { $_-- for (@I0, @I1, @I2); }
+
+    # winding 符号(外向き多数決, メッシュごとにキャッシュ)
+    my $wsign = $m->{_wsign};
+    unless (defined $wsign) {
+        my $wind = $m->{winding} // 'auto';
+        if    ($wind eq 'ccw') { $wsign = +1 }
+        elsif ($wind eq 'cw')  { $wsign = -1 }
+        else {
+            my @VX=$verts->slice(',(0)')->list; my @VY=$verts->slice(',(1)')->list; my @VZ=$verts->slice(',(2)')->list;
+            my $nv=scalar @VX; my ($cgx,$cgy,$cgz)=(0,0,0);
+            $cgx+=$_ for @VX; $cgy+=$_ for @VY; $cgz+=$_ for @VZ; $cgx/=$nv;$cgy/=$nv;$cgz/=$nv;
+            my $acc=0;
+            for my $f (0..$nf-1){ my($a,$b,$c)=($I0[$f],$I1[$f],$I2[$f]);
+                my($nx,$ny,$nz)=face_normal([$VX[$a],$VY[$a],$VZ[$a]],[$VX[$b],$VY[$b],$VZ[$b]],[$VX[$c],$VY[$c],$VZ[$c]]);
+                my($fx,$fy,$fz)=(($VX[$a]+$VX[$b]+$VX[$c])/3-$cgx,($VY[$a]+$VY[$b]+$VY[$c])/3-$cgy,($VZ[$a]+$VZ[$b]+$VZ[$c])/3-$cgz);
+                $acc += (($nx*$fx+$ny*$fy+$nz*$fz)>=0 ? 1 : -1);
+            }
+            $wsign = ($acc>=0)?+1:-1;
+        }
+        $m->{_wsign} = $wsign;
+    }
+
+    # 頂点法線(キャッシュ)→ view 空間 → Gouraud Lambert → 頂点色 u8
+    my $vn  = $m->{_vnorm} //= _compute_vnormals($verts, $faces);   # [Nv,3] 外向き unit
+    my $vnr = $self->_rotate_dirs($rot, $vn);                      # [Nv,3] view 空間(方向=pivot 引かない)
+    my $L   = pdl($light); $L = $L / (sqrt(($L*$L)->sum) + 1e-12);
+    my $nl  = $vnr->slice(',(0)')*$L->at(0) + $vnr->slice(',(1)')*$L->at(1) + $vnr->slice(',(2)')*$L->at(2);
+    my $I   = $ambient + (1-$ambient) * $nl->clip(0,1);             # [Nv]
+    my $alb = defined $vcolors ? $vcolors : pdl($base_rgb)->dummy(0);
+    my $col = (($I->dummy(1) * $alb)->clip(0,1) * 255)->byte;       # [Nv,3]
+    my @CR = $col->slice(',(0)')->list;
+    my @CG = $col->slice(',(1)')->list;
+    my @CB = $col->slice(',(2)')->list;
+
+    # 面ごと: backface/viewport カリング → 三角レコード
+    my $W = $self->width; my $H = $self->height;
+    my @vis = (0) x scalar(@SX);
+    my @tris;
+    for my $f (0 .. $nf-1) {
+        my ($a,$b,$c) = ($I0[$f],$I1[$f],$I2[$f]);
+        my ($nx,$ny,$nz) = face_normal(
+            [$RX[$a],$RY[$a],$RZ[$a]],[$RX[$b],$RY[$b],$RZ[$b]],[$RX[$c],$RY[$c],$RZ[$c]]);
+        next unless $nz * $wsign > 0;
+        my $fsx = [$SX[$a],$SX[$b],$SX[$c]]; my $fsy = [$SY[$a],$SY[$b],$SY[$c]];
+        next if bbox_offscreen($fsx, $fsy, $W, $H);
+        $vis[$a]=$vis[$b]=$vis[$c]=1;
+        push @tris, [
+            [ $SX[$a],$SY[$a],$DZ[$a], $CR[$a],$CG[$a],$CB[$a] ],
+            [ $SX[$b],$SY[$b],$DZ[$b], $CR[$b],$CG[$b],$CB[$b] ],
+            [ $SX[$c],$SY[$c],$DZ[$c], $CR[$c],$CG[$c],$CB[$c] ],
+        ];
+    }
+    $self->{_mesh_proj} = { sx => \@SX, sy => \@SY, vis => \@vis };
+    return \@tris;
+}
+
 sub _send_3d_frame {
     my ($self) = @_;
     my $rot   = $self->_rotation();
@@ -757,12 +944,17 @@ sub _send_3d_frame {
         }
     }
 
-    # ---- 面(メッシュ)を最背面に差し込む (P:EEG18) ----
-    # 面の塗り線分を @lines_data の先頭へ unshift することで、軸・ワイヤ・点より
-    # 先(=奥)に描かれる。giza-server は受信順に描くので、これで面が背景、
-    # 電極点・軸が前面になる(向き確認に最適)。
+    # ---- 面(メッシュ)を差し込む (P:EEG18) ----
+    # line モード: 面塗り線分を @lines_data 先頭へ unshift(軸・点より奥に描画)。
+    # zbuffer モード: 面は三角セクションで送る(ラベルの後に付与)。どちらの経路も
+    # _mesh_lines/_mesh_tris が pick 用の _mesh_proj を設定する。
+    my @tris;
     if (exists $scene->{mesh}) {
-        unshift @lines_data, @{ $self->_mesh_lines($rot) };
+        if (($self->{render} // 'line') eq 'zbuffer') {
+            @tris = @{ $self->_mesh_tris($rot) };
+        } else {
+            unshift @lines_data, @{ $self->_mesh_lines($rot) };
+        }
     }
 
     # ---- ペイロードのパック ----
@@ -779,13 +971,18 @@ sub _send_3d_frame {
     my $np  = scalar @points_data;
     my $cx  = $self->width / 2;
     my $cy  = $self->height / 2;
-    my $payload = pack('S S C f< f<', $nl, $np, 0x03, $cx, $cy);
+    my $flags = 0x03 | ($self->{thick_fill} ? 0x04 : 0) | (@tris ? 0x08 : 0);   # 0x04:fill帯 0x08:三角
+    my $payload = pack('S S C f< f<', $nl, $np, $flags, $cx, $cy);
 
     # 線分レコード: x0 y0 x1 y1 depth r g b a (f32×5 + u8×4 = 24 bytes)
     for my $ln (@lines_data) {
+        # thick_fill 時は depth スロットに fill 帯高さ w(既定1)を載せる。giza-server は
+        # 水平線(y0==y1)を「高さ w の filled bar」で塗る(flag 0x04)。depth はサーバの
+        # 描画では未使用(レコードは既に depth ソート済みで届く)なので上書きして問題ない。
+        my $slot5 = $self->{thick_fill} ? ($ln->{w} // 1) : $ln->{depth};
         $payload .= pack('f<f<f<f<f<CCCC',
             $ln->{x0}, $ln->{y0}, $ln->{x1}, $ln->{y1},
-            $ln->{depth}, @{$ln->{rgba}});
+            $slot5, @{$ln->{rgba}});
     }
 
     # 点レコード: x y depth size r g b a (f32×4 + u8×4 = 20 bytes)
@@ -829,8 +1026,37 @@ sub _send_3d_frame {
             $len, $text);
     }
 
+    # ---- 三角セクション (z-buffer 描画, flags bit3=0x08) ----
+    # ラベルの直後に付与。旧 giza-server は flags 0x08 を見ずここを読まないので
+    # 面は描かれないが破綻しない(後方互換)。頂点レコード(15 bytes):
+    #   x,y(f32 スクリーン座標) z(f32 深度, 大きいほど手前) r,g,b(u8 Gouraud色)
+    # 三角 = 頂点×3 = 45 bytes。n_tris(u16) が先頭。
+    if (@tris) {
+        $payload .= pack('S', scalar @tris);
+        for my $t (@tris) {
+            $payload .= pack('f<f<f<CCC', @{$t->[0]})
+                      . pack('f<f<f<CCC', @{$t->[1]})
+                      . pack('f<f<f<CCC', @{$t->[2]});
+        }
+    }
+
     PDL::Graphics::Cairo::Driver::GS::_send_msg(
         $self->{_ix3d}{sock}, GSP_MSG_3D_FRAME, $payload, $self->{_ix3d}{seq}++);
+}
+
+# ============================================================
+# LOD 差し替え(progressive refinement)。$which = 'coarse'|'fine'。
+# scene->{mesh} を差し替えるだけ。次フレームの _send_3d_frame が新メッシュで
+# 描く。winding 符号(_mesh_wsign)は両 LOD が同一 NY Head サーフェスの
+# 別解像度で tri の向き規約が共通なので、キャッシュを流用してよい(clear しない
+# =drag 解放ごとの重心外向き多数決の再計算を避ける)。もし将来 winding 規約の
+# 異なるメッシュ対を渡すなら、ここで delete $self->{_mesh_wsign} すること。
+# ============================================================
+sub _lod_set {
+    my ($self, $which) = @_;
+    return unless $self->{_lod} && $self->{_lod_state} ne $which;
+    $self->{scene}{mesh} = $self->{_lod}{$which};
+    $self->{_lod_state}  = $which;
 }
 
 # ============================================================
@@ -876,6 +1102,12 @@ sub run {
 
         last unless defined $input;          # 接続切断
 
+        # LOD: 前フレームで coarse→fine に切り替えて持ち越した pick を、fine が
+        # 描かれ _mesh_proj が更新された「この」フレームで解決する(下の pick 分岐参照)。
+        if ($self->{_pick_pending}) {
+            $self->_pick_at_screen(@{ delete $self->{_pick_pending} });
+        }
+
         if ($input->{input_3d}) {
             my $inp = $input->{input_3d};
             # REVIEW NOTE (2026-06-21, トラックボール回転): dtheta/dphiの
@@ -887,6 +1119,15 @@ sub run {
             $self->_apply_drag_rotation($inp->{dx}, $inp->{dy});
             $self->{zoom}  *= (1 + $inp->{dzoom} * 0.1)
                 if abs($inp->{dzoom}) > 0.01;
+
+            # LOD: 回転/ズームの「動き」があれば粗メッシュに落とす(スナップに回す)。
+            # キー入力のみ(type==2, dx=dy=dzoom=0)では落とさない=リセット'r'等で
+            # 精細表示を維持する。
+            if ($self->{_lod}
+                && ($inp->{dx} || $inp->{dy} || abs($inp->{dzoom}) > 0.01)) {
+                $self->_lod_set('coarse');
+                $self->{_last_motion} = time();
+            }
 
             # REVIEW NOTE (2026-06-23, クォータニオン方式): 姿勢は
             # $self->{qrot}に累積され、$self->{rot}はそこから導出される
@@ -919,15 +1160,37 @@ sub run {
         # クリック pick: 3D 窓でクリック(移動<3px)すると giza-server が GSP_MSG_PICK
         # (fx,fy 画像比率)を送る。直近フレームの投影 _mesh_proj に対し最近傍可視頂点を選ぶ。
         if ($input->{pick} && $self->{scene}{mesh}) {
-            $self->_pick_at_screen($input->{pick}{fx} * $self->width,
-                                   $input->{pick}{fy} * $self->height);
+            # pick は常に fine LOD に対して解決する(頂点 index を一意にするため=
+            # 呼び出し側の in_from(fine のローカル→75K)と噛み合う)。ドラッグ直後で
+            # まだ coarse なら fine に切り替え、pick は次フレーム(fine を描いて
+            # _mesh_proj が更新された後)に持ち越す。既に fine ならその場で拾う。
+            # 持ち越しは 1 フレーム(~16ms)で、pick 中は向きが動かないので座標は不変。
+            my ($px, $py) = ($input->{pick}{fx} * $self->width,
+                             $input->{pick}{fy} * $self->height);
+            if ($self->{_lod} && $self->{_lod_state} ne 'fine') {
+                $self->_lod_set('fine');
+                $self->{_pick_pending} = [ $px, $py ];
+            } else {
+                $self->_pick_at_screen($px, $py);
+            }
         }
 
         # hover readout: カーソル下の頂点の x,y,z + area 名を右上に出す(クリック前の確認)。
-        if ($input->{cursor} && $self->{scene}{mesh}) {
+        # LOD 使用時は fine が出ているときだけ readout する(coarse の頂点 index は
+        # in_from と対応しないため。ドラッグ中は回転操作でありホバー確認はしない)。
+        if ($input->{cursor} && $self->{scene}{mesh}
+            && (!$self->{_lod} || $self->{_lod_state} eq 'fine')) {
             $self->{_cursor} = $input->{cursor};
             $self->_hover_readout($input->{cursor}{fx} * $self->width,
                                   $input->{cursor}{fy} * $self->height);
+        }
+
+        # LOD: 操作が IDLE_SEC 止まったら高精細メッシュに一度だけ差し替える。
+        # 次フレームの _send_3d_frame が fine で描く(=手を止めた瞬間に精緻化)。
+        # ループは常時 60fps で回るので、ここが実質のアイドルタイマになる。
+        if ($self->{_lod} && $self->{_lod_state} eq 'coarse'
+            && time() - $self->{_last_motion} >= IDLE_SEC) {
+            $self->_lod_set('fine');
         }
 
         # --- フレームレート制限 (2026-06-20追加、実機計測で8800fps相当
