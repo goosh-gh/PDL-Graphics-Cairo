@@ -42,7 +42,7 @@ PDL::Graphics::Cairo (P:G:C) is a high-level 2D plotting library for [PDL](https
 ### Output
 - PNG (via `PDL::IO::PNG` or Cairo), PDF, SVG
 - Interactive display via `giza-server` (persistent window with tabs, sliders, resize, cursor/pick). Slider values arrive normalized `[0,1]` (the client assigns each slider's meaning); `show_interactive(init => { 0 => ..., 1 => ... })` sets each slider's initial thumb position.
-- Interactive **3D point-cloud viewer** via `Driver::GS3D` (see [3D](#3d-drivergs3d) below) — quaternion trackball rotation, wheel zoom; macOS (Cocoa) and Linux (Xlib)
+- Interactive **3D mesh + point viewer** via `Driver::GS3D` (see [3D](#3d-drivergs3d) below) — triangle mesh surface (z-buffer Gouraud shading) with point markers, quaternion trackball rotation, wheel zoom; **macOS (Cocoa)** viewer (the Linux Xlib viewer does not render the 3D mesh)
 - Inline display in `App::PDL::Notebook` (via `$fig->to_inline`)
 
 ### Downsampling
@@ -270,21 +270,47 @@ perl examples/eeg_viewer_raw.pl recording.eeg --blocks=0,1
 
 ## 3D (Driver::GS3D)
 
-Interactive 3D **point-cloud** viewer built on `giza-server`. Intended for spatial
-layouts such as EEG electrode montages — not a general 3D plotting API (no surface
-or wireframe; see "What P:G:C does NOT do").
+Interactive 3D viewer built on `giza-server`, for spatial layouts such as EEG
+electrode montages overlaid on an anatomical cortex mesh. It renders a triangle
+**mesh surface** and **point markers** with labels. It is not a general 3D
+plotting API (no `surf`/`mesh` plotting commands; see "What P:G:C does NOT do").
 
 ```perl
 use PDL;
 use PDL::Graphics::Cairo::Driver::GS3D;
 
 my $drv = PDL::Graphics::Cairo::Driver::GS3D->new(
-    scene  => { points => $pts,        # [N,3] world XYZ
-                colors => $rgb,        # [N,3] 0..1
-                labels => \@names },
+    scene  => {
+        mesh   => { verts => $V, faces => $F },  # [Nv,3] world XYZ, [Nf,3] vertex indices
+        points => $pts,                          # [N,3] world XYZ (e.g. electrodes)
+        colors => $rgb,                          # [N,3] 0..1
+        labels => \@names,
+    },
+    render => 'zbuffer',                         # 'line' or 'zbuffer' (default 'line')
     width  => 700, height => 700,
 );
 $drv->run;                              # blocks; drives the interactive loop
+```
+
+**Mesh rendering**
+
+| `render` | Behaviour |
+|---|---|
+| `'line'` | Scanline fill drawn as horizontal bars; no z-buffer, surface is see-through |
+| `'zbuffer'` | Software z-buffer Gouraud triangle rasteriser: per-vertex colour interpolation, correct occlusion, smooth shading |
+
+- Mesh colours (per face or per vertex) are shaded by a Lambert term; discrete mean-curvature grey shading (sulci dark / gyri light) is applied when curvature colours are supplied.
+- Adaptive level of detail: a coarse mesh while dragging, a fine mesh when idle (`lod => { coarse => \%m, fine => \%m }`).
+- `pivot => [x,y,z]` rotates and zooms about a chosen point (e.g. the mesh centroid), keeping the object centred.
+- Clicking a vertex picks it; hover reports the vertex `x,y,z` (and an area name through an `on_pick` / `on_hover` callback).
+
+`examples/demo_gs3d_nyhead.pl` renders a New York Head cortex mesh with a 10-20 or
+`--elec` montage overlaid:
+
+```bash
+GIZA_SERVER=/path/to/giza_server perl examples/demo_gs3d_nyhead.pl \
+    --lod --zbuffer --curv --recenter --pivot mesh \
+    --elec /path/to/standard_1020.elc
 ```
 
 **Controls**
@@ -300,7 +326,9 @@ $drv->run;                              # blocks; drives the interactive loop
 screen-right, Cz centred and nearest the viewer — the conventional EEG
 topographic orientation, seen from above.
 
-**Platforms:** macOS (Cocoa) and Linux (Xlib), at feature parity. Pan is not yet
+**Platforms:** the interactive 3D **mesh** rendering (z-buffer Gouraud, thick-fill,
+adaptive LOD) is implemented in the macOS (Cocoa) `giza-server` only; the Linux
+(Xlib) viewer does not render the 3D mesh. Pan is not yet
 implemented on either. Requires a `giza-server` built with 3D support.
 
 **Try it:**
@@ -332,7 +360,7 @@ PDL::Graphics::Cairo        ← this library
 ├── Axes                    ← one subplot: plots, axes, ticks, legends
 ├── Driver::Cairo           ← Cairo surface rendering (PNG/PDF/SVG)
 ├── Driver::GS              ← giza-server interactive display (2D)
-├── Driver::GS3D            ← giza-server interactive 3D point cloud (trackball)
+├── Driver::GS3D            ← giza-server interactive 3D mesh surface + point cloud (trackball)
 ├── ColorMap                ← built-in colormaps
 ├── ListedColormap          ← discrete color lists
 ├── GridSpec                ← non-uniform subplot layout (height_ratios, width_ratios)
@@ -375,9 +403,9 @@ Active development. matplotlib API coverage:
 | Normalization | ✅ Normalize, LogNorm, BoundaryNorm, TwoSlopeNorm |
 | Signal analysis | ✅ specgram (STFT, windowing, dB scale) |
 | Interactive (2D) | ✅ giza-server (tabs, sliders, resize, cursor/pick, zoom/pan on macOS; zoom on Xlib — pan incomplete) |
-| Interactive (3D) | ✅ `Driver::GS3D` — point cloud, trackball rotation, wheel zoom; macOS + Linux (pan not yet implemented) |
+| Interactive (3D) | ✅ `Driver::GS3D` — triangle mesh surface (z-buffer Gouraud) + point markers/labels, trackball rotation, wheel zoom, adaptive LOD, vertex pick. **macOS (Cocoa) only**; the Linux (Xlib) viewer does not render the 3D mesh. Pan not yet implemented |
 | Reactive controls | ✅ `param` / `button` / `on_change` bridge for App::PDL::Notebook |
-| 3D surface / wireframe | 🔲 not planned (use PDL::Graphics::Gnuplot) — but interactive 3D **point clouds** are supported, see `Driver::GS3D` |
+| 3D mesh surface (GS3D) | ✅ triangle mesh with z-buffer Gouraud + curvature shading (EEG / anatomy viewer); no general `surf`/`mesh` plotting command |
 | streamplot | 🔲 low priority |
 | spine control | 🔲 low priority |
 
@@ -388,8 +416,8 @@ Active development. matplotlib API coverage:
 To set expectations clearly:
 
 **Out of scope (by design):**
-- **3D surface / wireframe plots** — `surf`, `mesh`, 3D contours → use `PDL::Graphics::Gnuplot` or `PDL::Graphics::TriD`.
-  Note: interactive 3D **point clouds** (e.g. EEG electrode montages) *are* supported via `Driver::GS3D` — see the 3D section above.
+- **General 3D surface / wireframe plotting commands** — `surf`, `mesh`, 3D contours → use `PDL::Graphics::Gnuplot` or `PDL::Graphics::TriD`.
+  Note: the `Driver::GS3D` viewer *does* render a triangle **mesh surface** (z-buffer Gouraud shading) plus point markers — e.g. an EEG montage over a cortex mesh — see the 3D section above. Out of scope is a general `surf(z)` / `mesh` plotting command, not surface rendering itself.
 - **Real-time animation** — frame-by-frame output is possible, but no animation API
 - **pandas-style DataFrames** — Perl has no DataFrame equivalent; use PDL ndarrays directly
 
