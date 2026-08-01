@@ -67,6 +67,7 @@ use PDL::Graphics::Cairo::Mesh3D qw(
     detect_face_base face_normal lambert shade_color scanline_spans
     bbox_offscreen nearest_index_2d
 );   # 面描画の幾何コア(PDL 非依存・headless 検証済み)
+use PDL::Graphics::Cairo::SceneExport ();   # 表示中シーンの .obj/.usda 書き出し(独立・PDL 非依存の書式コア)
 use Time::HiRes qw(time sleep);   # 組み込みtime()をミリ秒精度版で上書き。
                                    # PDL/PDL::Basicにtime/sleep同名関数は
                                    # 無いので衝突なし。sleepも小数秒対応版に
@@ -80,6 +81,9 @@ use constant {
     # 末尾に統合した(ちらつき修正、_send_3d_frame参照)。欠番として
     # コメントだけ残し、0x26は再利用しない。
     GSP_MSG_3D_CLEAR => 0x27,
+    # 逆チャネル(サーバ→クライアント)。3D 窓の menu「Export OBJ/USDA」で
+    # 送られる。ペイロードは format 1 バイト(0=obj, 1=usda)。gsp_3d.h と一致。
+    GSP_MSG_3D_EXPORT => 0x28,
 
     # 親 Driver::GS と同値の逆チャネル通知(サーバ→クライアント)。3D 窓でも
     # サーバはこれらを送っているが従来 _recv_ack_3d が読み捨てていた。無改変で活用:
@@ -633,6 +637,42 @@ sub _pick_at_screen {
 }
 
 # ============================================================
+# 右クリック解除: スクリーン座標 (px,py) に最も近い seed マークを1つ削除。
+# 既存 seed の (x,y,z) を現在の回転で投影して最近傍を選ぶ(_pick_at_screen の
+# ように mesh 投影 _mesh_proj は使わない=LOD 非依存)。許容半径内に seed が
+# 無ければ何もしない(誤って遠い seed を消さない)。マーカ表示サイズが zoom*7
+# なので許容半径は zoom*12。削除時は on_seed_removed コールバックを呼ぶ(任意)。
+# ============================================================
+sub _unpick_at_screen {
+    my ($self, $px, $py) = @_;
+    my $seeds = $self->{seeds};
+    return unless $seeds && @$seeds;
+
+    my $rot = $self->_rotation();
+    my ($best, $bestd2) = (-1, 1e18);
+    for my $i (0 .. $#$seeds) {
+        my $sd = $seeds->[$i];
+        my $rp = $self->_rotate_points($rot, pdl([[$sd->{x}], [$sd->{y}], [$sd->{z}]]));
+        my ($sx, $sy) = $self->_project($rp);
+        my $dx = $sx->at(0) - $px;
+        my $dy = $sy->at(0) - $py;
+        my $d2 = $dx*$dx + $dy*$dy;
+        ($best, $bestd2) = ($i, $d2) if $d2 < $bestd2;
+    }
+
+    my $tol = ($self->{zoom} // 1) * 12;           # クリック許容半径(px)
+    if ($best >= 0 && $bestd2 <= $tol*$tol) {
+        my $rm = splice(@$seeds, $best, 1);
+        printf STDERR "[GS3D pick] remove seed (was vertex %d @ %.1f,%.1f,%.1f) — %d left\n",
+            $rm->{index}, $rm->{x}, $rm->{y}, $rm->{z}, scalar @$seeds;
+        $self->{on_seed_removed}->($rm) if $self->{on_seed_removed};
+    } else {
+        printf STDERR "[GS3D pick] right-click: no seed within %.0f px (nearest %.0f px)\n",
+            $tol, sqrt($bestd2);
+    }
+}
+
+# ============================================================
 # フレームをGSPで送信
 # ============================================================
 # ============================================================
@@ -1102,6 +1142,12 @@ sub run {
 
         last unless defined $input;          # 接続切断
 
+        # menu「Export OBJ/USDA」: 表示中シーンを .obj/.usda に書き出す。
+        # 投影前の生ジオメトリ(MNI mm)を書くので、面デプス等の描画状態には依存しない。
+        if ($input->{export}) {
+            $self->_export_scene($input->{export}{fmt}, $input->{export}{path});
+        }
+
         # LOD: 前フレームで coarse→fine に切り替えて持ち越した pick を、fine が
         # 描かれ _mesh_proj が更新された「この」フレームで解決する(下の pick 分岐参照)。
         if ($self->{_pick_pending}) {
@@ -1160,14 +1206,19 @@ sub run {
         # クリック pick: 3D 窓でクリック(移動<3px)すると giza-server が GSP_MSG_PICK
         # (fx,fy 画像比率)を送る。直近フレームの投影 _mesh_proj に対し最近傍可視頂点を選ぶ。
         if ($input->{pick} && $self->{scene}{mesh}) {
-            # pick は常に fine LOD に対して解決する(頂点 index を一意にするため=
+            my ($px, $py) = ($input->{pick}{fx} * $self->width,
+                             $input->{pick}{fy} * $self->height);
+            if ( (($input->{pick}{btn} // 1) == 2) ) {
+                # 右クリック: 最も近い seed マークを削除(左クリック pick=追加 の対称)。
+                # 既存 seed の x,y,z を現在の回転で投影して解決するので LOD は不要。
+                $self->_unpick_at_screen($px, $py);
+            }
+            # pick(追加)は常に fine LOD に対して解決する(頂点 index を一意にするため=
             # 呼び出し側の in_from(fine のローカル→75K)と噛み合う)。ドラッグ直後で
             # まだ coarse なら fine に切り替え、pick は次フレーム(fine を描いて
             # _mesh_proj が更新された後)に持ち越す。既に fine ならその場で拾う。
             # 持ち越しは 1 フレーム(~16ms)で、pick 中は向きが動かないので座標は不変。
-            my ($px, $py) = ($input->{pick}{fx} * $self->width,
-                             $input->{pick}{fy} * $self->height);
-            if ($self->{_lod} && $self->{_lod_state} ne 'fine') {
+            elsif ($self->{_lod} && $self->{_lod_state} ne 'fine') {
                 $self->_lod_set('fine');
                 $self->{_pick_pending} = [ $px, $py ];
             } else {
@@ -1300,8 +1351,144 @@ sub _recv_ack_3d {
             my ($fx, $fy, $btn) = unpack('f< f< C', $payload);
             $result->{cursor} = { fx => $fx, fy => $fy };
         }
+        elsif ($type == GSP_MSG_3D_EXPORT) {
+            # menu 発の書き出し要求。format 1 バイト(0=obj, 1=usda) + 任意でパス
+            # (NSSavePanel で選んだ保存先。空なら Perl 側が既定名を作る)。run() で処理。
+            my $fmt  = unpack('C', substr($payload, 0, 1));
+            my $path = length($payload) > 1 ? substr($payload, 1) : '';
+            $result->{export} = { fmt => $fmt, path => $path };
+        }
         # 想定外の型は読み捨ててループ継続（ACKを待ち続ける）
     }
+}
+
+# ============================================================
+# 表示中シーン($self->{scene})を .obj / .usda に書き出す。
+#   $fmt : 0 = obj, 1 = usda(GSP_MSG_3D_EXPORT のペイロード先頭バイト)。
+#   $path: NSSavePanel で選んだ保存先(省略/空なら CWD に既定名を生成)。
+# 出力座標は投影前の生ジオメトリ(MNI mm)。書式コアは PDL 非依存の
+# PDL::Graphics::Cairo::SceneExport(検証済み)、PDL→プレーン変換のみ
+# normalize_pdl_scene が担う。
+#
+# LOD 使用時は fine に切り替えてから書き出す(coarse のまま出すと間引かれた
+# cortex になるため)。書いた絶対パスを STDERR に出す。電極半径は
+# $self->{export_radius}(mm, 既定 3)で調整可。
+# ============================================================
+sub _export_scene {
+    my ($self, $fmt, $path) = @_;
+    my $ext = (defined $fmt && $fmt == 1) ? 'usda' : 'obj';
+
+    # 間引かれていない cortex を書くため fine に上げる。
+    if ($self->{_lod} && ($self->{_lod_state} // '') ne 'fine') {
+        $self->_lod_set('fine');
+    }
+
+    my $out;
+    if (defined $path && length $path) {
+        $out = $path;   # パネルで選んだ保存先をそのまま尊重(拡張子もユーザ選択)。
+    } else {
+        my @t  = localtime;
+        my $ts = sprintf '%04d%02d%02d_%02d%02d%02d',
+                         $t[5]+1900, $t[4]+1, $t[3], $t[2], $t[1], $t[0];
+        my $base = $self->{export_base} // 'gs3d_export';
+        $out = sprintf '%s_%s.%s', $base, $ts, $ext;
+    }
+
+    my $ok = eval {
+        my $plain = PDL::Graphics::Cairo::SceneExport::normalize_pdl_scene($self->{scene});
+
+        # 電極ラベル + picked seed(マーカ球 + "N:label" ラベル)を書き出しに含める。
+        # ラベルは各電極/シードから外向き(radial)に浮かせた Helvetica 塗り面テキスト。
+        # cairo/Helvetica 依存なので eval で握り、失敗しても mesh+電極は必ず出す。
+        # labels か seeds があれば自動で有効($self->{export_labels} を 0 で抑止)。
+        if ( (!defined $self->{export_labels} || $self->{export_labels})
+             && ( ($self->{scene}{labels} && defined $self->{scene}{points})
+                  || ($self->{seeds} && @{ $self->{seeds} }) ) ) {
+            eval {
+                require PDL::Graphics::Cairo::LabelCairo;
+                my $size = $self->{export_label_size} // 6;
+
+                # radial 配置の中心=頭中心。電極重心を使う(無ければ MNI 原点)。
+                my $center = [0, 0, 0];
+                if (defined $self->{scene}{points}) {
+                    my $pts = $self->{scene}{points};
+                    my $n = $pts->dim(0);
+                    my @c = (0, 0, 0);
+                    for my $i (0 .. $n-1) {
+                        my @p = $pts->slice("($i),:")->list;
+                        $c[0]+=$p[0]; $c[1]+=$p[1]; $c[2]+=$p[2];
+                    }
+                    $center = [ $c[0]/$n, $c[1]/$n, $c[2]/$n ] if $n;
+                }
+
+                my @labs3d;
+
+                # 電極ラベル
+                if ($self->{scene}{labels} && defined $self->{scene}{points}) {
+                    my $pts = $self->{scene}{points};
+                    my @P = map { [ $pts->slice("($_),:")->list ] } 0 .. $pts->dim(0)-1;
+                    push @labs3d, @{ PDL::Graphics::Cairo::LabelCairo::electrode_labels_to_geom(
+                        labels  => $self->{scene}{labels},
+                        points  => \@P,
+                        center  => $center,
+                        size_mm => $size,
+                        color   => [1, 1, 0.78],
+                    ) };
+                }
+
+                # picked seeds: viewer と同じ配色でマーカ球(points に追記)+ "N:label"
+                if ($self->{seeds} && @{ $self->{seeds} }) {
+                    my @pal = ([0.31,1,0.47],[1,0.67,0.16],[0.31,0.86,1],
+                               [1,0.35,0.86],[0.94,0.94,0.31],[0.63,0.47,1]);
+                    # マーカ球用に points/pcolors を必ず用意(電極に per-point 色が
+                    # 無い scene でも seed 色を出せるよう、無ければ電極分を既定色で埋める)。
+                    $plain->{points}  ||= [];
+                    my $ne = @{ $plain->{points} } / 3;
+                    $plain->{pcolors} ||= [ (0.8, 0.8, 0.8) x $ne ];
+                    my $mo = 4;   # seed は cortex 頂点上=球が埋もれる。外向きに浮かせて可視化
+                    my $si = 0;
+                    for my $sd (@{ $self->{seeds} }) {
+                        my $col = $pal[$si % @pal];
+                        # 頭中心から外向き単位ベクトル(マーカ/ラベルの浮かし方向)
+                        my @d = ($sd->{x}-$center->[0], $sd->{y}-$center->[1], $sd->{z}-$center->[2]);
+                        my $L = sqrt($d[0]**2 + $d[1]**2 + $d[2]**2) || 1;
+                        my @o = ($sd->{x} + $d[0]/$L*$mo,
+                                 $sd->{y} + $d[1]/$L*$mo,
+                                 $sd->{z} + $d[2]/$L*$mo);
+                        # マーカ球(皮質から少し浮かせた位置)
+                        push @{ $plain->{points}  }, @o;
+                        push @{ $plain->{pcolors} }, @$col;
+                        # ラベル "N:label"(元の seed 位置から。electrode_labels_to_geom が
+                        # さらに外向き offset_out=6mm するのでマーカのやや外側に出る)
+                        push @labs3d, @{ PDL::Graphics::Cairo::LabelCairo::electrode_labels_to_geom(
+                            labels  => [ sprintf('%d:%s', $si+1, $sd->{label}) ],
+                            points  => [ [ $sd->{x}, $sd->{y}, $sd->{z} ] ],
+                            center  => $center,
+                            size_mm => $size,
+                            color   => $col,
+                        ) };
+                        $si++;
+                    }
+                }
+
+                $plain->{labels3d} = \@labs3d if @labs3d;
+                1;
+            } or warn "[GS3D export] label/seed geom skipped: $@";
+        }
+
+        my %opt;
+        $opt{electrode_radius} = $self->{export_radius}    if defined $self->{export_radius};
+        $opt{mesh_name}        = $self->{export_mesh_name} if defined $self->{export_mesh_name};
+        PDL::Graphics::Cairo::SceneExport::write_scene($plain, $ext, $out, %opt);
+        1;
+    };
+    if ($ok) {
+        my $abs = eval { require Cwd; Cwd::abs_path($out) } // $out;
+        printf STDERR "[GS3D export] wrote %s\n", $abs;
+    } else {
+        warn "[GS3D export] failed ($ext): $@";
+    }
+    return;
 }
 
 1;

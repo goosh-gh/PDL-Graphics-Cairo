@@ -313,6 +313,38 @@ GIZA_SERVER=/path/to/giza_server perl examples/demo_gs3d_nyhead.pl \
     --elec /path/to/standard_1020.elc
 ```
 
+
+## 3D scene export (SceneExport)
+
+`PDL::Graphics::Cairo::SceneExport` writes the current 3D scene (the frame
+sent to the Cocoa viewer) to Wavefront `.obj` or USD ASCII `.usda`, in MNI
+millimetre world coordinates. It writes:
+
+- the cortex mesh with per-vertex colours (curvature / activation);
+- electrode markers as thin disc cylinders (8 mm diameter, 2 mm height)
+  oriented to the scalp normal (radially outward from the head centre);
+- picked seed markers, in the seed palette;
+- electrode and seed labels as filled Helvetica text, placed radially and
+  facing outward.
+
+Text labels are produced by `PDL::Graphics::Cairo::LabelCairo` (glyph outlines
+from cairo `text_path`, requires the `Cairo` module and a Helvetica font) and
+`PDL::Graphics::Cairo::LabelGeom` (polygon-with-holes tessellation, multi-glyph
+grouping, and billboard placement; pure Perl, no PDL).
+
+Serialization follows the PDL::IO::NYHead conventions: OBJ faces 1-based,
+USDA `faceVertexIndices` 0-based, `%.6f`, with `OBJ face − 1 == USDA index`.
+USDA output carries `upAxis = "Z"`, `metersPerUnit = 0.001`,
+`subdivisionScheme = "none"`, and `doubleSided = true` on flat disc/text
+meshes.
+
+The format core (`SceneExport`, `LabelGeom`) is pure Perl and covered by
+`t/33_scene_export.t` (26 tests) and `t/34_label_geom.t` (14 tests).
+
+Export is driven from the Cocoa giza-server viewer only (File → Export 3D as
+OBJ/USDA…). The Linux Xlib viewer does not render or export 3D.
+
+
 **Controls**
 
 | Input | Action |
