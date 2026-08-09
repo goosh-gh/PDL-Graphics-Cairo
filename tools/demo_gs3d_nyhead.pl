@@ -51,6 +51,11 @@ my %o = (
     wire       => 0,
     width      => 720,
     height     => 720,
+    source_power => undef,   # --source-power FILE: 皮質を源パワーで着色(nyhead_inverse.pl --out)
+    cmap       => q{inferno}, # --cmap inferno|viridis|hot
+    power_clip => 100,        # --power-clip P: 正規化上限の百分位(既定100=単純max)
+    power_gamma=> 1.0,        # --power-gamma g: t**g で低値を持ち上げ
+    render     => undef,      # --render line|zbuffer(源パワーONなら既定 zbuffer=滑らか)
 );
 GetOptions(
     'mat=s'       => \$o{mat},
@@ -64,6 +69,11 @@ GetOptions(
     'proud=f'     => \$o{proud},
     'zoom=f'      => \$o{zoom},
     'fill-step=f' => \$o{fill_step},
+    'source-power=s' => \$o{source_power},
+    'cmap=s'         => \$o{cmap},
+    'power-clip=f'   => \$o{power_clip},
+    'power-gamma=f'  => \$o{power_gamma},
+    'render=s'       => \$o{render},
     'wire'        => \$o{wire},
     'width=i'     => \$o{width},
     'height=i'    => \$o{height},
@@ -222,6 +232,95 @@ my $scene = {
         fill_step => $o{wire} ? 4 : $o{fill_step},
     },
 };
+
+# ---- 源パワー・オーバレイ(--source-power) ----------------------------------
+# eLORETA/sLORETA の標準化源パワーで皮質頂点を着色する。nyhead_inverse.pl --out
+# が書く「1 行 1 値(cortex75K 頂点順, 74382 行)」を読み、mesh->{vcolors} [Nv,3]
+# を差し込むだけ。giza-server / Driver::GS3D は無改変(Gouraud が vcolors を
+# albedo に使い、Lambert 陰影が別途乗るので立体感は保たれる)。
+#   cortex75K : 頂点 index = 75K index(恒等)
+#   cortexNK  : 頂点 → 75K は @LOCAL_TO_75K(ローダが @V と同順で構築)
+#   /sa/head  : 源は皮質に乗るので無効(警告して無視)
+sub _cmap_rgb {
+    my ($t, $name) = @_;
+    $t = 0 if $t < 0; $t = 1 if $t > 1;
+    my %STOPS = (
+        inferno => [[0.0,0.001,0.000,0.014],[0.25,0.258,0.039,0.406],
+                    [0.5,0.578,0.148,0.404],[0.75,0.865,0.317,0.226],
+                    [0.9,0.988,0.645,0.140],[1.0,0.988,0.998,0.645]],
+        viridis => [[0.0,0.267,0.005,0.329],[0.25,0.229,0.322,0.545],
+                    [0.5,0.128,0.567,0.551],[0.75,0.369,0.789,0.383],
+                    [1.0,0.993,0.906,0.144]],
+        hot     => [[0.0,0,0,0],[0.375,1,0,0],[0.75,1,1,0],[1.0,1,1,1]],
+    );
+    my $s = $STOPS{$name} || $STOPS{inferno};
+    for my $i (0 .. $#$s-1) {
+        my ($t0,@c0) = @{$s->[$i]}; my ($t1,@c1) = @{$s->[$i+1]};
+        if ($t <= $t1 || $i == $#$s-1) {
+            my $f = ($t1 > $t0) ? ($t-$t0)/($t1-$t0) : 0; $f=0 if $f<0; $f=1 if $f>1;
+            return [ $c0[0]+($c1[0]-$c0[0])*$f, $c0[1]+($c1[1]-$c0[1])*$f, $c0[2]+($c1[2]-$c0[2])*$f ];
+        }
+    }
+    return [1,1,1];
+}
+
+# 源パワー配列(75K 順)+ 頂点→75K index → vcolors [Nv,3]。純関数(テスト可能)。
+sub source_vcolors {
+    my ($pw, $g_of_vertex, $cmap, $clip, $gamma) = @_;   # $pw=arrayref(75K順), $g_of_vertex=arrayref(頂点→75K)
+    my @vals = map { ($_ >= 0 && $_ <= $#$pw) ? $pw->[$_] : 0 } @$g_of_vertex;
+    my $hi;
+    if ($clip < 100) {
+        my @s = sort { $a <=> $b } @vals;
+        my $k = int($#s * $clip/100 + 0.5); $k = $#s if $k > $#s; $k = 0 if $k < 0;
+        $hi = $s[$k];
+    } else { $hi = 0; for (@vals) { $hi = $_ if $_ > $hi } }
+    $hi ||= 1;
+    my (@R,@G,@B,@T);
+    for my $v (@vals) {
+        my $t = $v/$hi; $t = $t ** $gamma if $gamma != 1;
+        $t = 0 if $t < 0; $t = 1 if $t > 1;
+        push @T, $t;
+        my $rgb = _cmap_rgb($t, $cmap);
+        push @R,$rgb->[0]; push @G,$rgb->[1]; push @B,$rgb->[2];
+    }
+    return (pdl([ \@R, \@G, \@B ]), $hi, \@T);   # [Nv,3] albedo 0..1 + per-vertex t
+}
+
+$o{render} //= (defined $o{source_power} ? q{zbuffer} : q{line});  # 源パワー時は Gouraud 既定
+if (defined $o{source_power}) {
+    -f $o{source_power} or die "not found: $o{source_power}\n";
+    if (!$is_cortex) {
+        warn "source-power: skipped (surface '$o{surf}' is not cortex)\n";
+    } else {
+        open my $sph, '<', $o{source_power} or die "open $o{source_power}: $!\n";
+        my @pw; while (<$sph>) { next if /^\s*(#|$)/; my ($v) = split; push @pw, $v + 0; }
+        close $sph;
+        my $nv = scalar @$V;
+        if (scalar(@$F) > 60000) {
+            warn sprintf("source-power: '%s' has %d faces — exceeds the u16 (65535) tri/line ".
+                "limit of the GS3D frame protocol, so the mesh will be truncated and flicker. ".
+                "Use a lower-res cortex, e.g. --surf /sa/cortex10K (20000 faces) or /sa/cortex5K.\n",
+                $o{surf}, scalar(@$F));
+        }
+        my $lowres = $o{surf} =~ m{cortex(?:1|2|5|10)K/?$};
+        my @g = $lowres ? @LOCAL_TO_75K : (0 .. $nv - 1);
+        @g == $nv or die sprintf("source-power: vertex/index mismatch (%d verts, %d idx)\n", $nv, scalar @g);
+        my ($vcol, $hi, $tv) = source_vcolors(\@pw, \@g, $o{cmap}, $o{power_clip}, $o{power_gamma});
+        $scene->{mesh}{vcolors} = $vcol;                      # zbuffer(Gouraud)経路が読む頂点色
+        # line(スキャンライン)経路は面色 [Nf,3] のみ読むので、面の 3 頂点 t の平均で塗る。
+        # これで --render line/zbuffer どちらでも源パワーが見える(server 無改変)。
+        my (@FR,@FG,@FB);
+        for my $f (@$F) {
+            my ($a,$b,$c) = ($f->[0]-1, $f->[1]-1, $f->[2]-1);   # faces は 1-based
+            my $tf = ($tv->[$a] + $tv->[$b] + $tv->[$c]) / 3;
+            my $rgb = _cmap_rgb($tf, $o{cmap});
+            push @FR,$rgb->[0]; push @FG,$rgb->[1]; push @FB,$rgb->[2];
+        }
+        $scene->{mesh}{colors} = pdl([ \@FR, \@FG, \@FB ]);   # [Nf,3] 面ごと albedo
+        printf STDERR "source-power: %d verts + %d faces coloured (%s), max=%.3g, clip=%g%%, render=%s\n",
+            $nv, scalar(@$F), $o{cmap}, $hi, $o{power_clip}, $o{render};
+    }
+}
 
 # ---- forward projection 用ローダ(P:EEG18) ----
 # sa の 231ch モデル電極位置(V_fem_normal と index 1:1)と、pick 源のリードフィールド行。
@@ -407,6 +506,7 @@ my $on_hover = sub {
 };
 
 my $drv = PDL::Graphics::Cairo::Driver::GS3D->new(
+    render   => $o{render},
     scene    => $scene,
     width    => $o{width},
     height   => $o{height},
