@@ -56,6 +56,10 @@ my %o = (
     power_clip => 100,        # --power-clip P: 正規化上限の百分位(既定100=単純max)
     power_gamma=> 1.0,        # --power-gamma g: t**g で低値を持ち上げ
     render     => undef,      # --render line|zbuffer(源パワーONなら既定 zbuffer=滑らか)
+    overlay    => 1,          # 源パワー時: 灰色解剖皮質ベース+閾値以上だけカラーを重ねる。--no-overlay で従来の cmap 直塗り
+    threshold  => 0.25,       # --threshold t: 正規化値 t<閾値 は灰(未活動=解剖色)、以上でカラー
+    base_grey  => 0.55,       # --base-grey g: 灰ベースの albedo(0..1; Lambert 陰影が別途乗る)
+    colorbar   => 1,          # 源パワー時: 画面右にカラーバー HUD(cmap/オーバレイと一致)。--no-colorbar で消す
 );
 GetOptions(
     'mat=s'       => \$o{mat},
@@ -75,6 +79,10 @@ GetOptions(
     'power-gamma=f'  => \$o{power_gamma},
     'render=s'       => \$o{render},
     'wire'        => \$o{wire},
+    'overlay!'    => \$o{overlay},       # --overlay / --no-overlay(灰皮質+閾値オーバレイ)
+    'threshold=f' => \$o{threshold},
+    'base-grey=f' => \$o{base_grey},
+    'colorbar!'   => \$o{colorbar},      # --colorbar / --no-colorbar(画面右のカラーバー HUD)
     'width=i'     => \$o{width},
     'height=i'    => \$o{height},
 ) or die "bad args\n";
@@ -264,9 +272,22 @@ sub _cmap_rgb {
     return [1,1,1];
 }
 
+# 灰色解剖皮質ベース + 閾値カラーオーバレイ。$grey が undef(=--no-overlay)なら cmap 直塗り。
+#   vcolor = grey*(1-a) + cmap(t)*a ,  a = smoothstep((t-thr)/(1-thr)) , t<=thr で a=0
+# これで未活動皮質は解剖の灰色に沈み、閾値以上の源だけが色で浮く(inferno の黒つぶれ解消)。
+sub _overlay_rgb {
+    my ($t, $cmap, $grey, $thr) = @_;
+    my $rgb = _cmap_rgb($t, $cmap);
+    return $rgb unless defined $grey;                    # オーバレイOFF=従来どおり
+    my $a = ($thr < 1) ? ($t - $thr) / (1 - $thr) : 0;
+    $a = 0 if $a < 0; $a = 1 if $a > 1;
+    $a = $a * $a * (3 - 2 * $a);                          # smoothstep(自然な立ち上がり)
+    return [ map { $grey * (1 - $a) + $rgb->[$_] * $a } 0 .. 2 ];
+}
+
 # 源パワー配列(75K 順)+ 頂点→75K index → vcolors [Nv,3]。純関数(テスト可能)。
 sub source_vcolors {
-    my ($pw, $g_of_vertex, $cmap, $clip, $gamma) = @_;   # $pw=arrayref(75K順), $g_of_vertex=arrayref(頂点→75K)
+    my ($pw, $g_of_vertex, $cmap, $clip, $gamma, $grey, $thr) = @_;   # $pw=arrayref(75K順), $g_of_vertex=arrayref(頂点→75K)
     my @vals = map { ($_ >= 0 && $_ <= $#$pw) ? $pw->[$_] : 0 } @$g_of_vertex;
     my $hi;
     if ($clip < 100) {
@@ -280,7 +301,7 @@ sub source_vcolors {
         my $t = $v/$hi; $t = $t ** $gamma if $gamma != 1;
         $t = 0 if $t < 0; $t = 1 if $t > 1;
         push @T, $t;
-        my $rgb = _cmap_rgb($t, $cmap);
+        my $rgb = _overlay_rgb($t, $cmap, $grey, $thr);
         push @R,$rgb->[0]; push @G,$rgb->[1]; push @B,$rgb->[2];
     }
     return (pdl([ \@R, \@G, \@B ]), $hi, \@T);   # [Nv,3] albedo 0..1 + per-vertex t
@@ -305,7 +326,9 @@ if (defined $o{source_power}) {
         my $lowres = $o{surf} =~ m{cortex(?:1|2|5|10)K/?$};
         my @g = $lowres ? @LOCAL_TO_75K : (0 .. $nv - 1);
         @g == $nv or die sprintf("source-power: vertex/index mismatch (%d verts, %d idx)\n", $nv, scalar @g);
-        my ($vcol, $hi, $tv) = source_vcolors(\@pw, \@g, $o{cmap}, $o{power_clip}, $o{power_gamma});
+        my $grey = $o{overlay} ? $o{base_grey} : undef;       # 灰オーバレイ用ベース(OFF なら undef)
+        my $thr  = $o{threshold};
+        my ($vcol, $hi, $tv) = source_vcolors(\@pw, \@g, $o{cmap}, $o{power_clip}, $o{power_gamma}, $grey, $thr);
         $scene->{mesh}{vcolors} = $vcol;                      # zbuffer(Gouraud)経路が読む頂点色
         # line(スキャンライン)経路は面色 [Nf,3] のみ読むので、面の 3 頂点 t の平均で塗る。
         # これで --render line/zbuffer どちらでも源パワーが見える(server 無改変)。
@@ -313,12 +336,28 @@ if (defined $o{source_power}) {
         for my $f (@$F) {
             my ($a,$b,$c) = ($f->[0]-1, $f->[1]-1, $f->[2]-1);   # faces は 1-based
             my $tf = ($tv->[$a] + $tv->[$b] + $tv->[$c]) / 3;
-            my $rgb = _cmap_rgb($tf, $o{cmap});
+            my $rgb = _overlay_rgb($tf, $o{cmap}, $grey, $thr);
             push @FR,$rgb->[0]; push @FG,$rgb->[1]; push @FB,$rgb->[2];
         }
         $scene->{mesh}{colors} = pdl([ \@FR, \@FG, \@FB ]);   # [Nf,3] 面ごと albedo
         printf STDERR "source-power: %d verts + %d faces coloured (%s), max=%.3g, clip=%g%%, render=%s\n",
             $nv, scalar(@$F), $o{cmap}, $hi, $o{power_clip}, $o{render};
+        printf STDERR "  overlay: %s%s | scale: normalized source power, peak=1 (dimensionless; sLORETA/eLORETA statistic)\n",
+            ($o{overlay} ? "on" : "off"),
+            ($o{overlay} ? sprintf(" (threshold=%.2f, base-grey=%.2f)", $o{threshold}, $o{base_grey}) : "");
+
+        # カラーバー(画面右 HUD): バーの色列を cmap+オーバレイと同じ _overlay_rgb で作り、
+        # ドライバ(GS3D)へ渡す。ドライバは固定座標の水平線+ラベルで描く(giza-server 無改変)。
+        if ($o{colorbar}) {
+            my $N = 128;
+            my @cols = map {
+                my $rgb = _overlay_rgb($_/($N-1), $o{cmap}, $grey, $thr);
+                [ map { int($_*255+0.5) } @$rgb ];
+            } 0 .. $N-1;
+            my @ticks = ([0,'0'], [0.5,'0.5'], [1,'1']);
+            push @ticks, [$thr, sprintf('%.2f',$thr)] if defined $grey;   # 閾値線(オーバレイ時)
+            $scene->{colorbar} = { colors=>\@cols, ticks=>\@ticks, title=>'power (norm.)' };
+        }
     }
 }
 

@@ -997,6 +997,42 @@ sub _send_3d_frame {
         }
     }
 
+    # ---- カラーバー(画面固定 HUD) ----------------------------------------
+    # $scene->{colorbar} = { colors=>[[r,g,b]... 0..255, t=0→1 順], ticks=>[[frac,'txt']...],
+    #                        title=>'...' }。座標は _project を通さない固定値なので回転しない。
+    # 水平線を 1px 間隔で積んで勾配帯にする(thick_fill 有無に依らず連続)。ラベルは
+    # point_idx=0xFFFF の絶対座標センチネルでそのまま画面座標に出る。giza-server 無改変。
+    if (my $cb = $scene->{colorbar}) {
+        my $W  = $self->width;  my $H = $self->height;
+        my $bw = 18;                                   # バー幅 px
+        my $bh = int($H * 0.42);  $bh = 220 if $bh > 220;  $bh = 80 if $bh < 80;
+        my $xl = $W - 96;  my $xr = $xl + $bw;         # 画面右(タイトル/数値が切れない余白を確保)
+        my $yt = int(($H - $bh) / 2);                  # 画面上原点(小y=上): t=1 が上端
+        my $yb = $yt + $bh;
+        my $cols = $cb->{colors} || [];
+        my $nc   = scalar(@$cols) || 1;
+        for my $py (0 .. $bh) {                        # 勾配(上端 t=1 → 下端 t=0)
+            my $t  = 1 - $py / ($bh || 1);
+            my $ci = int($t * ($nc - 1) + 0.5);  $ci = 0 if $ci < 0;  $ci = $nc-1 if $ci > $nc-1;
+            my $rgb = $cols->[$ci] || [200,200,200];
+            push @lines_data, { x0=>$xl, y0=>$yt+$py, x1=>$xr, y1=>$yt+$py,
+                                depth=>-1e9, w=>1, rgba=>[ @{$rgb}[0,1,2], 255 ] };
+        }
+        my $bd = [230,230,240,255];                    # 枠
+        for my $s ([$xl,$yt,$xr,$yt],[$xl,$yb,$xr,$yb],[$xl,$yt,$xl,$yb],[$xr,$yt,$xr,$yb]) {
+            push @lines_data, { x0=>$s->[0], y0=>$s->[1], x1=>$s->[2], y1=>$s->[3],
+                                depth=>-1e9, w=>1, rgba=>$bd };
+        }
+        for my $tk (@{ $cb->{ticks} || [] }) {         # 目盛り(frac 0=下,1=上)+数値
+            my ($frac,$txt) = @$tk;
+            my $y = int($yb - $frac * $bh);
+            push @lines_data, { x0=>$xr, y0=>$y, x1=>$xr+5, y1=>$y, depth=>-1e9, w=>1, rgba=>$bd };
+            push @label_recs, { x=>$xr+9, y=>$y+5, rgb=>[235,235,245], text=>$txt };  # +5=半文字ぶん下げ目盛り線と中心合わせ(cocoa は下端アンカー11pt)
+        }
+        push @label_recs, { x=>$xl-6, y=>$yt-16, rgb=>[235,235,245],
+                            text=>($cb->{title} // 'power (norm.)') };
+    }
+
     # ---- ペイロードのパック ----
     # gsp_3d_frame_hdr_t: n_lines(u16) n_points(u16) flags(u8) cx(f32) cy(f32) = 13 bytes
     # n_lines は u16。超えると pack('S') が折り返しサーバが誤カウント→破損するので、

@@ -304,14 +304,24 @@ $drv->run;                              # blocks; drives the interactive loop
 - `pivot => [x,y,z]` rotates and zooms about a chosen point (e.g. the mesh centroid), keeping the object centred.
 - Clicking a vertex picks it; hover reports the vertex `x,y,z` (and an area name through an `on_pick` / `on_hover` callback).
 
-`examples/demo_gs3d_nyhead.pl` renders a New York Head cortex mesh with a 10-20 or
+`tools/demo_gs3d_nyhead.pl` renders a New York Head cortex mesh with a 10-20 or
 `--elec` montage overlaid:
 
 ```bash
-GIZA_SERVER=/path/to/giza_server perl examples/demo_gs3d_nyhead.pl \
+GIZA_SERVER=/path/to/giza_server perl tools/demo_gs3d_nyhead.pl \
     --lod --zbuffer --curv --recenter --pivot mesh \
     --elec /path/to/standard_1020.elc
 ```
+
+It can also colour the cortex by a per-vertex **source-power** map
+(`--source-power <file>`, one value per `cortex75K` vertex): an anatomical grey
+base with a threshold colour overlay (`vcolor = grey·(1−α) + cmap(t)·α`,
+`α = 0` below `--threshold`) so inactive cortex stays grey, plus a fixed
+on-screen **colour-bar** HUD. `--cmap`, `--threshold`, `--base-grey`,
+`--no-overlay`, `--no-colorbar`. This is how the New York Head inverse examples
+in [`PDL-EEG`](https://github.com/goosh-gh/PDL-EEG) put e.g. an SEP N20 source
+on the cortex. The colour-bar and overlay are drawn client-side (line/label
+primitives), so `giza-server` needs no change.
 
 
 ## 3D scene export (SceneExport)
