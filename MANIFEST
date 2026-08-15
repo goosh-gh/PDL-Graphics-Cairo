@@ -1,11 +1,4 @@
 .gitignore
-_Inline/config-darwin-thread-multi-2level-5.040003
-_Inline/lib/auto/test_transpiler_02_pl_8c16/test_transpiler_02_pl_8c16.inl
-_Inline/lib/auto/test_transpiler_02_pl_8c16/test_transpiler_02_pl_8c16.pydat
-_Inline/lib/auto/test_transpiler_02_pl_c2d5/test_transpiler_02_pl_c2d5.inl
-_Inline/lib/auto/test_transpiler_02_pl_c2d5/test_transpiler_02_pl_c2d5.pydat
-bench_cairo.pl
-bin/pdlcairo_viewer.old
 Changes
 docs/gnuplot_compatibility.md
 docs/images/colormap_demo_listed.png
@@ -80,19 +73,10 @@ LICENSE
 Makefile.PL
 MANIFEST			This list of files
 MANIFEST.SKIP
-matplotlib.pl
 README.ja.md
 README.md
 src/osx/build.sh
-src/osx/Driver_OSX.pm
-src/osx/libpdlcairo-osx-main.dylib
-src/osx/libpdlcairo_osx.dylib
-src/osx/pdlcairo-osx-main.m
-src/osx/pdlcairo-osx.h
-src/osx/pdlcairo-osx.m
-src/osx/pdlcairo_viewer
 src/osx/pdlcairo_viewer.m
-src/osx/pdlcairo_viewer.old
 t/00_load.t
 t/01_figure.t
 t/02_colormap.t
@@ -132,5 +116,12 @@ t/35_pgplot_compat.t
 tools/demo_gs3d_electrodes.pl
 tools/verify_gs3d.pl
 tools/verify_gs3d_projection.pl
+tools/demo_gs3d_mesh.pl
+tools/demo_gs3d_nyhead.pl
+tools/verify_gs3d_mesh.pl
 lib/PDL/Graphics/Cairo/TextLayout.pm
+lib/PDL/Graphics/Cairo/LabelCairo.pm
+lib/PDL/Graphics/Cairo/LabelGeom.pm
+lib/PDL/Graphics/Cairo/Mesh3D.pm
+lib/PDL/Graphics/Cairo/SceneExport.pm
 examples/verify_text_ml.pl
