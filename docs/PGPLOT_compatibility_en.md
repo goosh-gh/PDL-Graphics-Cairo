@@ -79,7 +79,7 @@ Support for a `PGPLOT_FONT_FAMILY` environment variable may be added in the futu
 
 ## Function Implementation Status
 
-### ✅ Fully Implemented (53 functions)
+### ✅ Fully Implemented (55 functions)
 
 Includes all functions used in typical scientific analysis scripts.
 
@@ -140,6 +140,8 @@ Includes all functions used in typical scientific analysis scripts.
 
 **Images**
 - `cpggray`/`pggray` — Grayscale image
+  - `cpggray(A, IDIM,JDIM, I1,I2,J1,J2, FG, BG, TR)`: value `FG` maps to the foreground (light), `BG` to the background (dark)
+  - `FG>BG` is normal; `FG<BG` gives inverse video
 - `cpgimag`/`pgimag` — Color image
 
 **Contours**
@@ -170,6 +172,18 @@ Includes all functions used in typical scientific analysis scripts.
   - `B`/`C` = bottom+left / top+right border
   - `G` = grid lines
   - `V` = Y-axis labels horizontal (not rotated)
+- `cpgtick`/`pgtick` — Draw a single tick mark (and label) on an axis
+  - `cpgtick(x1,y1,x2,y2, v, tikl,tikr, disp, orient, str)`
+  - Tick at fraction `v` (0–1) along the world-coordinate axis `(x1,y1)-(x2,y2)`
+  - `tikl`/`tikr` = tick length to the left/right (in character-height units); `disp` = label displacement; `orient` = label rotation
+  - "Left/right" is relative to the direction of travel (right = 90° clockwise) and is computed in **device pixel space**, so ticks stay perpendicular on screen even when x/y scales differ or the axis is oblique
+- `cpgaxis`/`pgaxis` — Draw a general labelled axis (line + major/minor ticks + numeric labels)
+  - `cpgaxis(opt, x1,y1,x2,y2, v1,v2, step, nsub, dmajl,dmajr, fmin, disp, orient)`
+  - The quantity runs from `v1` at `(x1,y1)` to `v2` at `(x2,y2)`
+  - `step` = major-tick interval (`<=0` = auto); `nsub` = minor subdivisions per major (`<=0` = auto=2)
+  - `dmajl`/`dmajr` = major-tick length left/right; `fmin` = minor-tick length as a fraction of major
+  - `opt`: `N` = numeric labels / `1` = force decimal / `2` = force exponential / `L` = logarithmic axis
+  - Internally draws the axis via `cpgline` and each tick via `cpgtick`
 
 ---
 

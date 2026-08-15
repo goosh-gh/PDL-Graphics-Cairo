@@ -11,7 +11,7 @@ PDL::Graphics::Cairo がレンダリングを担います。
 ## 特徴
 
 - matplotlib風API（`figure`、`axes`、`line`、`scatter`、`hist` など）
-- PGPLOT互換レイヤー（`pgbegin`、`pgenv`、`pgline`、`pgbox` など）
+- PGPLOT互換レイヤー（`pgbegin`、`pgenv`、`pgline`、`pgbox`、`pgaxis`、`pgtick` など）
 - gnuplot風のコマンド対応（matplotlib APIにマッピング）
 - PNG・PDF・SVGファイル出力 — X11・libgiza 不要
 - **giza_server による macOS ネイティブ表示** — macOS の既定。素の `$fig->show()` でネイティブウィンドウが開きます。Unix ドメインソケット経由のオンメモリ PNG 転送、プログラム終了後も残る永続タブウィンドウ、giza/PGPLOT の C プログラムと共有。Linux でも動作（GTK3/Xlib サーバ）

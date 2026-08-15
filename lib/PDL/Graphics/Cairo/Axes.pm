@@ -2524,6 +2524,64 @@ sub _render_cmd {
             valign => $valign,
         );
     }
+    elsif ($type eq 'pgtick') {
+        # PGPLOT cpgtick: ワールド軸 (x1,y1)-(x2,y2) 上の割合 v の位置に、
+        # デバイス上で軸に直交する目盛りを描く。tikl/tikr/disp は文字高
+        # (=ラベルのフォントサイズ px)の倍率。
+        my $ch = $cmd->{ch} // 1.0;
+        # 文字高(px)は pgmtxt と同じ算出でラベル・目盛り長を揃える
+        my $pw_px = $mr - $ml;
+        my $ph_px = $mb - $mt;
+        my $panel_min = $pw_px < $ph_px ? $pw_px : $ph_px;
+        my $panel_scale = $panel_min > 150 ? 1.0 : $panel_min / 150.0;
+        my $fs = int(8 + ($ch - 1) * $panel_scale * 1.0);
+        $fs = 7  if $fs < 7;
+        $fs = 10 if $fs > 10;
+        my $chh = $fs;   # 文字高 ≈ フォントサイズ(px)
+
+        # 軸端点と目盛り位置(デバイスpx)
+        my $X1 = $tr->x(pdl($cmd->{x1}))->at(0);
+        my $Y1 = $tr->y(pdl($cmd->{y1}))->at(0);
+        my $X2 = $tr->x(pdl($cmd->{x2}))->at(0);
+        my $Y2 = $tr->y(pdl($cmd->{y2}))->at(0);
+        my $v  = $cmd->{v};
+        my $Px = $X1 + $v * ($X2 - $X1);
+        my $Py = $Y1 + $v * ($Y2 - $Y1);
+
+        # デバイス空間の単位進行方向と法線
+        #   right 法線 = (-uy, ux)  … 左→右水平軸なら下側
+        #   left  法線 = ( uy,-ux)  … 同上で上側
+        my $Dx = $X2 - $X1;
+        my $Dy = $Y2 - $Y1;
+        my $len = sqrt($Dx*$Dx + $Dy*$Dy) || 1;
+        my $ux = $Dx / $len;
+        my $uy = $Dy / $len;
+        my ($nrx, $nry) = (-$uy,  $ux);   # right
+        my ($nlx, $nly) = ( $uy, -$ux);   # left
+
+        my $tl = ($cmd->{tikl} // 0) * $chh;
+        my $tr_ = ($cmd->{tikr} // 0) * $chh;
+        my $ax_ = $Px + $tl  * $nlx;  my $ay_ = $Py + $tl  * $nly;   # 左端
+        my $bx_ = $Px + $tr_ * $nrx;  my $by_ = $Py + $tr_ * $nry;   # 右端
+
+        $b->set_color(@{$cmd->{color}});
+        $b->set_linewidth($cmd->{lw} // 1.0);
+        $b->polyline(pdl($ax_, $bx_), pdl($ay_, $by_));
+
+        # ラベル（str が非空のとき）: right 側に disp だけ変位、orient 回転
+        my $str = $cmd->{str};
+        if (defined $str && $str ne '') {
+            my $dp = ($cmd->{disp} // 0) * $chh + $tr_ + 2;  # 目盛り先端の少し外
+            my $lx = $Px + $dp * $nrx;
+            my $ly = $Py + $dp * $nry;
+            $b->set_font(size => $fs);
+            $b->text($lx, $ly, $str,
+                align  => 'center',
+                valign => 'middle',
+                angle  => ($cmd->{orient} // 0),
+            );
+        }
+    }
     elsif ($type eq 'annotate') {
         my $axp = $tr->x(pdl($cmd->{ax}))->at(0);
         my $ayp = $tr->y(pdl($cmd->{ay}))->at(0);

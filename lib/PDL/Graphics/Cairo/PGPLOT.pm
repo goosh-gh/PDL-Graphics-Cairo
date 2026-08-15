@@ -46,6 +46,7 @@ use strict;
 use warnings;
 use PDL;
 use PDL::Graphics::Cairo qw(figure);
+use POSIX qw(ceil floor);
 use Exporter 'import';
 
 our $VERSION = '0.1';
@@ -70,6 +71,7 @@ our @EXPORT = qw(
     cpgiden cpgask  cpgrnd  cpgrnge cpgnumb
     cpgband cpgcurs cpgncur cpglcur
     cpgsvp  cpgvp   cpgwnad
+    cpgaxis cpgtick
 
     pgbeg pgopen pgend pgclos pgpage pgsubp pgpanl
     pgenv pgswin pgsvp pgvstd pgvsiz pgpap pgwnad
@@ -87,6 +89,7 @@ our @EXPORT = qw(
     pgqcf  pgqfs  pgqcr  pgqcs  pgqah  pgqhs  pgqinf
     pgiden pgask  pgrnd  pgrnge pgnumb
     pgband pgcurs pgncur pglcur pgvp
+    pgaxis pgtick
 
     pgbegin pgclose pgpoint pgpoints pglabel pgvect
     cpgbox pgbox
@@ -111,6 +114,7 @@ our @EXPORT_OK = qw(
     pgiden pgask  pgrnd  pgrnge pgnumb
     pgband pgcurs pgncur pglcur
     pgsvp  pgvp   pgwnad
+    pgaxis pgtick
     pgbegin pgclose pgpoint pgpoints pglabel pgvect
     cpgbox pgbox
 );
@@ -1220,6 +1224,125 @@ sub cpgbox {
 
 *pgbox = \&cpgbox;
 
+# =============================================================
+# cpgtick / cpgaxis — PGPLOT 汎用軸描画
+# =============================================================
+#
+# cpgtick(x1,y1,x2,y2, v, tikl,tikr, disp, orient, str)
+#   ワールド座標 (x1,y1)-(x2,y2) を結ぶ軸線上の、始点から割合 v
+#   (0..1) の位置に目盛りを 1 本描く。目盛りは軸に対して「デバイス上で」
+#   垂直な短い線分で、tikl=左側長さ / tikr=右側長さ（いずれも文字高の
+#   倍率）。str が空でなければ disp（文字高の倍率）だけ右側にずらして
+#   ラベルを orient 度回転で描く。
+#
+#   「左 / 右」は始点→終点の進行方向を基準とし、右 = 進行方向から時計
+#   回りに 90°（水平・左から右の軸なら右 = 下側）。この向きはデバイス
+#   ピクセル空間で計算するので、x/y のワールド尺度が異なるプロットでも
+#   目盛りは画面上で軸に直交する（斜め軸でも同様）。
+sub cpgtick {
+    my ($x1,$y1,$x2,$y2, $v, $tikl,$tikr, $disp, $orient, $str) = @_;
+    my $ax = _ax();
+    $ax->{_pgenv_called} = 1;
+    push @{ $ax->_queue }, {
+        type   => 'pgtick',
+        x1 => $x1, y1 => $y1, x2 => $x2, y2 => $y2,
+        v      => $v // 0,
+        tikl   => $tikl   // 0,
+        tikr   => $tikr   // 0,
+        disp   => $disp   // 0,
+        orient => $orient // 0,
+        str    => (defined $str ? "$str" : ''),
+        color  => _current_color(),
+        lw     => _current_lw(),
+        ch     => $_state{ch},
+    };
+}
+
+# 数値ラベル整形（cpgaxis 'N' 用）
+#   opt に '1' があれば強制 10 進、'2' があれば強制指数表記、
+#   'L' があれば値は log10（10^v を整形）。
+sub _pgaxis_fmt {
+    my ($v, $opt, $logaxis) = @_;
+    if ($logaxis) {
+        my $a = 10 ** $v;
+        return _pgaxis_fmt($a, ($opt =~ /2/ ? '2' : ''), 0);
+    }
+    return sprintf('%.2e', $v) if $opt =~ /2/;
+    return sprintf('%g',   $v) if $opt =~ /1/;
+    # auto: 大きすぎ/小さすぎは指数、それ以外は %g
+    my $a = abs($v);
+    return sprintf('%.2e', $v) if $a != 0 && ($a >= 1e5 || $a < 1e-4);
+    return sprintf('%g', $v);
+}
+
+# cpgaxis(opt, x1,y1,x2,y2, v1,v2, step, nsub, dmajl,dmajr, fmin, disp, orient)
+#   (x1,y1)-(x2,y2) を結ぶ 1 本の軸を描く。軸に沿う量は始点で v1、
+#   終点で v2。step=大目盛り間隔（<=0 で自動）、nsub=大目盛り間の
+#   小分割数（<=0 で自動=2）。dmajl/dmajr=大目盛りの左/右長さ、
+#   fmin=小目盛り長さ（大目盛りに対する割合）、disp=ラベル変位、
+#   orient=ラベル回転角。opt:
+#     'N' 数値ラベルを描く / '1' 強制 10 進 / '2' 強制指数 / 'L' 対数軸
+sub cpgaxis {
+    my ($opt, $x1,$y1,$x2,$y2, $v1,$v2, $step, $nsub,
+        $dmajl,$dmajr, $fmin, $disp, $orient) = @_;
+    $opt    //= 'N';
+    $dmajl  //= 0.5;
+    $dmajr  //= 0.0;
+    $fmin   //= 0.5;
+    $disp   //= 0.8;
+    $orient //= 0;
+    my $ax = _ax();
+    $ax->{_pgenv_called} = 1;
+
+    # 軸線本体
+    cpgline(2, [$x1, $x2], [$y1, $y2]);
+
+    my $span = $v2 - $v1;
+    return if $span == 0;
+    my $logaxis = ($opt =~ /L/i) ? 1 : 0;
+    my $wantN   = ($opt =~ /N/i) ? 1 : 0;
+
+    # step 自動決定（~5 大目盛りを狙う nice step）
+    if (!defined $step || $step <= 0) {
+        my $absr = abs($span);
+        my $exp  = floor(log($absr) / log(10));
+        my $unit = 10 ** $exp;
+        my $n    = $absr / $unit;               # 1..10
+        my $nice = $n <= 2 ? 0.5 : $n <= 5 ? 1 : 2;
+        $step    = $nice * $unit;
+        $step    = $absr / 5 if $step <= 0;
+    }
+    $step = abs($step);
+
+    $nsub = 2 if !defined $nsub || $nsub <= 0;
+
+    # 値グリッド上で [vmin,vmax] を覆う大目盛りインデックス範囲を整数で確定
+    # （浮動小数の累積誤差を避ける）
+    my ($vmin, $vmax) = $v1 < $v2 ? ($v1, $v2) : ($v2, $v1);
+    my $i0 = ceil ($vmin / $step - 1e-9);
+    my $i1 = floor($vmax / $step + 1e-9);
+
+    for my $i ($i0 .. $i1) {
+        my $vmaj = $i * $step;
+        my $frac = ($vmaj - $v1) / $span;       # 0..1
+        next if $frac < -1e-9 || $frac > 1 + 1e-9;
+        my $label = $wantN ? _pgaxis_fmt($vmaj, $opt, $logaxis) : '';
+        cpgtick($x1,$y1,$x2,$y2, $frac, $dmajl,$dmajr, $disp, $orient, $label);
+
+        # 小目盛り（この大目盛りから次の大目盛りまでを nsub 分割）
+        if ($nsub > 1) {
+            for my $k (1 .. $nsub - 1) {
+                my $vm = $vmaj + $k * $step / $nsub;
+                last if $vm > $vmax + 1e-9;
+                my $fm = ($vm - $v1) / $span;
+                next if $fm < -1e-9 || $fm > 1 + 1e-9;
+                cpgtick($x1,$y1,$x2,$y2, $fm,
+                        $dmajl * $fmin, $dmajr * $fmin, 0, 0, '');
+            }
+        }
+    }
+}
+
 sub cpgask  { my ($f) = @_; $_state{ask} = $f }
 sub cpgrnd {
     my ($x, $nsub) = @_;
@@ -1311,6 +1434,7 @@ sub cpglcur { return 0 }
         qcf qfs qcr qcs qah qhs qinf
         iden ask rnd rnge numb
         band curs ncur lcur vp
+        axis tick
     );
 
     for my $stem (@cpg_stems) {

@@ -54,7 +54,7 @@ PDL::Graphics::Cairo (P:G:C) is a high-level 2D plotting library for [PDL](https
 
 ### Compatibility layers
 - matplotlib API (`line`, `scatter`, `set_xlim`, `tick_params`, ...)
-- PGPLOT API (`env`, `line`, `points`, `pgbox`, ...)
+- PGPLOT API (`env`, `line`, `points`, `pgbox`, `pgaxis`, `pgtick`, ...)
 - gnuplot-style API (`:gnuplot` import tag)
 
 ---

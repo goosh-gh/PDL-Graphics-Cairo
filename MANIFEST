@@ -126,6 +126,9 @@ t/29_fillstyle_where.t
 t/30_polar.t
 t/31_tick_params_pixel_verify.t
 t/32_tight_layout_gap.t
+t/33_scene_export.t
+t/34_label_geom.t
+t/35_pgplot_compat.t
 tools/demo_gs3d_electrodes.pl
 tools/verify_gs3d.pl
 tools/verify_gs3d_projection.pl
