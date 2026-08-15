@@ -20,6 +20,11 @@
 #   perl tools/demo_gs3d_nyhead.pl --elc ~/src/NYHead/standard_1020.elc    # 実 .elc で正確配置(推奨)
 #   perl tools/demo_gs3d_nyhead.pl --elc ~/src/NYHead/standard_1020.elc --snap   # 頭皮にスナップ表示
 #   PDLCAIRO_DEBUG=1 perl tools/demo_gs3d_nyhead.pl --surf /sa/cortex75K   # front面数/塗り本数を表示
+#   perl tools/demo_gs3d_nyhead.pl --lod --no-electrodes                  # 皮質: ドラッグ中は粗(cortex2K)/静止で細(cortex10K)
+#   perl tools/demo_gs3d_nyhead.pl --lod --coarse /sa/cortex1K --fine /sa/cortex5K --no-electrodes  # LOD の解像度を指定
+#   perl tools/demo_gs3d_nyhead.pl --surf /sa/cortex10K --render zbuffer --no-electrodes  # z-buffer+Gouraud(面塗り, 要 giza-server zbuffer 対応)
+#   perl tools/demo_gs3d_nyhead.pl --no-recenter        # 脳を原点中心のまま(既定は表示メッシュ重心を pivot=画面中心)
+#   perl tools/demo_gs3d_nyhead.pl --no-thick-fill      # 面塗りを 1px 線に(拡大時の横縞対策を無効化)
 #
 # 操作: ドラッグ=回転、面クリック=シード追加(色分け+HO area 名ラベル)、
 #       'u'=直前シード取消、'c'=全消去、'r'=視点リセット。マウスを面上に載せると
@@ -60,6 +65,11 @@ my %o = (
     threshold  => 0.25,       # --threshold t: 正規化値 t<閾値 は灰(未活動=解剖色)、以上でカラー
     base_grey  => 0.55,       # --base-grey g: 灰ベースの albedo(0..1; Lambert 陰影が別途乗る)
     colorbar   => 1,          # 源パワー時: 画面右にカラーバー HUD(cmap/オーバレイと一致)。--no-colorbar で消す
+    thick_fill => 1,          # scanline を高さ ceil(step)px の bar で敷き拡大時の横縞を消す。--no-thick-fill で 1px 線
+    recenter   => 1,          # 表示メッシュ重心を pivot に(脳を画面中心+回転軸へ)。--no-recenter で原点中心
+    lod        => 0,          # --lod: ドラッグ中=粗メッシュ, 静止=細メッシュ(cortex のみ)
+    coarse     => undef,      # --lod ドラッグ用 cortexNK パス(既定 /sa/cortex2K)
+    fine       => undef,      # --lod 静止用 cortexNK パス(既定: --surf が cortexNK ならそれ, なければ /sa/cortex10K)
 );
 GetOptions(
     'mat=s'       => \$o{mat},
@@ -85,6 +95,11 @@ GetOptions(
     'colorbar!'   => \$o{colorbar},      # --colorbar / --no-colorbar(画面右のカラーバー HUD)
     'width=i'     => \$o{width},
     'height=i'    => \$o{height},
+    'thick-fill!' => \$o{thick_fill},   # --thick-fill / --no-thick-fill(拡大時の横縞対策)
+    'recenter!'   => \$o{recenter},     # --recenter / --no-recenter(表示メッシュ重心を pivot)
+    'lod!'        => \$o{lod},          # --lod: adaptive LOD(drag=coarse, idle=fine)
+    'coarse=s'    => \$o{coarse},       # --lod drag 用 cortexNK パス(既定 /sa/cortex2K)
+    'fine=s'      => \$o{fine},         # --lod idle 用 cortexNK パス(既定 /sa/cortex10K)
 ) or die "bad args\n";
 -f $o{mat} or die "not found: $o{mat}\n  (--mat で場所を指定)\n";
 
@@ -199,6 +214,10 @@ sub load_cortex_lowres {
 }
 
 my ($V, $F);
+# --lod は cortex 前提(頭皮は LOD 不要)。--surf が cortex でなければ fine 相当へ寄せる。
+if ($o{lod} && $o{surf} !~ m{cortex(?:1|2|5|10)K/?$}) {
+    $o{surf} = $o{fine} // '/sa/cortex10K';
+}
 if ($o{surf} =~ m{cortex(?:1|2|5|10)K/?$}) {
     ($V, $F) = load_cortex_lowres($o{mat}, $o{surf});   # vc 無し・in_from で 75K から頂点解決
 } else {
@@ -240,6 +259,35 @@ my $scene = {
         fill_step => $o{wire} ? 4 : $o{fill_step},
     },
 };
+
+# ---- adaptive LOD(--lod): ドラッグ用の粗メッシュを追加ロード ----------------
+# 上で組んだ $scene->{mesh}(--surf/--fine)を idle(静止)表示に使い、ドラッグ中は
+# coarse に差し替える(GS3D の run が IDLE_SEC で自動切替、giza-server 無改変)。
+# pick/hover は fine で解決されるので、源パワー/forward 用の 75K 対応 @LOCAL_TO_75K は
+# fine のものを保つ: coarse ロードで一時的に上書きされるぶんを退避→復元する。
+my $coarse_mesh;
+if ($o{lod}) {
+    my @fine_map = @LOCAL_TO_75K;                          # fine の 75K 対応を退避
+    my $cpath = $o{coarse} // '/sa/cortex2K';
+    $cpath =~ m{cortex(?:1|2|5|10)K/?$}
+        or die "--coarse must be a cortexNK path (got $cpath)\n";
+    my ($Vc, $Fc) = load_cortex_lowres($o{mat}, $cpath);  # ここで @LOCAL_TO_75K は coarse に
+    @LOCAL_TO_75K = @fine_map;                             # fine に戻す(pick は fine で解決)
+    my $vc = pdl([
+        [ map { $_->[0] } @$Vc ], [ map { $_->[1] } @$Vc ], [ map { $_->[2] } @$Vc ],
+    ]);
+    my $fc = pdl([
+        [ map { $_->[0] } @$Fc ], [ map { $_->[1] } @$Fc ], [ map { $_->[2] } @$Fc ],
+    ])->long;
+    $coarse_mesh = {
+        verts   => $vc, faces => $fc,
+        color   => [0.82, 0.78, 0.80],
+        light   => [0.3, 0.45, 1.0],
+        ambient => 0.28,
+        winding => 'auto',
+        fill_step => $o{wire} ? 4 : $o{fill_step},
+    };
+}
 
 # ---- 源パワー・オーバレイ(--source-power) ----------------------------------
 # eLORETA/sLORETA の標準化源パワーで皮質頂点を着色する。nyhead_inverse.pl --out
@@ -550,6 +598,9 @@ my $drv = PDL::Graphics::Cairo::Driver::GS3D->new(
     width    => $o{width},
     height   => $o{height},
     zoom     => $o{zoom},
+    thick_fill => $o{thick_fill},
+    ($o{recenter} ? (pivot => [ $verts->average->list ]) : ()),
+    ($coarse_mesh ? (lod => { coarse => $coarse_mesh, fine => $scene->{mesh} }) : ()),
     on_pick  => $on_pick,
     on_hover => $on_hover,
 );
