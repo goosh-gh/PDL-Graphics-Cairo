@@ -38,7 +38,6 @@ use warnings;
 use Carp;
 use Exporter 'import';
 
-our $VERSION = '0.01';
 our @EXPORT_OK = qw(scene_to_obj scene_to_usda write_scene normalize_pdl_scene);
 
 # 単位八面体(中心原点・半径1)。verts 順: +X -X +Y -Y +Z(top) -Z(bot)。

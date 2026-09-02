@@ -18,7 +18,6 @@ use warnings;
 use Carp;
 use PDL::Graphics::Cairo::LabelGeom qw(tessellate_text billboard_tris);
 
-our $VERSION = '0.01';
 
 # ----------------------------------------------------------------------------
 # text_to_contours($text, %opt) -> \@contours

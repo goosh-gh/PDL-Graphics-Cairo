@@ -49,7 +49,6 @@ use PDL::Graphics::Cairo qw(figure);
 use POSIX qw(ceil floor);
 use Exporter 'import';
 
-our $VERSION = '0.1';
 
 #
 

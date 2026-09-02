@@ -58,7 +58,6 @@ use strict;
 use warnings;
 use parent 'PDL::Graphics::Cairo::Driver::GS';
 
-our $VERSION = '0.2';   # <- Cairo.pm 本体の版表記に合わせて調整
 
 use PDL;
 use PDL::Basic qw(sequence);

@@ -23,6 +23,8 @@ PDL::Graphics::Cairo (P:G:C) is a high-level 2D plotting library for [PDL](https
 - Inset axes: `inset_axes`
 - Annotations: `annotate`, `axhline`, `axvline`, `axhspan`, `axvspan`, `text`
 - Multi-line text: `text()` splits on `\n` with `halign` (`left`/`right`/`center`), `valign` (`top`/`middle`/`bottom`), and `line_spacing`; rotated blocks stack correctly (`angle=0` vertical, `angle=90` side-by-side). Custom y-tick labels (e.g. `"name\n(scale)"`) reserve left margin from their longest line so `tight_layout` does not clip them
+- `set_aspect('equal', $anchor)` — force equal data aspect (square pixels per data unit). `$anchor` places the freed space when the box is not square: `C` centre (default, back-compatible), `W`/`E` left/right, `N`/`S` top/bottom — e.g. `set_aspect('equal', 'W')` keeps the plot flush-left so a colour bar hangs tight against it
+- An `axis('off')` panel reserves no tick/label/frame margin, so it packs flush against its neighbours (e.g. a round topomap between two line panels sits with almost no side gap)
 - `scatter` marker styles: `o s ^ v < > d + x p h * P X` (14 styles, covering most matplotlib marker shorthands)
 - `bar` / `barh` error bars (`yerr`, symmetric or `yerr_low`/`yerr_high` for asymmetric) and grouped bars (call `bar()` multiple times with shifted `x` and a shared `width`, matplotlib-style)
 
@@ -36,7 +38,7 @@ PDL::Graphics::Cairo (P:G:C) is a high-level 2D plotting library for [PDL](https
 - Built-in colormaps: `viridis`, `plasma`, `jet`, `hot`, `cool`, `gray`, `RdBu`, `inferno`, `magma`, `coolwarm`
 - `ListedColormap` — discrete color lists
 - `Normalize`, `LogNorm`, `BoundaryNorm`, `TwoSlopeNorm` — data-to-color mapping
-- `colorbar(label => '...')` — colorbar with an optional title, placed on any side (`top`/`bottom`/`left`/`right`)
+- `colorbar(label => '...')` — colorbar with an optional title, placed on any side (`top`/`bottom`/`left`/`right`). The reserved margin is sized from the actual bar width, tick-label width and caption (not a fixed constant), so a thin bar takes little space. A colorbar normally needs a visible axis; set `$ax->{_colorbar_force} = 1` to draw one on an `axis('off')` panel (e.g. to hang a colour bar off a round topomap)
 - `pcolormesh` / `pcolor` — pseudocolor plots on a non-uniform grid (unlike `imshow`, cell boundaries don't need to be equally spaced)
 
 ### Output
@@ -438,7 +440,7 @@ Active development. matplotlib API coverage:
 | Category | Status |
 |---|---|
 | Plot types | ✅ 20+ types incl. hexbin, specgram, contour/contourf, pcolormesh, plot_date |
-| Axes decoration | ✅ tick_params, minor ticks, formatters, inset_axes |
+| Axes decoration | ✅ tick_params, minor ticks, formatters, inset_axes, `set_aspect` anchor, axis-off tight margins, content-aware colorbar margin |
 | Text & labels | ✅ multi-line `text()` with halign / valign / line_spacing; longest-line margin reservation for y-tick labels |
 | Layouts | ✅ GridSpec (height_ratios/width_ratios), subplot_mosaic, suptitle |
 | Colormaps | ✅ 12 built-in + ListedColormap |

@@ -29,7 +29,6 @@ package PDL::Graphics::Cairo::Mesh3D;
 use strict;
 use warnings;
 
-our $VERSION = '0.2';
 
 use Exporter 'import';
 our @EXPORT_OK = qw(

@@ -1587,18 +1587,21 @@ sub draw {
         # データ座標1単位あたりのピクセル数を揃える
         my $scale_x = $pix_w / $data_w;
         my $scale_y = $pix_h / $data_h;
+        my $anc = $self->{_aspect_anchor} // 'C';
         if ($scale_x > $scale_y) {
-            # x方向が広すぎる → 左右マージンを増やして縮める
+            # x方向が広すぎる → 余りを anchor 側でなく反対側へ寄せて縮める
             my $new_pix_w = $pix_h * $data_w / $data_h;
-            my $diff = ($pix_w - $new_pix_w) / 2;
-            $ml += $diff;
-            $mr -= $diff;
+            my $diff = ($pix_w - $new_pix_w);
+            if    ($anc eq 'W') { $mr -= $diff }             # 左寄せ(余りは右)
+            elsif ($anc eq 'E') { $ml += $diff }             # 右寄せ(余りは左)
+            else                { $ml += $diff/2; $mr -= $diff/2 }  # 中央(従来)
         } else {
-            # y方向が広すぎる → 上下マージンを増やして縮める
+            # y方向が広すぎる → 同様に上下で寄せる
             my $new_pix_h = $pix_w * $data_h / $data_w;
-            my $diff = ($pix_h - $new_pix_h) / 2;
-            $mt += $diff;
-            $mb -= $diff;
+            my $diff = ($pix_h - $new_pix_h);
+            if    ($anc eq 'N') { $mb -= $diff }             # 上寄せ(余りは下)
+            elsif ($anc eq 'S') { $mt += $diff }             # 下寄せ(余りは上)
+            else                { $mt += $diff/2; $mb -= $diff/2 }  # 中央(従来)
         }
     }
 
@@ -1722,7 +1725,7 @@ sub draw {
 
     # ---  ---
     $self->_draw_colorbar($backend, $ml,$mr,$mt,$mb)
-        if $self->_colorbar && !$self->{_axis_off};
+        if $self->_colorbar && (!$self->{_axis_off} || $self->{_colorbar_force});
 
     # ユーザ指定レンジ（または undef）を復元。次回 draw で autoscale を再解決させる。
     # ただし twin オブジェクト(twinx/twiny の戻り値)の場合はこの巻き戻しを
@@ -3871,8 +3874,11 @@ sub pcolor; *pcolor = \&pcolormesh;
 # set_aspect() — 'equal' or 
 # ==================================================================
 sub set_aspect {
-    my ($self, $asp) = @_;
+    my ($self, $asp, $anchor) = @_;
     $self->{_aspect} = $asp;
+    # 余った方向をどちら側に寄せるか。既定 'C'(中央寄せ=従来互換)。
+    # 'W'/'E'=左/右寄せ(横に余るとき), 'N'/'S'=上/下寄せ(縦に余るとき)。
+    $self->{_aspect_anchor} = $anchor if defined $anchor;
     return $self;
 }
 

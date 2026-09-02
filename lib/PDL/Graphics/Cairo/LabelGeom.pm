@@ -25,7 +25,6 @@ use warnings;
 use Carp;
 use Exporter 'import';
 
-our $VERSION = '0.01';
 our @EXPORT_OK = qw(tessellate tessellate_text billboard_tris label_to_world_tris signed_area);
 
 # ---- 符号付き面積(CCW>0) ----

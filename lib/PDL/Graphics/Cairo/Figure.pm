@@ -11,6 +11,37 @@ use Moo;
 use PDL::Graphics::Cairo::GridSpec;
 use PDL::Graphics::Cairo::Axes;
 use PDL::Graphics::Cairo::TextLayout qw(estimate_max_line_px);
+use PDL::Graphics::Cairo::Tick qw(nice_ticks);
+
+# カラーバーが必要とするマージン幅/高さ(px)を実寸見積り。固定 68/75/50 を置換。
+# 右/左: pad + バー幅 + 目盛りギャップ + 目盛りラベル実寸 + (回転ラベル分)。
+# 上/下: pad + バー幅 + 目盛り高 + (ラベル分)。過小見積りで切れないよう安全余裕を足す。
+sub _cbar_reserve {
+    my ($ax) = @_;
+    my $loc  = $ax->colorbar_location // 'right';
+    my $cw   = $ax->colorbar_width // 16;
+    my $pad  = $ax->colorbar_pad // 10;
+    my $lab  = $ax->colorbar_label // '';
+    my $cb   = $ax->_colorbar;
+    if ($loc eq 'right' || $loc eq 'left') {
+        my $tickw = 22;                                   # fallback
+        if (ref $cb eq 'HASH' && defined $cb->{vmin} && defined $cb->{vmax}) {
+            my @tk = eval { nice_ticks($cb->{vmin}, $cb->{vmax}, 5) };
+            my $mx = 0;
+            for my $v (@tk) {
+                my $s = eval { PDL::Graphics::Cairo::Axes::_fmt_tick($v) } // sprintf('%g',$v);
+                my $w = estimate_max_line_px($s, 9);
+                $mx = $w if $w > $mx;
+            }
+            $tickw = int($mx + 0.5) if $mx > 0;
+        }
+        my $labw = ($lab ne '') ? 18 : 0;                 # 回転ラベル(高さ≒幅)
+        return $pad + $cw + 7 + $tickw + 5 + $labw;
+    } else {                                              # top / bottom(横バー)
+        my $labh = ($lab ne '') ? 16 : 0;
+        return $pad + $cw + 4 + 14 + $labh;               # バー + 目盛り高 + ラベル
+    }
+}
 use PDL::Graphics::Cairo::Driver::Cairo;
 use PDL::Graphics::Cairo::Driver::Gnuplot;
 
@@ -611,6 +642,22 @@ sub tight_layout {
 
         # GridSpec Axes: position already set, just compute margins
         if ($gs_ax_set{$ax}) {
+            # 軸OFF: 目盛り/枠/ラベルを描かないのでマージン不要。カラーバー分のみ実寸確保。
+            if ($ax->{_axis_off}) {
+                my ($ml,$mr,$mt,$mb) = (2,2,2,2);
+                if ($ax->_colorbar) {
+                    my $loc = $ax->colorbar_location // 'right';
+                    my $res = _cbar_reserve($ax);
+                    if    ($loc eq 'right')  { $mr = $res }
+                    elsif ($loc eq 'left')   { $ml = $res }
+                    elsif ($loc eq 'top')    { $mt = $res }
+                    elsif ($loc eq 'bottom') { $mb = $res }
+                    else                     { $mr = $res }
+                }
+                $ax->margin_left($ml);  $ax->margin_right($mr);
+                $ax->margin_bottom($mb); $ax->margin_top($mt);
+                next;
+            }
             # find gs info
             my ($gsinfo) = grep { $_->{ax} == $ax } @{ $self->_gs_axes };
             my $gs   = $gsinfo->{gs};
@@ -637,12 +684,12 @@ sub tight_layout {
             # colorbar がylabel領域やfigure外にはみ出す不具合があった。
             if ($ax->_colorbar) {
                 my $cbloc = $ax->colorbar_location // 'right';
-                my $extra = ($ax->colorbar_label // '') ne '' ? 40 : 0; # label分の追加余白
-                if    ($cbloc eq 'right')  { $mr = 68 + $extra; }
-                elsif ($cbloc eq 'left')   { $ml += 75 + $extra; }
-                elsif ($cbloc eq 'top')    { $mt += 50 + $extra; }
-                elsif ($cbloc eq 'bottom') { $mb += 50 + $extra; }
-                else                       { $mr = 68 + $extra; }
+                my $res   = _cbar_reserve($ax);            # 固定68/75/50 → 実寸見積り
+                if    ($cbloc eq 'right')  { $mr = $res; }
+                elsif ($cbloc eq 'left')   { $ml += $res; }
+                elsif ($cbloc eq 'top')    { $mt += $res; }
+                elsif ($cbloc eq 'bottom') { $mb += $res; }
+                else                       { $mr = $res; }
             }
             # カスタム y 目盛りラベルが margin_left に収まるよう下限を確保
             # (主経路と同じ。tight_layout は描画前で text_width 実測不可)。

@@ -1,5 +1,11 @@
 Revision history for PDL-Graphics-Cairo
 
+0.2  2026-09-02
+    - set_aspect('equal', $anchor): W/E/N/S anchoring (default C, unchanged)
+    - axis('off') panels reserve no tick/label margin (tighter multi-panel layout)
+    - colorbar reserved margin sized from actual bar/tick/label width (was fixed)
+    - _colorbar_force: draw a colorbar on an axis('off') panel
+
 0.1  2026-07-11
     - New plotting features since 0.01 (see t/08-t/32 for coverage):
         * contour (Marching Squares) alongside contourf
