@@ -31,6 +31,7 @@ use Moo;
 use IO::Socket::UNIX;
 use POSIX ();
 use PDL::Graphics::Cairo::Driver::Cairo;
+use PDL::Graphics::Cairo::Interactive::Scrub;
 
 has width   => (is => 'rw', required => 1);   # rw: RESIZE 逆チャネルで更新する
 has height  => (is => 'rw', required => 1);
@@ -714,6 +715,377 @@ sub show {
 
     $sock->close;                          # CLOSE は送らない（窓を残す）
     return;
+}
+
+
+# ---------------------------------------------------------------------
+# show_grid_scrub — マルチ窓の対話セッション。
+#
+# 5x5 等のサブプロット図(親窓)を出し、サブプロットを *ダブルクリック* すると
+# そのセルだけを拡大した子窓を新規に開く。子窓でマウスを動かすと直近データ点の
+# (x,y)を右上に表示し、*ドラッグ*するとその点にマーカを描き、同じ潜時の縦線を
+# 親窓の全サブプロットに引く。
+#
+# 単一窓の show_interactive/run とは独立の経路(_run_windows)で、既存機能には触れ
+# ない。giza-server は各窓=各ソケットなので、複数ソケットを1つの select ループで
+# 多重化する。
+#
+# 必須オプション:
+#   grid_render => sub { my ($state,$w,$h)=@_; ...; return $figure }
+#       親窓(5x5等)の Figure を返す。$state->{_scrub_lat} が定義されていれば、
+#       ドライバが返り値の各 Axes に縦線(その潜時)を後付けする。
+#   cell_render => sub { my ($ax_idx,$state,$w,$h)=@_; ...; return $figure }
+#       ダブルクリックされたセル(親 Figure の axes_list インデックス)を単独 Axes
+#       のフルサイズ図として返す。ドライバがカーソル直近点のマーカと右上読み取り
+#       を後付けする。
+# 任意オプション:
+#   init         => \%state          共有状態(全窓で共有)
+#   zoom_size    => [w,h]            子窓のピクセルサイズ(既定=親と同じ)
+#   vline        => { color=>[r,g,b], lw=>.. }   親窓の潜時縦線スタイル
+#   marker       => { color=>[r,g,b], ms=>.., marker=>'o' }  子窓マーカ
+#   readout      => sub { my ($x,$y)=@_; return "x=..." }    右上テキスト整形
+#   cell_title   => sub { my ($ax_idx)=@_; return "Cell $ax_idx" }  子窓タイトル
+# ---------------------------------------------------------------------
+sub show_grid_scrub {
+    my ($self, %opt) = @_;
+    my $grid_render = $opt{grid_render}
+        or die "show_grid_scrub: grid_render => sub {...} が必要です\n";
+    my $cell_render = $opt{cell_render}
+        or die "show_grid_scrub: cell_render => sub {...} が必要です\n";
+
+    $self->_ensure_server;
+
+    my $state = $opt{init} // {};
+    my $wm = {
+        state       => $state,
+        grid_render => $grid_render,
+        cell_render => $cell_render,
+        zoom_w      => ($opt{zoom_size} && $opt{zoom_size}[0]) || $self->width,
+        zoom_h      => ($opt{zoom_size} && $opt{zoom_size}[1]) || $self->height,
+        vline       => $opt{vline}   || { color => [1,0,0], lw => 1.2 },
+        marker      => $opt{marker}  || { color => [1,0,0], ms => 7, marker => 'o' },
+        readout     => $opt{readout} || sub { sprintf("x=%.4g\ny=%.4g", $_[0], $_[1]) },
+        cell_title  => $opt{cell_title} || sub { "cell $_[0]" },
+        wins        => [],            # 全窓レコード
+        cells       => {},            # ax_idx => 子窓レコード(重複オープン防止)
+    };
+
+    # 親窓を開く
+    my $main = $self->_open_window($wm,
+        kind  => 'main',
+        w     => $self->width, h => $self->height,
+        title => $self->title,
+        render => sub { my ($win) = @_; $self->_paint_main($wm, $win) },
+    );
+    $wm->{main} = $main;
+
+    $self->_run_windows($wm);
+
+    # 後始末: ソケットを閉じる(CLOSE は送らない=窓は残す)
+    for my $w (@{ $wm->{wins} }) {
+        eval { $w->{sock}->close } if $w->{sock};
+    }
+    return;
+}
+
+# 新しい giza-server 窓を1つ開いてレコードを返す。NEWWIN→初期フレーム送信まで。
+sub _open_window {
+    my ($self, $wm, %a) = @_;
+    require IO::Socket::UNIX;
+    my $sock = IO::Socket::UNIX->new(
+        Type => IO::Socket::UNIX::SOCK_STREAM(), Peer => _sock_path())
+        or die "Driver::GS: connect " . _sock_path() . ": $!\n";
+    $sock->autoflush(1);
+    binmode($sock);
+
+    my $win = {
+        sock => $sock, seq => 0,
+        kind => $a{kind}, ax_idx => $a{ax_idx},
+        w => $a{w}, h => $a{h},
+        render => $a{render},
+        cursor => undef, last_fig => undef,
+        dirty => 0, await_ack => 0, alive => 1,
+    };
+
+    _send_msg($sock, GSP_MSG_NEWWIN, pack('L L', $a{w}, $a{h}), $win->{seq}++);
+    # NEWWIN の ACK を1つ待つ(この時点では他窓トラフィックはまだ無いので単純待ち)
+    $self->_await_one_ack($win, 'NEWWIN');
+    _send_msg($sock, GSP_MSG_TITLE, $a{title} // '', $win->{seq}++);  # fire-and-forget
+
+    # 初期フレーム(装飾なし=カーソル未設定)。last_fig に描画済み図を保持し、
+    # 以後 image_frac_to_data(プロット枠が確定した図が必要)に使う。
+    my $fig = $win->{render}->($win);
+    $win->{last_fig} = $fig;
+    _send_msg($sock, GSP_MSG_PNG, $self->_figure_to_png($fig), $win->{seq}++);
+    $win->{await_ack} = 1;
+
+    push @{ $wm->{wins} }, $win;
+    return $win;
+}
+
+# 単発 ACK 待ち(窓オープン直後専用)。ACK 以外(まず来ない)は読み捨てる。
+sub _await_one_ack {
+    my ($self, $win, $what) = @_;
+    while (1) {
+        my $hdr = $self->_sysread_exact($win->{sock}, 16);
+        die "Driver::GS: closed waiting $what ACK\n" unless defined $hdr;
+        my ($magic, undef, $type, undef, $len) = unpack('L C C S L', $hdr);
+        die "Driver::GS: bad magic ($what)\n" unless $magic == GSP_MAGIC;
+        my $pl = $len ? $self->_sysread_exact($win->{sock}, $len) : '';
+        return if $type == GSP_MSG_ACK;
+    }
+}
+
+# ---------------------------------------------------------------------
+# _run_windows — 複数窓を1ループで多重化。
+#   フロー制御: 1窓につき PNG は同時1枚(await_ack)。窓が dirty かつ ACK 待ちで
+#   なければ描画→送信→await_ack=1。ACK 到着で await_ack=0、まだ dirty なら再描画。
+#   これで速いドラッグでも中間フレームは自然に畳まれ、窓間で相互ブロックしない。
+# ---------------------------------------------------------------------
+sub _run_windows {
+    my ($self, $wm) = @_;
+    require IO::Select;
+
+    while (1) {
+        # 生きている窓が親を含め全滅したら終了
+        my @live = grep { $_->{alive} } @{ $wm->{wins} };
+        last unless @live;
+        last unless $wm->{main}{alive};       # 親を閉じたらセッション終了
+
+        my $sel = IO::Select->new(map { $_->{sock} } @live);
+        my @ready = $sel->can_read(0.05);
+
+        for my $s (@ready) {
+            my $win = _win_by_sock($wm, $s) or next;
+            my $hdr = $self->_sysread_exact($s, 16);
+            unless (defined $hdr) { $self->_close_window($win); next; }
+            my ($magic, undef, $type, undef, $len) = unpack('L C C S L', $hdr);
+            unless ($magic == GSP_MAGIC) { warn "Driver::GS: bad magic in run\n"; next; }
+            my $pl = $len ? $self->_sysread_exact($s, $len) : '';
+            if ($len && !defined $pl) { $self->_close_window($win); next; }
+            $self->_dispatch($wm, $win, $type, $pl // '');
+        }
+
+        # ドラッグ中の間引き: ドラッグ中は _cell_cursor が「操作中セル + 親」だけ
+        # dirty にし、他セルは _scrub_stale フラグに保留する。イベントが途切れた
+        # (= ボタン解放 or 一時停止で select がタイムアウト)瞬間にだけ、保留して
+        # いた全セルを最新の選択潜時へ追いつかせる。連続した速いドラッグ中は
+        # イベントが切れ目なく届くのでここは走らず、他セルは再描画されない。
+        if (!@ready && $wm->{_scrub_stale}) {
+            $wm->{_scrub_stale} = 0;
+            for my $w (@{ $wm->{wins} }) {
+                $w->{dirty} = 1 if $w->{alive} && ($w->{kind} // '') eq 'cell';
+            }
+        }
+
+        # dirty かつ ACK 非待ちの窓を描画
+        for my $win (grep { $_->{alive} } @{ $wm->{wins} }) {
+            next unless $win->{dirty} && !$win->{await_ack};
+            $win->{dirty} = 0;
+            my $fig = $win->{render}->($win);
+            $win->{last_fig} = $fig;
+            _send_msg($win->{sock}, GSP_MSG_PNG,
+                      $self->_figure_to_png($fig), $win->{seq}++);
+            $win->{await_ack} = 1;
+        }
+    }
+}
+
+sub _win_by_sock {
+    my ($wm, $s) = @_;
+    for my $w (@{ $wm->{wins} }) { return $w if $w->{sock} && $w->{sock} == $s }
+    return undef;
+}
+
+sub _close_window {
+    my ($self, $win) = @_;
+    $win->{alive} = 0;
+    eval { $win->{sock}->close } if $win->{sock};
+    $win->{sock} = undef;
+}
+
+# 1メッセージを窓種別に応じて処理。
+sub _dispatch {
+    my ($self, $wm, $win, $type, $pl) = @_;
+
+    if ($type == GSP_MSG_ACK) {
+        $win->{await_ack} = 0;
+    }
+    elsif ($type == GSP_MSG_RESIZE) {
+        my ($w, $h) = unpack('L L', $pl);
+        $win->{w} = $w if $w; $win->{h} = $h if $h;
+        $win->{dirty} = 1;
+    }
+    elsif ($type == GSP_MSG_CURSOR || $type == GSP_MSG_PICK) {
+        my ($fx, $fy, $btn) = unpack('f< f< C', $pl);
+        if ($win->{kind} eq 'main') {
+            # 親窓: ダブルクリック(btn の 0x10 ビット)だけ拾ってセル拡大
+            if ($type == GSP_MSG_PICK && ($btn & 0x10)) {
+                $self->_dblclick_main($wm, $win, $fx, $fy);
+            }
+        } else {
+            $self->_cell_cursor($wm, $win, $type, $fx, $fy, $btn);
+        }
+    }
+    elsif ($type == GSP_MSG_ZOOM) {
+        # v1 では未使用(親のネイティブ zoom/pan は使わない前提)。読み捨て済み。
+    }
+    elsif ($type == GSP_MSG_SAVEREQ) {
+        my ($fmt) = unpack('C', $pl);
+        $self->_save_window($win, $fmt);
+    }
+    elsif ($type == GSP_MSG_ERR) {
+        warn "Driver::GS: server error: $pl\n";
+    }
+    # 未知型は読み捨て済み
+}
+
+# 親窓ダブルクリック → どのセルか判定 → 子窓オープン。
+sub _dblclick_main {
+    my ($self, $wm, $win, $fx, $fy) = @_;
+    my $fig = $win->{last_fig} or return;
+    my $idx; my $i = 0;
+    for my $ax (@{ $fig->axes_list }) {
+        my ($xd, $yd) = $ax->image_frac_to_data($fx, $fy);
+        if (defined $xd) { $idx = $i; last }
+        $i++;
+    }
+    return unless defined $idx;
+    return if $wm->{cells}{$idx} && $wm->{cells}{$idx}{alive};  # 既に開いている
+
+    my $cell = $self->_open_window($wm,
+        kind   => 'cell', ax_idx => $idx,
+        w      => $wm->{zoom_w}, h => $wm->{zoom_h},
+        title  => $wm->{cell_title}->($idx),
+        render => sub { my ($w) = @_; $self->_paint_cell($wm, $w) },
+    );
+    $wm->{cells}{$idx} = $cell;
+}
+
+# 子窓カーソル/ドラッグ。
+sub _cell_cursor {
+    my ($self, $wm, $win, $type, $fx, $fy, $btn) = @_;
+    my $fig = $win->{last_fig} or return;
+    my $ax  = $fig->axes_list->[0] or return;
+    my ($xd, $yd) = $ax->image_frac_to_data($fx, $fy);
+    return unless defined $xd;                 # プロット枠外は無視
+
+    my $is_drag = ($type == GSP_MSG_PICK) || ($btn & 0x0F);  # クリック or ボタン保持
+    $win->{cursor} = { xd => $xd, yd => $yd };  # ライブ位置(選択前 hover の読み取り用)
+
+    if ($is_drag) {
+        # ドラッグ/クリック = 選択確定。潜時は「共有」状態へ。
+        $wm->{state}{_scrub_lat} = $xd;
+        # ドラッグ中の即時更新は「操作中のこのセル + 親窓(縦線)」だけに絞る。
+        # 他のセル窓は _scrub_stale に保留し、ドラッグが途切れた時(解放/一時停止)に
+        # _run_windows のアイドル検出でまとめて追いつかせる(窓が増えても軽い)。
+        $win->{dirty} = 1;
+        $wm->{main}{dirty} = 1 if $wm->{main} && $wm->{main}{alive};
+        $wm->{_scrub_stale} = 1;
+    }
+    elsif (!defined $wm->{state}{_scrub_lat}) {
+        # 選択前の hover のみ読み取りが動く → この窓だけ再描画。
+        # 選択後の hover は表示不変(読み取り・マーカは選択潜時で固定)なので
+        # 再描画しない(= マウス解放後に動かしても値をキープ + 無駄な再描画抑制)。
+        $win->{dirty} = 1;
+    }
+}
+
+# 親窓の描画: grid_render の返り Figure に、潜時縦線を全 Axes へ後付け。
+# render コールバックが Axes に _figure 後ろ盾を張らない層(PGPLOT 互換など、
+# _build_panels は axes_list には積むが $ax->_figure を設定しない)でも
+# image_frac_to_data / data_to_image_frac が使えるよう、図の全 Axes に
+# 後ろ盾を張る。既に張ってあるものは触らない。
+sub _bind_axes {
+    my ($self, $fig) = @_;
+    for my $ax (@{ $fig->axes_list }) {
+        $ax->_figure($fig) unless $ax->_figure;
+    }
+    return $fig;
+}
+
+sub _paint_main {
+    my ($self, $wm, $win) = @_;
+    my $fig = $wm->{grid_render}->($wm->{state}, $win->{w}, $win->{h});
+    $self->_bind_axes($fig);
+    my $lat = $wm->{state}{_scrub_lat};
+    if (defined $lat) {
+        my $vs = $wm->{vline};
+        for my $ax (@{ $fig->axes_list }) {
+            $ax->axvline($lat, color => $vs->{color}, lw => $vs->{lw});
+        }
+    }
+    return $fig;
+}
+
+# 子窓の描画: cell_render の返り Figure に、直近点マーカ(ドラッグ時)と
+# 右上読み取りテキストを後付け。2パス(1回目でプロット枠確定→座標変換、
+# 2回目で装飾込み)。
+sub _paint_cell {
+    my ($self, $wm, $win) = @_;
+    my $fig = $wm->{cell_render}->($win->{ax_idx}, $wm->{state}, $win->{w}, $win->{h});
+    $self->_bind_axes($fig);
+
+    my $lat = $wm->{state}{_scrub_lat};        # 共有選択潜時(全窓で同一)
+    my $cur = $win->{cursor};
+    # 選択も(選択前の)カーソルも無ければ素の図
+    return $fig unless defined $lat || $cur;
+
+    my $ax = $fig->axes_list->[0] or return $fig;
+
+    # このセルのライン標本を集める
+    my @lines = grep { ($_->{type}//'') eq 'line' } @{ $ax->_queue };
+    return $fig unless @lines;
+
+    my ($xmin, $xmax) = ($ax->xmin, $ax->xmax);
+    my ($ymin, $ymax) = ($ax->ymin, $ax->ymax);
+    my $xr = (defined $xmin && defined $xmax) ? ($xmax - $xmin) : 1;
+    my $yr = (defined $ymin && defined $ymax) ? ($ymax - $ymin) : 1;
+
+    # 読み取り位置: 選択があれば「選択潜時(固定・全窓共有)」、無ければライブカーソル。
+    # → マウス解放後は選択潜時のまま。動かしても右上のピーク値をキープする。
+    my $read_x = defined $lat ? $lat : $cur->{xd};
+
+    # 右上読み取り(x のみスナップ=このセルの波形の read_x での値)。
+    {
+        my ($li, $pi, $xa, $ya) =
+            PDL::Graphics::Cairo::Interactive::Scrub::nearest_on_lines(
+                \@lines, $read_x, undef, $xr, $yr);
+        if (defined $xa) {
+            my $tx = (defined $xmax) ? $xmax : $xa;
+            my $ty;
+            if ($ax->{_y_reversed}) { $ty = (defined $ymin) ? $ymin : $ya; }
+            else                    { $ty = (defined $ymax) ? $ymax : $ya; }
+            $ax->text($tx, $ty, $wm->{readout}->($xa, $ya),
+                      ha => 'right', va => 'top', fontsize => 11, color => [0.1,0.1,0.1]);
+        }
+    }
+
+    # マーカ = 共有選択潜時。全セル窓が同じ潜時に赤丸を出す(後から開いた窓も
+    # 即座に表示される)。親窓の縦線とも必ず同じ潜時を指す。
+    if (defined $lat) {
+        my ($li, $pi, $xa, $ya) =
+            PDL::Graphics::Cairo::Interactive::Scrub::nearest_on_lines(
+                \@lines, $lat, undef, $xr, $yr);
+        if (defined $xa) {
+            my $ms = $wm->{marker};
+            $ax->line([$xa], [$ya],
+                      marker => $ms->{marker} // 'o',
+                      ms     => $ms->{ms}     // 7,
+                      color  => $ms->{color}  // [1,0,0],
+                      lw     => 0);
+        }
+    }
+    return $fig;
+}
+
+# 子/親窓の File>Save(PDF/SVG)。窓の最新 Figure をベクタ化して返送。
+sub _save_window {
+    my ($self, $win, $fmt) = @_;
+    my $fig = $win->{last_fig} or return;
+    my $ext = ($fmt == GSP_SAVE_FMT_SVG) ? 'svg' : 'pdf';
+    my $bytes = $self->_figure_to_vector($fig, $ext);
+    _send_msg($win->{sock}, GSP_MSG_SAVEDATA, pack('C', $fmt) . $bytes, $win->{seq}++);
 }
 
 1;

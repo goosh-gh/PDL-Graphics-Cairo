@@ -1,5 +1,18 @@
 Revision history for PDL-Graphics-Cairo
 
+0.3  2026-09-06
+    - Driver::GS: show_grid_scrub — multi-window interactive scrub on giza-server:
+      double-click a subplot opens a zoomed child window; drag places a latency
+      marker and draws a vertical line at that latency in every parent subplot;
+      the selection (marker + read-out) is kept after release and shared across
+      all open child windows. macOS (Cocoa) giza-server only.
+    - Interactive::Scrub: Cairo-free nearest-point / latency helper (t/36)
+    - PGPLOT: multi-panel order follows the sign of NXSUB (>0 row-major default,
+      <0 column-major); cpgsubp/cpgbeg/cpgpage/cpgpanl share one order (t/37)
+    - Axes: image_frac_to_data / data_to_image_frac fall back to the autoscale
+      range when no explicit xlim/ylim is set (fixes cursor->data mapping on
+      auto-ranged axes)
+
 0.2  2026-09-02
     - set_aspect('equal', $anchor): W/E/N/S anchoring (default C, unchanged)
     - axis('off') panels reserve no tick/label margin (tighter multi-panel layout)

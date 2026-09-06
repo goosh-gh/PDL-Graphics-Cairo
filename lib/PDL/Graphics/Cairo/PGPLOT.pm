@@ -142,6 +142,7 @@ my %_state = (
     height       => 500,
     nxsub        => 1,
     nysub        => 1,
+    col_major    => 0,   # NXSUB<0 で 1(列優先)。既定 0=行優先(PGPLOT標準)
     panel_idx    => 0,
     #
 
@@ -451,6 +452,16 @@ sub _apply_pgplot_margins {
     }
 }
 
+# 物理パネル (col,row 0-based) → 格納インデックス。順序は NXSUB 符号(col_major)に
+# 準拠。_build_panels の格納順と cpgpanl のアドレッシングをこの1関数に集約して
+# 両者の食い違い(旧: 格納=列優先 / cpgpanl=行優先)を無くす。
+sub _panel_index {
+    my ($col, $row) = @_;
+    my $nx = abs($_state{nxsub} || 1) || 1;
+    my $ny = abs($_state{nysub} || 1) || 1;
+    return $_state{col_major} ? ($col * $ny + $row) : ($row * $nx + $col);
+}
+
 sub _build_panels {
     my $nx  = abs($_state{nxsub} || 1) || 1;
     my $ny  = abs($_state{nysub} || 1) || 1;
@@ -476,12 +487,14 @@ sub _build_panels {
         push @{ $_state{axes} }, $ax;
         push @{ $fig->{axes_list} }, $ax;
     } else {
-        # PGPLOT column-major:
-        #   idx=0 → col=0,row=0  idx=1 → col=0,row=1  ...
-        #   idx=ny → col=1,row=0  ...
+        # パネルの格納/ページ送り順は PGPLOT の NXSUB 符号に従う:
+        #   NXSUB>0 (col_major=0) → 行優先(左→右, 上→下)  [PGPLOT 既定]
+        #   NXSUB<0 (col_major=1) → 列優先(上→下, 左→右)
+        # 物理配置(fig_x/fig_y)は同じグリッド。idx→(col,row) の対応だけが変わる。
         for my $idx (0..$nx*$ny-1) {
-            my $col = int($idx / $ny);
-            my $row = $idx % $ny;
+            my ($col, $row);
+            if ($_state{col_major}) { $col = int($idx / $ny); $row = $idx % $ny; }
+            else                    { $col = $idx % $nx;      $row = int($idx / $nx); }
             my $ax  = PDL::Graphics::Cairo::Axes->new(
                 width  => $cw,
                 height => $ch,
@@ -526,7 +539,8 @@ sub cpgopen {
 sub cpgbeg {
     my ($unit, $file, $nxsub, $nysub) = @_;
     $nxsub //= 1; $nysub //= 1;
-    # PGPLOT  → 
+    # PGPLOT: NXSUB<0 → 列優先。符号を col_major に控えてから絶対値を取る。
+    $_state{col_major} = ($nxsub < 0) ? 1 : 0;
     $nxsub = abs($nxsub) || 1;
     $nysub = abs($nysub) || 1;
     $_state{nxsub} = $nxsub;
@@ -590,6 +604,8 @@ sub cpgpage {
 
 sub cpgsubp {
     my ($nxsub, $nysub) = @_;
+    # PGPLOT: NXSUB<0 → パネルを列優先で使う。|NXSUB| が分割数。
+    $_state{col_major} = ($nxsub < 0) ? 1 : 0;
     $_state{nxsub} = abs($nxsub) || 1;
     $_state{nysub} = abs($nysub) || 1;
     _build_panels();
@@ -597,8 +613,8 @@ sub cpgsubp {
 
 sub cpgpanl {
     my ($ix, $iy) = @_;
-    my $nx  = $_state{nxsub};
-    my $idx = ($iy - 1) * $nx + ($ix - 1);
+    # 物理パネル(列 ix, 行 iy)→格納index。順序は _build_panels と同一規約。
+    my $idx = _panel_index($ix - 1, $iy - 1);
     $_state{panel_idx}  = $idx;
     $_state{current_ax} = $_state{axes}[$idx];
 }

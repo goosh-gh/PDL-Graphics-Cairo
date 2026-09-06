@@ -45,6 +45,7 @@ PDL::Graphics::Cairo (P:G:C) is a high-level 2D plotting library for [PDL](https
 - PNG (via `PDL::IO::PNG` or Cairo), PDF, SVG
 - Interactive display via `giza-server` (persistent window with tabs, sliders, resize, cursor/pick). Slider values arrive normalized `[0,1]` (the client assigns each slider's meaning); `show_interactive(init => { 0 => ..., 1 => ... })` sets each slider's initial thumb position.
 - Interactive **3D mesh + point viewer** via `Driver::GS3D` (see [3D](#3d-drivergs3d) below) — triangle mesh surface (z-buffer Gouraud shading) with point markers, quaternion trackball rotation, wheel zoom; **macOS (Cocoa)** viewer (the Linux Xlib viewer does not render the 3D mesh)
+- Interactive **grid scrub** via `show_grid_scrub` (`Driver::GS`) — double-click a subplot to open a zoomed child window; drag on the trace to mark that latency, draw a vertical line at the same latency in every parent subplot, and read out the point; the selection is kept after release and shared across all open child windows. **macOS (Cocoa)** `giza-server` only (needs a build that reports 2D double-click and button-drag events)
 - Inline display in `App::PDL::Notebook` (via `$fig->to_inline`)
 
 ### Downsampling
@@ -56,7 +57,7 @@ PDL::Graphics::Cairo (P:G:C) is a high-level 2D plotting library for [PDL](https
 
 ### Compatibility layers
 - matplotlib API (`line`, `scatter`, `set_xlim`, `tick_params`, ...)
-- PGPLOT API (`env`, `line`, `points`, `pgbox`, `pgaxis`, `pgtick`, ...)
+- PGPLOT API (`env`, `line`, `points`, `pgbox`, `pgaxis`, `pgtick`, `subp`/`panl`/`page`, ...) — multi-panel order follows the sign of `NXSUB` (`> 0` row-major, `< 0` column-major)
 - gnuplot-style API (`:gnuplot` import tag)
 
 ---
@@ -405,6 +406,7 @@ PDL::Graphics::Cairo        ← this library
 ├── Driver::Cairo           ← Cairo surface rendering (PNG/PDF/SVG)
 ├── Driver::GS              ← giza-server interactive display (2D)
 ├── Driver::GS3D            ← giza-server interactive 3D mesh surface + point cloud (trackball)
+├── Interactive::Scrub      ← nearest-point / latency helper for show_grid_scrub
 ├── ColorMap                ← built-in colormaps
 ├── ListedColormap          ← discrete color lists
 ├── GridSpec                ← non-uniform subplot layout (height_ratios, width_ratios)

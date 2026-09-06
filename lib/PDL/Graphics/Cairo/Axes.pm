@@ -4417,8 +4417,14 @@ sub image_frac_to_data {
     if ($px < $ml || $px > $mr || $py < $mt || $py > $mb) {
         return (undef, undef);
     }
-    my ($xmin, $xmax) = ($self->xmin // 0, $self->xmax // 1);
-    my ($ymin, $ymax) = ($self->ymin // 0, $self->ymax // 1);
+    # 実効レンジ: 明示 xlim があればそれ、無ければ autoscale 値(_xmin_auto)。
+    # draw() 完了後は xmin/xmax がユーザ指定値(=未指定なら undef)へ巻き戻される
+    # ため、xmin//0 だけだと自動レンジの Axes で 0..1 に化ける。matplotlib 流の
+    # 明示 xlim なしプロットでもカーソル→データ変換が正しく効くよう _*_auto を辿る。
+    my ($xmin, $xmax) = ($self->xmin // $self->_xmin_auto // 0,
+                         $self->xmax // $self->_xmax_auto // 1);
+    my ($ymin, $ymax) = ($self->ymin // $self->_ymin_auto // 0,
+                         $self->ymax // $self->_ymax_auto // 1);
     # X座標: 左→右
     my $x_data = $xmin + ($px - $ml) / ($mr - $ml) * ($xmax - $xmin);
     # Y座標: Cairo は上→下 (py増加=下)、データ座標は下→上が普通
@@ -4444,8 +4450,10 @@ sub data_to_image_frac {
     unless (defined $ml) {
         die "data_to_image_frac: draw() / tight_layout() の前に呼ばれました\n";
     }
-    my ($xmin, $xmax) = ($self->xmin // 0, $self->xmax // 1);
-    my ($ymin, $ymax) = ($self->ymin // 0, $self->ymax // 1);
+    my ($xmin, $xmax) = ($self->xmin // $self->_xmin_auto // 0,
+                         $self->xmax // $self->_xmax_auto // 1);
+    my ($ymin, $ymax) = ($self->ymin // $self->_ymin_auto // 0,
+                         $self->ymax // $self->_ymax_auto // 1);
     my $px = $ml + ($x - $xmin) / ($xmax - $xmin) * ($mr - $ml);
     my $py;
     if ($self->{_y_reversed}) {

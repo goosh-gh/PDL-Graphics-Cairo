@@ -19,6 +19,7 @@ examples/eeg_viewer_static.pl
 examples/example.pl
 examples/example_cairo_api.pl
 examples/example_colormap.pl
+examples/example_gs_grid_scrub_pgplot.pl
 examples/example_contour.pl
 examples/example_fill_between_where.pl
 examples/example_GraphViz.pl
@@ -57,6 +58,7 @@ lib/PDL/Graphics/Cairo/Driver/Cairo.pm
 lib/PDL/Graphics/Cairo/Driver/Gnuplot.pm
 lib/PDL/Graphics/Cairo/Driver/GS.pm
 lib/PDL/Graphics/Cairo/Driver/GS3D.pm
+lib/PDL/Graphics/Cairo/Interactive/Scrub.pm
 lib/PDL/Graphics/Cairo/Driver/OSX.pm
 lib/PDL/Graphics/Cairo/Figure.pm
 lib/PDL/Graphics/Cairo/Geometry/Polyline.pm
@@ -113,12 +115,15 @@ t/32_tight_layout_gap.t
 t/33_scene_export.t
 t/34_label_geom.t
 t/35_pgplot_compat.t
+t/36_scrub.t
+t/37_pgplot_panel_order.t
 tools/demo_gs3d_electrodes.pl
 tools/verify_gs3d.pl
 tools/verify_gs3d_projection.pl
 tools/demo_gs3d_mesh.pl
 tools/demo_gs3d_nyhead.pl
 tools/verify_gs3d_mesh.pl
+tools/verify_grid_scrub.pl
 lib/PDL/Graphics/Cairo/TextLayout.pm
 lib/PDL/Graphics/Cairo/LabelCairo.pm
 lib/PDL/Graphics/Cairo/LabelGeom.pm

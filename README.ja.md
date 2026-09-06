@@ -16,6 +16,7 @@ PDL::Graphics::Cairo がレンダリングを担います。
 - PNG・PDF・SVGファイル出力 — X11・libgiza 不要
 - **giza_server による macOS ネイティブ表示** — macOS の既定。素の `$fig->show()` でネイティブウィンドウが開きます。Unix ドメインソケット経由のオンメモリ PNG 転送、プログラム終了後も残る永続タブウィンドウ、giza/PGPLOT の C プログラムと共有。Linux でも動作（GTK3/Xlib サーバ）
 - **複数プロットをタブで1ウィンドウ表示**（giza_server）
+- **グリッドスクラブ** `show_grid_scrub`（`Driver::GS`）— サブプロットをダブルクリックで拡大子窓を開き、トレース上をドラッグしてその潜時にマーカを置き、親の全サブプロットに同じ潜時の縦線を引く。選択点はマウスを離した後も保持し、開いている全子窓で共有。**macOS（Cocoa）** giza_server 専用（2D のダブルクリック／ボタンドラッグを返すビルドが必要）
 - gnuplot経由のインタラクティブ表示（aqua/wxt/x11）— クロスプラットフォーム。giza_server が無い場合の自動フォールバック
 - レガシー macOS Cocoa ビューア（`backend => 'osx'`、`pdlcairo_viewer`）は **deprecated** なオプトインのフォールバックとしてのみ残置 — 既定ではなく、`make` でもビルドされません
 - CairoによるAxes枠・目盛り・数値ラベルの描画
@@ -64,6 +65,7 @@ pgbegin(0, "/osx", 1, 1);              # macOSネイティブ
 # pgbegin(0, "/xw",  1, 1);            # X11（gnuplot経由）
 # pgbegin(0, "/aqua", 1, 1);           # AquaTerm（gnuplot経由）
 # pgbegin(0, "output.png/PNG", 1, 1);  # PNGファイル
+# 第3・4引数 = NXSUB, NYSUB（分割数）。NXSUB<0 でパネルを列優先、>0 で行優先（PGPLOT準拠）
 
 pgenv(-100, 899, 10, -10, 0, -2);      # negative up（ymin > ymax）
 pgsci(3);                               # 緑
