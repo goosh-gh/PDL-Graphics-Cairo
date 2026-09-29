@@ -1751,17 +1751,10 @@ sub draw {
         if $self->_colorbar && (!$self->{_axis_off} || $self->{_colorbar_force});
 
     # ユーザ指定レンジ（または undef）を復元。次回 draw で autoscale を再解決させる。
-    # ただし twin オブジェクト(twinx/twiny の戻り値)の場合はこの巻き戻しを
-    # 行わない。twin は draw() の中で親から ymin/ymax(または xmin/xmax) を
-    # コピーする設計であり、巻き戻すと draw() 完了後に呼び出し側が
-    # $twin->ymin 等を読んだ際に undef が返ってしまう
-    # (twinx/twiny の戻り値に対して直後に ymin/ymax を確認する、
-    #  またはそれらの値を使って set_ylim 等を呼ぶようなコードが
-    #  意図通り動かなくなる)。
-    unless ($self->_is_twin) {
-        $self->xmin($user_lim[0]); $self->xmax($user_lim[1]);
-        $self->ymin($user_lim[2]); $self->ymax($user_lim[3]);
-    }
+    # twin も同じ。twin の共有軸は毎回の draw で親からコピーし直すので、
+    # 巻き戻しても失われない。確定した範囲は _plot_range で読める。
+    $self->xmin($user_lim[0]); $self->xmax($user_lim[1]);
+    $self->ymin($user_lim[2]); $self->ymax($user_lim[3]);
     return $self;
 }
 
