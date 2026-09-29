@@ -181,6 +181,9 @@ has _plot_ml     => (is => 'rw');   # プロット枠左端 (pixel, Figure座標
 has _plot_mr     => (is => 'rw');   # プロット枠右端
 has _plot_mt     => (is => 'rw');   # プロット枠上端
 has _plot_mb     => (is => 'rw');   # プロット枠下端
+# draw() が確定したデータ範囲 [xmin, xmax, ymin, ymax]。twin が共有軸の
+# 範囲を親から受け取るのに使う(親の xmin 等は draw 後にユーザ指定値へ戻る)。
+has _plot_range  => (is => 'rw');
 has _color_idx   => (is => 'rw', default => sub { 0 });
 has _xformatter  => (is => 'rw', default => sub { undef });
 has _yformatter  => (is => 'rw', default => sub { undef });
@@ -1552,18 +1555,34 @@ sub draw {
     $self->_finalize_range();
 
     # twinx / twiny: parent と軸・マージンを共有する
+    # 描画矩形と共有軸の範囲は、親の draw() が確定した値(_plot_m* /
+    # _plot_range)を使う。親は axes_list で twin より前にあるので、同じ描画の
+    # 中で先に確定している。twin の fig_x/width 等は作成時の値のままで、
+    # tight_layout / subplots_adjust が親を動かしても追従しないため使わない。
+    my $parent_rect;
     if ($self->_is_twin && $self->_twin_of) {
         my $parent = $self->_twin_of;
-        $parent->_finalize_range() unless defined $parent->xmin;
+        my ($pxmin, $pxmax, $pymin, $pymax);
+        if (my $pr = $parent->_plot_range) {
+            ($pxmin, $pxmax, $pymin, $pymax) = @$pr;
+            $parent_rect = [ $parent->_plot_ml, $parent->_plot_mt,
+                             $parent->_plot_mr, $parent->_plot_mb ];
+        } else {
+            # 親がまだ描かれていない(twin 単独の draw)
+            $parent->_finalize_range()
+                unless defined $parent->xmin && defined $parent->ymin;
+            ($pxmin, $pxmax, $pymin, $pymax)
+                = ($parent->xmin, $parent->xmax, $parent->ymin, $parent->ymax);
+        }
 
         if (($self->_twin_type // '') eq 'y') {
             # twiny: Y 軸を共有、X 軸は独立（上端に第2目盛り）
-            $self->ymin($parent->ymin);
-            $self->ymax($parent->ymax);
+            $self->ymin($pymin);
+            $self->ymax($pymax);
         } else {
             # twinx (デフォルト): X 軸を共有、Y 軸は独立（右端に第2目盛り）
-            $self->xmin($parent->xmin);
-            $self->xmax($parent->xmax);
+            $self->xmin($pxmin);
+            $self->xmax($pxmax);
         }
         # マージンは常に parent と揃える
         $self->margin_left(  $parent->margin_left);
@@ -1573,13 +1592,16 @@ sub draw {
     }
 
     #
-    my $ml = $self->fig_x + $self->margin_left;
-    my $mt = $self->fig_y + $self->margin_top;
-    my $mr = $self->fig_x + $self->width  - $self->margin_right;
-    my $mb = $self->fig_y + $self->height - $self->margin_bottom;
+    my ($ml, $mt, $mr, $mb) = $parent_rect ? @$parent_rect : (
+        $self->fig_x + $self->margin_left,
+        $self->fig_y + $self->margin_top,
+        $self->fig_x + $self->width  - $self->margin_right,
+        $self->fig_y + $self->height - $self->margin_bottom,
+    );
 
 # set_aspect('equal') — データ座標の縦横比を保つ
-    if (defined $self->{_aspect} && $self->{_aspect} eq 'equal') {
+    # (twin は親の確定矩形を使うので、aspect 補正は親側で済んでいる)
+    if (!$parent_rect && defined $self->{_aspect} && $self->{_aspect} eq 'equal') {
         my $data_w = $self->xmax - $self->xmin;
         my $data_h = $self->ymax - $self->ymin;
         my $pix_w  = $mr - $ml;
@@ -1610,6 +1632,7 @@ sub draw {
     $self->_plot_mr($mr);
     $self->_plot_mt($mt);
     $self->_plot_mb($mb);
+    $self->_plot_range([ $self->xmin, $self->xmax, $self->ymin, $self->ymax ]);
 
     # xscale/yscale  Transform 
     # _y_reversed PGPLOT  negative up: ymin>ymax

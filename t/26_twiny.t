@@ -32,9 +32,14 @@ use PDL::Graphics::Cairo qw(figure subplots);
     $fig->tight_layout;
     $fig->to_png;  # draw()をトリガー
 
-    is $ax2->ymin, $ax->ymin, 'twiny: child ymin matches parent ymin after draw';
-    is $ax2->ymax, $ax->ymax, 'twiny: child ymax matches parent ymax after draw';
-    isnt $ax2->xmin, $ax->xmin, 'twiny: child xmin is independent from parent';
+    # draw() が確定した範囲 [xmin, xmax, ymin, ymax] で比べる(親の xmin 等は
+    # draw 後にユーザ指定値へ戻るので、確定した範囲の比較には使えない)
+    my ($p, $c) = ($ax->_plot_range, $ax2->_plot_range);
+    is $c->[2], $p->[2], 'twiny: child ymin matches parent ymin after draw';
+    is $c->[3], $p->[3], 'twiny: child ymax matches parent ymax after draw';
+    ok defined($c->[0]) && defined($p->[0])
+       && ($c->[0] != $p->[0] || $c->[1] != $p->[1]),
+       "twiny: child x range [$c->[0],$c->[1]] is independent from parent [$p->[0],$p->[1]]";
 }
 
 # ------------------------------------------------------------------
