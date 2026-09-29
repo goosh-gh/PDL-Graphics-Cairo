@@ -239,5 +239,56 @@ sub render_png {
     delete $wm->{state}{_scrub_lat};
 }
 
+# ---- 7) latency readout VALUE: a click on a line drawn at a known latency
+#         must set _scrub_lat to that latency (within 0.5 ms), with autoscale
+#         (padded x range) and with an explicit xlim. The line's pixel column
+#         is measured from the rendered PNG, independent of the transform.
+{
+    require Cairo;
+    require File::Temp;
+    my $red_column = sub {
+        my ($bytes) = @_;
+        my ($fh, $fn) = File::Temp::tempfile(SUFFIX => '.png', UNLINK => 1);
+        binmode $fh; print $fh $bytes; close $fh;
+        my $s = Cairo::ImageSurface->create_from_png($fn); $s->flush;
+        my ($w,$h,$st) = ($s->get_width, $s->get_height, $s->get_stride);
+        my $d = $s->get_data; my ($sum,$ws) = (0,0);
+        for my $yy (0..$h-1) { for my $x (0..$w-1) {
+            my ($b,$g,$r) = unpack('C3', substr($d, $yy*$st + $x*4, 4));
+            my $wt = $r - ($g > $b ? $g : $b);
+            next if $wt <= 0;
+            $sum += $wt*($x+0.5); $ws += $wt;
+        } }
+        return $ws ? $sum/$ws : undef;
+    };
+    for my $mode (qw(autoscale xlim)) {
+        for my $lat (5, 30, 62, 95) {
+            my $cell_mark = sub {
+                my ($idx,$state,$w,$h) = @_;
+                my $fig = figure(width=>$w, height=>$h);
+                my $ax  = $fig->subplots(1,1);
+                $ax->line($t, 30*sin($t/6), color=>'black');
+                $ax->line(pdl($lat,$lat), pdl(-10,10), color=>'red');
+                $ax->xlim(0, 100) if $mode eq 'xlim';
+                $fig->tight_layout; return $fig;
+            };
+            local $wm->{cell_render} = $cell_mark;
+            delete $wm->{state}{_scrub_lat};
+            my $win = { kind=>'cell', ax_idx=>0, w=>$W, h=>$H, cursor=>undef };
+            my $fig = $drv->_paint_cell($wm, $win);
+            my $px  = $red_column->( $drv->_figure_to_png($fig) );
+            $win->{last_fig} = $fig;
+            my $ax  = $fig->axes_list->[0];
+            my $fy  = ($ax->_plot_mt + 0.5*($ax->_plot_mb-$ax->_plot_mt))/$H;
+            $drv->_cell_cursor($wm, $win, 0x19, $px/$W, $fy, 1);   # PICK = click
+            my $got = $wm->{state}{_scrub_lat};
+            okk(defined $got && abs($got-$lat) <= 0.5,
+                sprintf("latency value ($mode): click on line at %d ms reads %s ms",
+                        $lat, defined $got ? sprintf('%.2f',$got) : 'undef'));
+        }
+    }
+    delete $wm->{state}{_scrub_lat};
+}
+
 print "\n$ok passed, $fail failed\n";
 exit($fail ? 1 : 0);

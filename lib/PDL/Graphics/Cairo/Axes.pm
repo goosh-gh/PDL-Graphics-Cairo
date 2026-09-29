@@ -4400,16 +4400,36 @@ sub eventplot {
 #     return $self->set_grid( $self->grid ? 0 : 1 );
 # }
 
-# get_xlim / get_ylim — return (lo, hi) after finalize (or current setting)
+# get_xlim / get_ylim — (lo, hi) を返す。ユーザ指定(xlim/ylim)があればその値、
+# 無ければ最後の draw() が確定した範囲(autoscale の余白込み、matplotlib の
+# get_xlim と同じ意味)。draw 前で指定も無ければ (0, 1)。
 sub get_xlim {
     my ($self) = @_;
-    return (defined $self->xmin ? $self->xmin : 0,
-            defined $self->xmax ? $self->xmax : 1);
+    my $pr = $self->_plot_range || [];
+    return ($self->xmin // $pr->[0] // 0,
+            $self->xmax // $pr->[1] // 1);
 }
 sub get_ylim {
     my ($self) = @_;
-    return (defined $self->ymin ? $self->ymin : 0,
-            defined $self->ymax ? $self->ymax : 1);
+    my $pr = $self->_plot_range || [];
+    return ($self->ymin // $pr->[2] // 0,
+            $self->ymax // $pr->[3] // 1);
+}
+
+# _frac_range — image_frac_to_data / data_to_image_frac が使うデータ範囲
+# (xmin, xmax, ymin, ymax)。draw 済みなら描かれた範囲(_plot_range)を使う。
+# 画像上の位置と対応するのは描かれた範囲で、autoscale の軸ではデータ端
+# (_*_auto)の外に余白が付いているため。draw 前(tight_layout だけ)なら
+# 明示 lim、無ければ autoscale のデータ端で近似する。
+sub _frac_range {
+    my ($self) = @_;
+    if (my $pr = $self->_plot_range) {
+        return @$pr;
+    }
+    return ($self->xmin // $self->_xmin_auto // 0,
+            $self->xmax // $self->_xmax_auto // 1,
+            $self->ymin // $self->_ymin_auto // 0,
+            $self->ymax // $self->_ymax_auto // 1);
 }
 
 # image_frac_to_data($fx, $fy) — 画像分率（0..1）→ データ座標
@@ -4433,14 +4453,9 @@ sub image_frac_to_data {
     if ($px < $ml || $px > $mr || $py < $mt || $py > $mb) {
         return (undef, undef);
     }
-    # 実効レンジ: 明示 xlim があればそれ、無ければ autoscale 値(_xmin_auto)。
-    # draw() 完了後は xmin/xmax がユーザ指定値(=未指定なら undef)へ巻き戻される
-    # ため、xmin//0 だけだと自動レンジの Axes で 0..1 に化ける。matplotlib 流の
-    # 明示 xlim なしプロットでもカーソル→データ変換が正しく効くよう _*_auto を辿る。
-    my ($xmin, $xmax) = ($self->xmin // $self->_xmin_auto // 0,
-                         $self->xmax // $self->_xmax_auto // 1);
-    my ($ymin, $ymax) = ($self->ymin // $self->_ymin_auto // 0,
-                         $self->ymax // $self->_ymax_auto // 1);
+    # 実効レンジ: 描かれた範囲(_frac_range 参照)。draw() 完了後は xmin/xmax が
+    # ユーザ指定値(=未指定なら undef)へ巻き戻されるので、それは使わない。
+    my ($xmin, $xmax, $ymin, $ymax) = $self->_frac_range;
     # X座標: 左→右
     my $x_data = $xmin + ($px - $ml) / ($mr - $ml) * ($xmax - $xmin);
     # Y座標: Cairo は上→下 (py増加=下)、データ座標は下→上が普通
@@ -4466,10 +4481,7 @@ sub data_to_image_frac {
     unless (defined $ml) {
         die "data_to_image_frac: draw() / tight_layout() の前に呼ばれました\n";
     }
-    my ($xmin, $xmax) = ($self->xmin // $self->_xmin_auto // 0,
-                         $self->xmax // $self->_xmax_auto // 1);
-    my ($ymin, $ymax) = ($self->ymin // $self->_ymin_auto // 0,
-                         $self->ymax // $self->_ymax_auto // 1);
+    my ($xmin, $xmax, $ymin, $ymax) = $self->_frac_range;
     my $px = $ml + ($x - $xmin) / ($xmax - $xmin) * ($mr - $ml);
     my $py;
     if ($self->{_y_reversed}) {

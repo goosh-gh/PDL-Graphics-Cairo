@@ -120,6 +120,7 @@ t/37_pgplot_panel_order.t
 t/38_twin_registration.t
 t/39_twin_mapping.t
 t/40_twin_redraw.t
+t/41_frac_data_autoscale.t
 tools/demo_gs3d_electrodes.pl
 tools/verify_gs3d.pl
 tools/verify_gs3d_projection.pl
