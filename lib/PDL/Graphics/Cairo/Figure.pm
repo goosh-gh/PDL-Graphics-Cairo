@@ -314,6 +314,7 @@ sub axes {
         %opt,
     );
     push @{ $self->axes_list }, $ax;
+    $ax->_figure($self);
     return $ax;
 }
 
@@ -435,11 +436,15 @@ sub show {
 
 
 # ------------------------------------------------------------------
-# add_axes($ax) — twinx  Axes 
+# add_axes($ax) — 既存の Axes を Figure に登録する。冪等: 登録済みの
+# 同一オブジェクトは積まない(twinx/twiny は自動登録するので、重ねて
+# 呼ばれても二重描画しない)。_figure が未設定なら張る。
 # ------------------------------------------------------------------
 sub add_axes {
     my ($self, $ax) = @_;
-    push @{ $self->axes_list }, $ax;
+    push @{ $self->axes_list }, $ax
+        unless grep { $_ == $ax } @{ $self->axes_list };
+    $ax->_figure($self) unless $ax->_figure;
     return $self;
 }
 

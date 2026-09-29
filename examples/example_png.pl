@@ -339,7 +339,6 @@ die "Output directory not found: $OUT\n" unless -d $OUT;
     my $fig = figure(width=>860, height=>500);
     my $ax1 = $fig->axes();
     my $ax2 = $ax1->twinx();
-    $fig->add_axes($ax2);
 
     my $h    = sequence(24);
     my $temp = 15 + 10 * sin(($h - 6) * $PI / 12);

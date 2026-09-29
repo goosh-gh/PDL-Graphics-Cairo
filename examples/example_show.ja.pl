@@ -212,7 +212,6 @@ if ($term_arg) {
     my $fig = figure(width => 860, height => 500);
     my $ax1 = $fig->axes();
     my $ax2 = $ax1->twinx();
-    $fig->add_axes($ax2);
 
     $ax1->title("気温と湿度（twinx）");
     $ax1->xlabel("Hour");

@@ -117,6 +117,7 @@ t/34_label_geom.t
 t/35_pgplot_compat.t
 t/36_scrub.t
 t/37_pgplot_panel_order.t
+t/38_twin_registration.t
 tools/demo_gs3d_electrodes.pl
 tools/verify_gs3d.pl
 tools/verify_gs3d_projection.pl

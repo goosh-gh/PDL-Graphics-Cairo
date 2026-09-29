@@ -205,7 +205,6 @@ if ($term_arg eq 'osx') {
     my $fig = figure(width => 860, height => 500);
     my $ax1 = $fig->axes();
     my $ax2 = $ax1->twinx();
-    $fig->add_axes($ax2);
 
     $ax1->title("Temperature & Humidity  (twinx)");
     $ax1->xlabel("Hour");
