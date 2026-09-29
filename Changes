@@ -1,5 +1,29 @@
 Revision history for PDL-Graphics-Cairo
 
+(unreleased)
+    - Axes: get_xlim / get_ylim now return the range resolved by the last
+      draw() (autoscale padding included, as in matplotlib) when no xlim/ylim
+      is set. They used to return (0, 1) for autoscaled axes. Explicit limits
+      are returned unchanged; (0, 1) only before the first draw.
+    - Axes: image_frac_to_data / data_to_image_frac use the drawn range, so
+      they match the image on autoscaled axes. The show_grid_scrub latency
+      read-out was off by up to +/-19 ms at the edges of an autoscaled
+      -100..600 ms axis (exact with an explicit xlim). (t/41,
+      tools/verify_grid_scrub.pl section 7)
+    - twinx / twiny: a twin of a figure()->axes() parent is registered with
+      the Figure and drawn (it was silently dropped). Figure::add_axes is
+      idempotent, so scripts that still call $fig->add_axes($twin) do not draw
+      the twin twice; the examples no longer call it. (t/38)
+    - twinx / twiny: the twin is drawn in the parent's final plot rectangle and
+      shares its drawn range, so shared-axis data line up after tight_layout
+      and subplots_adjust (the twin kept its creation-time geometry; the
+      twinx right axis sat outside or inside the frame). twiny with an
+      explicit parent xlim no longer dies. (t/39, t/26)
+    - twinx / twiny: autoscale ranges of the parent and of the twin's own axis
+      are re-resolved on every draw instead of freezing at the first one. (t/40)
+    - tools/verify_gs3d.pl checks that the version lives only in
+      PDL::Graphics::Cairo (no per-module $VERSION); 32/32.
+
 0.3  2026-09-06
     - Driver::GS: show_grid_scrub — multi-window interactive scrub on giza-server:
       double-click a subplot opens a zoomed child window; drag places a latency
