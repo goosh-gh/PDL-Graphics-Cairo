@@ -4,7 +4,7 @@
 # Tier 1 (どこでも / PDL不要): ソース静的検査 + POD検査 +
 #         クォータニオン不変量を plain-Perl 参照実装で検算。
 # Tier 2 (Mac / 要 PDL+Driver::GS): 実モジュールを load して
-#         $VERSION・撤去済みメソッド・実 _q_to_rot(seed)・剛体性を検査。
+#         版の一本化($VERSION は Cairo.pm のみ)・撤去済みメソッド・実 _q_to_rot(seed)・剛体性を検査。
 #         ※ new() は呼ばない(giza-server 接続を起こさないため)。
 #
 #   perl verify_gs3d.pl [--src path/to/GS3D.pm]
@@ -20,7 +20,8 @@ my $text = do { open my $fh,'<:encoding(UTF-8)',$src or die $!; local $/; <$fh> 
 # ---- Tier 1a: 静的検査 ----------------------------------------------------
 like($text, qr/^package\s+PDL::Graphics::Cairo::Driver::GS3D\s*;/m,
      'package = PDL::Graphics::Cairo::Driver::GS3D');
-like($text, qr/^our\s+\$VERSION\s*=/m,          'our $VERSION 宣言あり');
+# 版は lib/PDL/Graphics/Cairo.pm の $VERSION に一本化(272516e で per-module 版を撤去)
+unlike($text, qr/^\s*our\s+\$VERSION\b/m,     'per-module $VERSION なし(版は Cairo.pm に一本化)');
 like($text, qr/^=encoding\s+utf-?8/mi,          '=encoding utf-8 あり');
 unlike($text, qr/sub\s+_compute_lookat_rotation/, '_compute_lookat_rotation 撤去済み');
 is(scalar(() = $text =~ /\{cam_azimuth\}/g),   0, 'コード上の {cam_azimuth} なし');
@@ -92,7 +93,11 @@ SKIP: {
                                   or skip "モジュール load 失敗: $@", 4;
     my $pkg='PDL::Graphics::Cairo::Driver::GS3D';
     no strict 'refs';
-    ok(defined ${"${pkg}::VERSION"}, '実 $VERSION = '.(${"${pkg}::VERSION"}//'undef'));
+    eval { require PDL::Graphics::Cairo; 1 }
+                                  or skip "PDL::Graphics::Cairo load 失敗: $@", 4;
+    ok(!defined ${"${pkg}::VERSION"} && defined $PDL::Graphics::Cairo::VERSION,
+       '版は本体のみ: Cairo $VERSION = '.($PDL::Graphics::Cairo::VERSION//'undef')
+       .', GS3D $VERSION = '.(${"${pkg}::VERSION"}//'undef'));
     ok(!$pkg->can('_compute_lookat_rotation'), '実モジュールにも look-at 撤去反映');
     ok($pkg->can('_q_to_rot'), '_q_to_rot 生存');
     my $Rp = &{"${pkg}::_q_to_rot"}(0,0,0,1);
