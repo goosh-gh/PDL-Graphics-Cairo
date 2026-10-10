@@ -354,8 +354,97 @@ sub _render_to {
     for my $ax (@{ $self->axes_list }) {
         $ax->draw($driver);
     }
+    $self->_draw_connections($driver);
 
     $driver->finish();
+}
+
+# add_connection(%opt) — a straight line between a point of one axes and a point
+# of another (matplotlib ConnectionPatch). Drawn over all axes, unclipped.
+#
+#   axA => $ax, xyA => [x, y], coordsA => 'data' | 'axes' | 'figure'
+#   axB => $ax, xyB => [x, y], coordsB => 'data' | 'axes' | 'figure'
+#   color => '#888888', lw => 1, ls => 'solid', alpha => 1
+#
+# 'data'  : data coordinates of that axes (default)
+# 'axes'  : fraction of that axes' plot rectangle, (0,0) bottom-left
+# 'figure': fraction of the figure, (0,0) bottom-left (no axes needed)
+# A coords value may also be [cx, cy] to mix, e.g. ['data', 'axes'] for
+# "this x in data units, the top edge of the plot rectangle".
+sub add_connection {
+    my ($self, %o) = @_;
+    for my $e ('A', 'B') {
+        my $c = $o{"coords$e"} //= 'data';
+        my @c = ref $c ? @$c : ($c, $c);
+        die "add_connection: coords$e must be data, axes or figure\n"
+            if grep { !/^(?:data|axes|figure)$/ } @c;
+        die "add_connection: xy$e => [x, y] required\n"
+            unless ref $o{"xy$e"} eq 'ARRAY' && @{ $o{"xy$e"} } == 2;
+        die "add_connection: ax$e required for coords$e '@c'\n"
+            if !$o{"ax$e"} && grep { $_ ne 'figure' } @c;
+    }
+    push @{ $self->{_connections} //= [] }, { %o };
+    return $self;
+}
+
+# add_text(%opt) — text placed in the same coordinates as add_connection, drawn
+# over all axes and unclipped (so it can sit just outside a plot rectangle).
+#
+#   text => 'N = 293', ax => $ax, xy => [x, y], coords => 'data' | 'axes' | 'figure'
+#   ha => 'left' | 'center' | 'right', va => 'top' | 'middle' | 'bottom'
+#   offset => [dx, dy]   pixels added after the transform (dy > 0 is downwards)
+#   fontsize => 10, weight => 'normal' | 'bold', color => 'black', angle => 0
+sub add_text {
+    my ($self, %o) = @_;
+    my $c = $o{coords} //= 'data';
+    my @c = ref $c ? @$c : ($c, $c);
+    die "add_text: text required\n" unless defined $o{text};
+    die "add_text: coords must be data, axes or figure\n"
+        if grep { !/^(?:data|axes|figure)$/ } @c;
+    die "add_text: xy => [x, y] required\n" unless ref $o{xy} eq 'ARRAY' && @{ $o{xy} } == 2;
+    die "add_text: ax required for coords '@c'\n" if !$o{ax} && grep { $_ ne 'figure' } @c;
+    push @{ $self->{_fig_texts} //= [] }, { %o };
+    return $self;
+}
+
+sub _connection_point {
+    my ($self, $ax, $xy, $coords) = @_;
+    my @c = ref $coords ? @$coords : ($coords, $coords);
+    my @p;
+    for my $i (0, 1) {
+        my @q = $c[$i] eq 'figure' ? ($xy->[0] * $self->width, (1 - $xy->[1]) * $self->height)
+              : $c[$i] eq 'axes'   ? $ax->axes_to_pixel(@$xy)
+              :                      $ax->data_to_pixel(@$xy);
+        return unless @q;
+        $p[$i] = $q[$i];
+    }
+    return @p;
+}
+
+sub _draw_connections {
+    my ($self, $driver) = @_;
+    for my $c (@{ $self->{_connections} // [] }) {
+        my @a = $self->_connection_point($c->{axA}, $c->{xyA}, $c->{coordsA}) or next;
+        my @b = $self->_connection_point($c->{axB}, $c->{xyB}, $c->{coordsB}) or next;
+        my $lw  = $c->{lw} // $c->{linewidth} // 1;
+        my $col = PDL::Graphics::Cairo::Axes->_parse_color($c->{color} // '#888888');
+        $driver->set_color(@$col[0 .. 2], $c->{alpha} // 1);
+        $driver->set_linewidth($lw);
+        $driver->set_linestyle($c->{ls} // $c->{linestyle} // 'solid', $lw);
+        $driver->line_seg(@a, @b);
+        $driver->set_linestyle('solid', $lw);
+    }
+    for my $t (@{ $self->{_fig_texts} // [] }) {
+        my @p = $self->_connection_point($t->{ax}, $t->{xy}, $t->{coords}) or next;
+        my ($dx, $dy) = @{ $t->{offset} // [0, 0] };
+        my $col = PDL::Graphics::Cairo::Axes->_parse_color($t->{color} // 'black');
+        $driver->set_font(size => ($t->{fontsize} // 10), weight => ($t->{weight} // 'normal'));
+        $driver->set_color(@$col[0 .. 2], $t->{alpha} // 1);
+        $driver->text($p[0] + $dx, $p[1] + $dy, $t->{text},
+                      align  => ($t->{ha} // $t->{halign} // 'left'),
+                      valign => ($t->{va} // $t->{valign} // 'bottom'),
+                      angle  => ($t->{angle} // 0));
+    }
 }
 
 sub save {
@@ -543,6 +632,8 @@ sub set_facecolor {
 sub clf {
     my ($self) = @_;
     @{ $self->axes_list } = ();
+    $self->{_connections} = [];
+    $self->{_fig_texts}   = [];
     $self->suptitle('');
     return $self;
 }

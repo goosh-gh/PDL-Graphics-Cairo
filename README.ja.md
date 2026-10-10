@@ -314,6 +314,10 @@ deprecated で、`make` でもビルドされません。
 | `axhline` / `axvline` | 水平・垂直参照線 |
 | `axvspan` / `axhspan` | 網掛け領域 |
 | `annotate` | 矢印アノテーション |
+| `$fig->add_connection` | 異なる Axes の2点を結ぶ直線（matplotlib `ConnectionPatch` 相当）。各端点は `'data'` / `'axes'`（プロット枠内の割合）/ `'figure'`（Figure 内の割合）座標、または `['data','axes']` のように成分ごとに指定。全 Axes の上にクリップなしで描く |
+| `$fig->add_text` | `add_connection` と同じ座標指定で置くテキスト。全 Axes の上にクリップなしで描くので、プロット枠のすぐ外にも置ける。`ha` / `va` / `offset`(px) / `fontsize` / `weight` / `color` / `angle` |
+| `data_to_pixel` / `axes_to_pixel` | データ座標・プロット枠内割合 → Figure ピクセル座標（描画後に有効） |
+| `clip_pad_top` | プロット枠の上側にデータ描画がはみ出せる量（既定 15 px、0 で上端ちょうどでクリップ） |
 | `twinx` | 双Y軸（両軸独立した目盛り） |
 
 ---

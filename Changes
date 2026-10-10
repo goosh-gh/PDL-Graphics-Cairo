@@ -23,6 +23,13 @@ Revision history for PDL-Graphics-Cairo
       are re-resolved on every draw instead of freezing at the first one. (t/40)
     - tools/verify_gs3d.pl checks that the version lives only in
       PDL::Graphics::Cairo (no per-module $VERSION); 32/32.
+    - Figure: add_connection — straight line between a point of one axes and a
+      point of another (data / axes-fraction / figure-fraction coordinates, mixed
+      per component), drawn over all axes; clf removes them (t/42)
+    - Figure: add_text — text in the same coordinates as add_connection, drawn
+      over all axes and unclipped (t/42)
+    - Axes: data_to_pixel / axes_to_pixel (valid after draw), clip_pad_top
+      (upper clip allowance of plotted data, default 15 px unchanged) (t/42)
 
 0.3  2026-09-06
     - Driver::GS: show_grid_scrub — multi-window interactive scrub on giza-server:

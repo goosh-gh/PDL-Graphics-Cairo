@@ -1658,6 +1658,9 @@ sub draw {
         );
     }
 
+    # Figure::add_connection / data_to_pixel が描画後に参照する確定済み Transform
+    $self->{_last_tr} = $tr;
+
     # ---  ---
 #    $self->_draw_grid($backend, $tr, $ml,$mt,$mr,$mb) if $self->grid;  # change 2026/5/25 for Axis(off)
     # --- プロット領域背景 (facecolor) ---
@@ -1682,10 +1685,12 @@ sub draw {
     # --- ---
     $backend->save;
     my $clip_w = $mr - $ml + 2;
-    my $clip_h = $mb - $mt + 16;
+    # clip_pad_top(): 上側の許容はみ出し量 (px)。既定 15 は従来どおり。
+    my $pad_t  = $self->{_clip_pad_top} // 15;
+    my $clip_h = $mb - $mt + $pad_t + 1;
     if ($clip_w > 0 && $clip_h > 0) {
         # :  + (14px)
-        $backend->clip_rect($ml-1, $mt-15, $clip_w, $clip_h);
+        $backend->clip_rect($ml-1, $mt-$pad_t, $clip_w, $clip_h);
     }
 
     # ---  ---
@@ -4557,6 +4562,33 @@ sub set_major_formatter {
 # $x0,$y0,$w,$h are fractions of the parent axes bounding box (0..1)
 # x0,y0 = lower-left corner; w,h = width/height fraction
 # Options: transform ('axes' default)
+# clip_pad_top($px) — how far above the plot rectangle the plotted data may be
+#   drawn before it is clipped (default 15 px). 0 clips exactly at the top edge.
+sub clip_pad_top {
+    my ($self, $px) = @_;
+    return $self->{_clip_pad_top} // 15 unless defined $px;
+    $self->{_clip_pad_top} = $px;
+    return $self;
+}
+
+# data_to_pixel($x, $y) / axes_to_pixel($fx, $fy)
+#   Figure pixel coordinates of a data point, or of a fraction of the plot
+#   rectangle ((0,0) = bottom-left, (1,1) = top-right). Valid once the axes has
+#   been drawn (the transform and plot rectangle are fixed in draw()); returns
+#   an empty list before that.
+sub data_to_pixel {
+    my ($self, $x, $y) = @_;
+    my $tr = $self->{_last_tr} or return;
+    return ($tr->x($x), $tr->y($y));
+}
+
+sub axes_to_pixel {
+    my ($self, $fx, $fy) = @_;
+    return unless defined $self->_plot_ml;
+    return ($self->_plot_ml + $fx * ($self->_plot_mr - $self->_plot_ml),
+            $self->_plot_mb - $fy * ($self->_plot_mb - $self->_plot_mt));
+}
+
 sub inset_axes {
     my ($self, $bounds, %opt) = @_;
     $bounds //= [0.6, 0.6, 0.35, 0.35];
