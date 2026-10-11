@@ -15,7 +15,7 @@ PDL::Graphics::Cairo (P:G:C) is a high-level 2D plotting library for [PDL](https
 `line` · `scatter` · `bar` / `barh` · `hist` · `errorbar` · `fill_between` · `step` · `stem` · `imshow` · `contour` · `contourf` · `pcolormesh` / `pcolor` · `pie` · `boxplot` · `violin` · `quiver` · `heatmap` · `stackplot` · `eventplot` · `hexbin` · `specgram` · `plot_date` · and more
 
 ### Axes & decoration
-- Auto-scaling with `tight_layout`; `uniform_margins => 1` option ensures all panels have identical plot-area dimensions in multi-panel grids (avoids the default asymmetry where edge panels receive larger margins)
+- Auto-scaling with `tight_layout`; `uniform_margins => 1` option ensures all panels have identical plot-area dimensions in multi-panel grids made with `subplot` / `subplots` (avoids the default asymmetry where edge panels receive larger margins). It does not act on panels placed with `add_gridspec`; use `cell_margins` there
 - Linear / log scale (`set_xscale`, `set_yscale`, `semilogy`, `loglog`)
 - Tick control: `tick_params`, minor ticks, `xaxis_formatter` / `yaxis_formatter`
 - Date/time axis: `plot_date` accepts UNIX epoch values or `DateTime` objects; tick spacing and label format (`HH:MM`, `Mon DD`, `Mon YYYY`, `YYYY`) are chosen automatically based on the data range
@@ -35,6 +35,9 @@ PDL::Graphics::Cairo (P:G:C) is a high-level 2D plotting library for [PDL](https
 ### Layouts
 - `subplots(M, N)` — uniform grid
 - `GridSpec` — non-uniform spanning panels, with **`height_ratios`/`width_ratios`** for per-row/column size control
+- `add_gridspec(..., cell_margins => 0)` — every Axes of the GridSpec gets the same fixed margins, so all panels have the same plot area wherever they are in the grid and whichever cells are left empty. With `0` the cell itself is the plot rectangle (as in matplotlib): tick numbers and labels are drawn in the gaps (`wspace` / `hspace`) and outside the grid (`left` / `right` / `top` / `bottom`). A number gives that many pixels on every side, a hash names the sides: `cell_margins => { left => 30, bottom => 20 }`
+- `$fig->label_only($ax)` — tick numbers on `$ax` (or `[$ax, ...]`) only; `$fig->label_outer` — y numbers on the leftmost panel of each row and x numbers on the lowest panel of each column, found from the panel positions, so grids with empty cells work. Both take `axis => 'x' | 'y' | 'both'` and `axes => [...]`; tick marks stay on every panel
+- In a GridSpec cell narrower (or lower) than the margins chosen for it, the margins are shrunk so that a plot rectangle remains (they used to cross, giving a negative width)
 - `subplot_mosaic("AAB\nCDB")` — string-defined layouts
 - `suptitle` — figure-level title
 
@@ -42,14 +45,14 @@ PDL::Graphics::Cairo (P:G:C) is a high-level 2D plotting library for [PDL](https
 - Built-in colormaps: `viridis`, `plasma`, `jet`, `hot`, `cool`, `gray`, `RdBu`, `inferno`, `magma`, `coolwarm`
 - `ListedColormap` — discrete color lists
 - `Normalize`, `LogNorm`, `BoundaryNorm`, `TwoSlopeNorm` — data-to-color mapping
-- `colorbar(label => '...')` — colorbar with an optional title, placed on any side (`top`/`bottom`/`left`/`right`). The reserved margin is sized from the actual bar width, tick-label width and caption (not a fixed constant), so a thin bar takes little space. A colorbar normally needs a visible axis; set `$ax->{_colorbar_force} = 1` to draw one on an `axis('off')` panel (e.g. to hang a colour bar off a round topomap)
+- `colorbar(label => '...')` — colorbar with an optional title, placed on any side (`top`/`bottom`/`left`/`right`). The reserved margin is sized from the actual bar width, tick-label width and caption (not a fixed constant), so a thin bar takes little space. A colorbar normally needs a visible axis; set `$ax->{_colorbar_force} = 1` to draw one on an `axis('off')` panel (e.g. to hang a colour bar off a round topomap). `colorbar(cmap => $name_or_object, vmin => ..., vmax => ...)` attaches a colorbar that does not come from a plot command of that Axes (an image the caller coloured itself); the object needs `rgb_at($v)`, and such a colorbar is drawn on an `axis('off')` panel too. `reserve => 0` takes no room from the plot rectangle, so an equal-aspect image narrower than its panel stays centred with the bar beside it. `tick_step => 1` puts the ticks at the multiples of that value instead of automatically chosen ones (thinned to every 2nd, 3rd, ... multiple when the numbers would overlap on a short bar)
 - `pcolormesh` / `pcolor` — pseudocolor plots on a non-uniform grid (unlike `imshow`, cell boundaries don't need to be equally spaced)
 
 ### Output
 - PNG (via `PDL::IO::PNG` or Cairo), PDF, SVG
 - Interactive display via `giza-server` (persistent window with tabs, sliders, resize, cursor/pick). Slider values arrive normalized `[0,1]` (the client assigns each slider's meaning); `show_interactive(init => { 0 => ..., 1 => ... })` sets each slider's initial thumb position.
 - Interactive **3D mesh + point viewer** via `Driver::GS3D` (see [3D](#3d-drivergs3d) below) — triangle mesh surface (z-buffer Gouraud shading) with point markers, quaternion trackball rotation, wheel zoom; **macOS (Cocoa)** viewer (the Linux Xlib viewer does not render the 3D mesh)
-- Interactive **grid scrub** via `show_grid_scrub` (`Driver::GS`) — double-click a subplot to open a zoomed child window; drag on the trace to mark that latency, draw a vertical line at the same latency in every parent subplot, and read out the point; the selection is kept after release and shared across all open child windows. **macOS (Cocoa)** `giza-server` only (needs a build that reports 2D double-click and button-drag events)
+- Interactive **grid scrub** via `show_grid_scrub` (`Driver::GS`) — double-click a subplot to open a zoomed child window; drag on the trace to mark that latency, draw a vertical line at the same latency in every parent subplot, and read out the point; the selection is kept after release and shared across all open child windows. With `main_scrub => 1` a click or drag on a panel of the grid itself selects the latency too. A panel whose Axes carries `$ax->{_scrub_skip} = 1` gets no latency line and is not a click target (for panels that are not a time axis, e.g. a scalp map); double-clicking it still opens it enlarged. **macOS (Cocoa)** `giza-server` only (needs a build that reports 2D double-click and button-drag events)
 - Inline display in `App::PDL::Notebook` (via `$fig->to_inline`)
 
 ### Downsampling

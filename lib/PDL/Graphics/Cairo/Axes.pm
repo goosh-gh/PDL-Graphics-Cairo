@@ -141,6 +141,8 @@ has colorbar_width    => (is => 'rw', default => sub { 16 });
 has colorbar_pad      => (is => 'rw', default => sub { 10 });
 has colorbar_length   => (is => 'rw', default => sub { 1.0 });
 has colorbar_label    => (is => 'rw', default => sub { '' });
+has colorbar_reserve  => (is => 'rw', default => sub { 1 });   # 0: no layout room, see colorbar()
+has colorbar_tick_step => (is => 'rw', default => sub { undef });  # see colorbar()
 
 # ==================================================================
 # matplotlib tab10 
@@ -1752,8 +1754,7 @@ sub draw {
         if $self->{_show_legend} && @{ $self->_legends } && !$self->{_axis_off};
 
     # ---  ---
-    $self->_draw_colorbar($backend, $ml,$mr,$mt,$mb)
-        if $self->_colorbar && (!$self->{_axis_off} || $self->{_colorbar_force});
+    $self->_draw_colorbar($backend, $ml,$mr,$mt,$mb) if $self->_colorbar_shown;
 
     # ユーザ指定レンジ（または undef）を復元。次回 draw で autoscale を再解決させる。
     # twin も同じ。twin の共有軸は毎回の draw で親からコピーし直すので、
@@ -3590,6 +3591,31 @@ sub _draw_legend {
 #
 
 # ------------------------------------------------------------------
+# Tick values of the colorbar. $len_px: length of the bar in pixels along its
+# axis; $label_px: room one tick number needs along that axis.
+sub _colorbar_ticks {
+    my ($self, $len_px, $label_px) = @_;
+    my $cb = $self->_colorbar;
+    my ($lo, $hi) = @$cb{qw(vmin vmax)};
+    ($lo, $hi) = ($hi, $lo) if $lo > $hi;
+    my $step = $self->colorbar_tick_step;
+    return nice_ticks($lo, $hi, 5) unless defined $step && $step > 0 && $hi > $lo;
+    my $k = 1;
+    if (defined $len_px && $len_px > 0) {
+        my $px = $len_px * $step / ($hi - $lo);            # pixels between two ticks
+        $k = POSIX::ceil(($label_px // 10) / $px) if $px < ($label_px // 10);
+    }
+    my $eps = 1e-9 * $step;
+    my ($i0, $i1) = (POSIX::ceil(($lo - $eps) / ($step * $k)), POSIX::floor(($hi + $eps) / ($step * $k)));
+    return map { my $v = $_ * $step * $k; abs($v) < $eps ? 0 : $v } $i0 .. $i1;
+}
+
+# true when draw() will draw the colorbar
+sub _colorbar_shown {
+    my ($self) = @_;
+    return $self->_colorbar && (!$self->{_axis_off} || $self->{_colorbar_force}) ? 1 : 0;
+}
+
 sub _draw_colorbar {
     my ($self, $b, $ml, $mr, $mt, $mb) = @_;
     my $cb  = $self->_colorbar;
@@ -3652,7 +3678,7 @@ sub _draw_colorbar {
         #
 
         $b->set_font(size => 9);
-        my @tks = nice_ticks($cb->{vmin}, $cb->{vmax}, 5);
+        my @tks = $self->_colorbar_ticks($h, 10);
         for my $v (@tks) {
             my $f  = ($v - $cb->{vmin}) / ($cb->{vmax} - $cb->{vmin});
             my $yp = $y0 + $h - $f * $h;
@@ -3714,7 +3740,7 @@ sub _draw_colorbar {
         #
 
         $b->set_font(size => 9);
-        my @tks = nice_ticks($cb->{vmin}, $cb->{vmax}, 5);
+        my @tks = $self->_colorbar_ticks($w, 26);
         for my $v (@tks) {
             my $f  = ($v - $cb->{vmin}) / ($cb->{vmax} - $cb->{vmin});
             my $xp = $x0 + $f * $w;
@@ -3904,8 +3930,37 @@ sub set_aspect {
 }
 
 # colorbar location/width/pad/length 
+# colorbar(%opt)
+#   location / loc, width, pad, length / shrink, label   as before
+#   cmap => name or ColorMap object, vmin => .., vmax => ..
+#       attach a colorbar that does not come from a plot command of this Axes
+#       (an image the caller coloured itself, e.g. a scalp map drawn as RGB).
+#       The object needs rgb_at($v), $v in [0,1], returning (r, g, b) in [0,1].
+#       A colorbar given this way is drawn on an axis('off') panel too.
+#   tick_step => 1
+#       ticks at the multiples of this value (0, +-1, +-2, ...) instead of
+#       automatically chosen ones, so the spacing stays the same when the
+#       limits change. When the numbers would overlap on a short bar, only
+#       every 2nd, 3rd, ... multiple is kept (0 always among them).
+#   reserve => 0
+#       do not take room for the colorbar from the plot rectangle; the bar is
+#       drawn in whatever lies beside it. For an equal-aspect image narrower
+#       than its panel, this keeps the image centred in the panel.
 sub colorbar {
     my ($self, %opt) = @_;
+    if (defined $opt{cmap}) {
+        defined $opt{vmin} && defined $opt{vmax}
+            or do { require Carp; Carp::croak("colorbar(cmap => ...) needs vmin and vmax") };
+        my $cm = ref $opt{cmap} ? $opt{cmap} : $self->_resolve_cmap($opt{cmap});
+        $self->_colorbar({ cmap => $cm, vmin => $opt{vmin}, vmax => $opt{vmax} });
+        $self->{_colorbar_force} = 1;
+    }
+    $self->colorbar_reserve(exists $opt{reserve} ? ($opt{reserve} ? 1 : 0) : 1);
+    if (defined $opt{tick_step}) {
+        $opt{tick_step} > 0
+            or do { require Carp; Carp::croak("colorbar: tick_step must be positive") };
+    }
+    $self->colorbar_tick_step($opt{tick_step});
     $self->colorbar_location($opt{location} // $opt{loc} // 'right');
     $self->colorbar_width($opt{width}    // 16);
     $self->colorbar_pad($opt{pad}        // 10);

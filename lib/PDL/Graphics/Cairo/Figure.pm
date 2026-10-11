@@ -26,7 +26,7 @@ sub _cbar_reserve {
     if ($loc eq 'right' || $loc eq 'left') {
         my $tickw = 22;                                   # fallback
         if (ref $cb eq 'HASH' && defined $cb->{vmin} && defined $cb->{vmax}) {
-            my @tk = eval { nice_ticks($cb->{vmin}, $cb->{vmax}, 5) };
+            my @tk = eval { $ax->_colorbar_ticks };
             my $mx = 0;
             for my $v (@tk) {
                 my $s = eval { PDL::Graphics::Cairo::Axes::_fmt_tick($v) } // sprintf('%g',$v);
@@ -41,6 +41,27 @@ sub _cbar_reserve {
         my $labh = ($lab ne '') ? 16 : 0;
         return $pad + $cw + 4 + 14 + $labh;               # バー + 目盛り高 + ラベル
     }
+}
+
+# Margins of a GridSpec Axes must leave a plot rectangle. In a narrow cell the
+# margins chosen for tick numbers can add up to more than the cell (a 31 px
+# colorbar cell with 33 + 14 px of margins): the right edge of the plot
+# rectangle then lies left of its left edge and data_to_pixel runs backwards.
+# When less than MIN_PLOT px would remain, shrink the two margins of that
+# direction in proportion so that they take 80% of the cell.
+use constant MIN_PLOT => 8;
+sub _fit_margins {
+    my ($ax, $ml, $mr, $mt, $mb) = @_;
+    my ($w, $h) = ($ax->width, $ax->height);
+    if ($w - $ml - $mr < MIN_PLOT && $ml + $mr > 0) {
+        my $k = 0.8 * $w / ($ml + $mr);
+        ($ml, $mr) = (int($ml * $k), int($mr * $k));
+    }
+    if ($h - $mt - $mb < MIN_PLOT && $mt + $mb > 0) {
+        my $k = 0.8 * $h / ($mt + $mb);
+        ($mt, $mb) = (int($mt * $k), int($mb * $k));
+    }
+    return ($ml, $mr, $mt, $mb);
 }
 use PDL::Graphics::Cairo::Driver::Cairo;
 use PDL::Graphics::Cairo::Driver::Gnuplot;
@@ -618,6 +639,68 @@ sub subplots_adjust {
 }
 
 # ------------------------------------------------------------------
+# Tick numbers on some panels only, for grids whose panels share their axes.
+#
+#   $fig->label_outer(%opt)       tick numbers of the y axis only on the
+#                                 leftmost panel of each row, of the x axis
+#                                 only on the lowest panel of each column
+#                                 (matplotlib label_outer). Rows and columns
+#                                 are found from the position of the panels,
+#                                 so a grid with empty cells works: the lowest
+#                                 panel of a column need not be in the last row.
+#   $fig->label_only($ax, %opt)   tick numbers on $ax (or [$ax, ...]) only
+#
+#   axis => 'x' | 'y' | 'both' (default)
+#   axes => [$ax, ...]   the panels to treat (default: every Axes of the figure
+#                        but twins, insets, polar and axis('off') panels)
+#
+# The tick marks stay; only the numbers are switched (tick_params labelleft /
+# labelbottom), on and off, so a later call replaces an earlier one.
+# ------------------------------------------------------------------
+sub _label_panels {
+    my ($self, $opt) = @_;
+    return @{ $opt->{axes} } if $opt->{axes};
+    return grep {
+        !$_->_is_twin && !$_->_is_inset && !$_->{_axis_off}
+            && !$_->isa('PDL::Graphics::Cairo::PolarAxes')
+    } @{ $self->axes_list };
+}
+
+sub _set_tick_numbers {
+    my ($ax, $axis, $on) = @_;
+    $ax->tick_params(axis => 'x', labelbottom => $on) if $axis ne 'y';
+    $ax->tick_params(axis => 'y', labelleft   => $on) if $axis ne 'x';
+}
+
+sub label_only {
+    my ($self, $keep, %opt) = @_;
+    my $axis = $opt{axis} // 'both';
+    my %keep = map { $_ => 1 } (ref $keep eq 'ARRAY' ? @$keep : ($keep));
+    _set_tick_numbers($_, $axis, $keep{$_} ? 1 : 0) for $self->_label_panels(\%opt);
+    return $self;
+}
+
+sub label_outer {
+    my ($self, %opt) = @_;
+    my $axis = $opt{axis} // 'both';
+    my @ax   = $self->_label_panels(\%opt);
+    # leftmost panel of each row (same top edge), lowest of each column (same left edge)
+    my (%left, %low);
+    for my $ax (@ax) {
+        my ($row, $col) = (int($ax->fig_y + 0.5), int($ax->fig_x + 0.5));
+        $left{$row} = $ax if !$left{$row} || $ax->fig_x < $left{$row}->fig_x;
+        $low{$col}  = $ax if !$low{$col}  || $ax->fig_y > $low{$col}->fig_y;
+    }
+    my %is_left = map { $_ => 1 } values %left;
+    my %is_low  = map { $_ => 1 } values %low;
+    for my $ax (@ax) {
+        _set_tick_numbers($ax, 'x', $is_low{$ax}  ? 1 : 0) if $axis ne 'y';
+        _set_tick_numbers($ax, 'y', $is_left{$ax} ? 1 : 0) if $axis ne 'x';
+    }
+    return $self;
+}
+
+# ------------------------------------------------------------------
 # set_facecolor($color)  — Figure背景色 (matplotlib互換)
 # ------------------------------------------------------------------
 sub set_facecolor {
@@ -738,10 +821,28 @@ sub tight_layout {
 
         # GridSpec Axes: position already set, just compute margins
         if ($gs_ax_set{$ax}) {
+            # cell_margins: the same fixed margins for every Axes of the GridSpec.
+            # A colorbar takes its room from the plot rectangle on its side,
+            # unless it was attached with reserve => 0.
+            my ($cm_info) = grep { $_->{ax} == $ax } @{ $self->_gs_axes };
+            if (my ($ml, $mr, $mt, $mb) = $cm_info->{gs}->cell_margins_px) {
+                if ($ax->_colorbar_shown && $ax->colorbar_reserve) {
+                    my $loc = $ax->colorbar_location // 'right';
+                    my $res = _cbar_reserve($ax);
+                    if    ($loc eq 'left')   { $ml += $res }
+                    elsif ($loc eq 'top')    { $mt += $res }
+                    elsif ($loc eq 'bottom') { $mb += $res }
+                    else                     { $mr += $res }
+                }
+                ($ml, $mr, $mt, $mb) = _fit_margins($ax, $ml, $mr, $mt, $mb);
+                $ax->margin_left($ml);   $ax->margin_right($mr);
+                $ax->margin_bottom($mb); $ax->margin_top($mt);
+                next;
+            }
             # 軸OFF: 目盛り/枠/ラベルを描かないのでマージン不要。カラーバー分のみ実寸確保。
             if ($ax->{_axis_off}) {
                 my ($ml,$mr,$mt,$mb) = (2,2,2,2);
-                if ($ax->_colorbar) {
+                if ($ax->_colorbar && $ax->colorbar_reserve) {
                     my $loc = $ax->colorbar_location // 'right';
                     my $res = _cbar_reserve($ax);
                     if    ($loc eq 'right')  { $mr = $res }
@@ -750,6 +851,7 @@ sub tight_layout {
                     elsif ($loc eq 'bottom') { $mb = $res }
                     else                     { $mr = $res }
                 }
+                ($ml, $mr, $mt, $mb) = _fit_margins($ax, $ml, $mr, $mt, $mb);
                 $ax->margin_left($ml);  $ax->margin_right($mr);
                 $ax->margin_bottom($mb); $ax->margin_top($mt);
                 next;
@@ -778,7 +880,7 @@ sub tight_layout {
             # (右マージン)を拡張していたため、location=>'left'/'top'/
             # 'bottom' を指定してもその側のマージンが確保されず、
             # colorbar がylabel領域やfigure外にはみ出す不具合があった。
-            if ($ax->_colorbar) {
+            if ($ax->_colorbar && $ax->colorbar_reserve) {
                 my $cbloc = $ax->colorbar_location // 'right';
                 my $res   = _cbar_reserve($ax);            # 固定68/75/50 → 実寸見積り
                 if    ($cbloc eq 'right')  { $mr = $res; }
@@ -799,6 +901,7 @@ sub tight_layout {
                 $need = int($need + 0.5) + 15;
                 $ml   = $need if $need > $ml;
             }
+            ($ml, $mr, $mt, $mb) = _fit_margins($ax, $ml, $mr, $mt, $mb);
             $ax->margin_left($ml);  $ax->margin_right($mr);
             $ax->margin_bottom($mb); $ax->margin_top($mt);
             next;

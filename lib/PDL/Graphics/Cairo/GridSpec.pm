@@ -30,6 +30,35 @@ has wspace => (is => 'ro', default => sub { 0.25 });
 has height_ratios => (is => 'ro', default => sub { undef });
 has width_ratios  => (is => 'ro', default => sub { undef });
 
+# cell_margins: fixed margins (px) of every Axes placed in this GridSpec, so
+# that all of them get the same plot rectangle whatever their position in the
+# grid and whichever cells are left empty.
+#   cell_margins => 0                 the cell IS the plot rectangle; tick
+#                                     numbers and labels are drawn in the gaps
+#                                     (wspace / hspace) and outside the grid
+#                                     (left / right / top / bottom)
+#   cell_margins => 6                 6 px on every side
+#   cell_margins => { left => 30, bottom => 20 }   unnamed sides are 0
+# undef (default): tight_layout chooses the margins from the position in the
+# grid, as before.
+has cell_margins => (is => 'ro', default => sub { undef });
+
+# (left, right, top, bottom) in px, or an empty list when cell_margins is unset
+sub cell_margins_px {
+    my ($self) = @_;
+    my $cm = $self->cell_margins;
+    return () unless defined $cm;
+    if (ref $cm eq 'HASH') {
+        for my $k (keys %$cm) {
+            croak "GridSpec: cell_margins has no side '$k' (left, right, top, bottom)"
+                unless $k =~ /^(?:left|right|top|bottom)$/;
+        }
+        return map { $cm->{$_} // 0 } qw(left right top bottom);
+    }
+    croak "GridSpec: cell_margins must be a number or a hash reference" if ref $cm;
+    return ($cm) x 4;
+}
+
 # ============================================================
 # at($row, $col)  →  GridSpecCell
 #

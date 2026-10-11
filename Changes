@@ -23,6 +23,32 @@ Revision history for PDL-Graphics-Cairo
       are re-resolved on every draw instead of freezing at the first one. (t/40)
     - tools/verify_gs3d.pl checks that the version lives only in
       PDL::Graphics::Cairo (no per-module $VERSION); 32/32.
+    - Driver::GS show_grid_scrub: main_scrub => 1 selects the latency by a click
+      or drag in the main window as well; panels flagged $ax->{_scrub_skip} get
+      no latency line and are not click targets (t/43)
+    - GridSpec: cell_margins — the same fixed margins for every Axes of the
+      GridSpec, so all panels have the same plot area wherever they are in the
+      grid and whichever cells are empty (0: the cell is the plot rectangle;
+      a number; or a hash of sides). tight_layout(uniform_margins => 1) acts on
+      subplot / subplots panels only and never reached add_gridspec panels:
+      a 5x5 grid with 19 panels had plot areas of 128x64, 128x72, 116x90 and
+      128x90 px. (t/44)
+    - Figure: label_only($ax) and label_outer — tick numbers on chosen panels
+      only / on the leftmost panel of each row and the lowest of each column,
+      found from the panel positions so that grids with empty cells work. (t/44)
+    - Axes: colorbar(cmap => ..., vmin => ..., vmax => ...) attaches a colorbar
+      that does not come from a plot command (drawn on axis('off') panels too);
+      reserve => 0 takes no room from the plot rectangle; tick_step puts the
+      ticks at the multiples of a value. (t/44)
+    - tight_layout: in a GridSpec cell narrower or lower than its margins the
+      margins are shrunk so that a plot rectangle remains. They used to cross
+      (a 25 px cell got a plot width of -22 px and data_to_pixel ran
+      backwards). (t/44)
+    - Driver::GS show_grid_scrub: each window is rendered as an image of its
+      own current size. All windows used the size the driver was created with,
+      so after a resize the figure was cut off at the right and bottom (window
+      enlarged) or drawn small in the top-left corner (window shrunk), and the
+      enlarged cell windows had the same fault from the start. (t/43)
     - Figure: add_connection — straight line between a point of one axes and a
       point of another (data / axes-fraction / figure-fraction coordinates, mixed
       per component), drawn over all axes; clf removes them (t/42)

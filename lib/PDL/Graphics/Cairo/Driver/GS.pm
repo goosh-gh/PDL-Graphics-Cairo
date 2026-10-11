@@ -278,11 +278,16 @@ sub _render_w { int($_[0]->width  * ($ENV{PDLCAIRO_RENDER_SCALE} // 1.0)) || 1 }
 sub _render_h { int($_[0]->height * ($ENV{PDLCAIRO_RENDER_SCALE} // 1.0)) || 1 }
 
 # Figure → :memory: Cairo → メモリPNG（show() のロジックを再利用）
+# $w, $h (optional): size of the image in pixels. Default: the driver's own
+# size. show_grid_scrub passes the size of the figure, because each of its
+# windows has its own size, which also changes when the window is resized.
 sub _figure_to_png {
-    my ($self, $figure) = @_;
+    my ($self, $figure, $w, $h) = @_;
     my $_t0 = Time::HiRes::time();
+    $w = defined $w ? (int($w) || 1) : $self->_render_w;
+    $h = defined $h ? (int($h) || 1) : $self->_render_h;
     my $cairo = PDL::Graphics::Cairo::Driver::Cairo->new(
-        width => $self->_render_w, height => $self->_render_h, file => ':memory:');
+        width => $w, height => $h, file => ':memory:');
     $figure->_render_to($cairo);
     my $_t1 = Time::HiRes::time();
     my $bytes = $cairo->png_bytes;
@@ -745,6 +750,12 @@ sub show {
 #   marker       => { color=>[r,g,b], ms=>.., marker=>'o' }  子窓マーカ
 #   readout      => sub { my ($x,$y)=@_; return "x=..." }    右上テキスト整形
 #   cell_title   => sub { my ($ax_idx)=@_; return "Cell $ax_idx" }  子窓タイトル
+#   main_scrub   => 1                親窓でのクリック/ドラッグでも潜時を選ぶ
+#                                    (既定 0 = 親窓はダブルクリックのみ)
+#
+# grid_render が返す Figure の Axes に $ax->{_scrub_skip} = 1 を立てると、その
+# パネルには潜時縦線を引かず、main_scrub のクリック対象にもしない(頭皮マップ
+# など時間軸でないパネル用)。ダブルクリックでの拡大は従来どおり効く。
 # ---------------------------------------------------------------------
 sub show_grid_scrub {
     my ($self, %opt) = @_;
@@ -766,6 +777,7 @@ sub show_grid_scrub {
         marker      => $opt{marker}  || { color => [1,0,0], ms => 7, marker => 'o' },
         readout     => $opt{readout} || sub { sprintf("x=%.4g\ny=%.4g", $_[0], $_[1]) },
         cell_title  => $opt{cell_title} || sub { "cell $_[0]" },
+        main_scrub  => $opt{main_scrub} ? 1 : 0,
         wins        => [],            # 全窓レコード
         cells       => {},            # ax_idx => 子窓レコード(重複オープン防止)
     };
@@ -816,7 +828,7 @@ sub _open_window {
     # 以後 image_frac_to_data(プロット枠が確定した図が必要)に使う。
     my $fig = $win->{render}->($win);
     $win->{last_fig} = $fig;
-    _send_msg($sock, GSP_MSG_PNG, $self->_figure_to_png($fig), $win->{seq}++);
+    _send_msg($sock, GSP_MSG_PNG, $self->_window_png($fig), $win->{seq}++);
     $win->{await_ack} = 1;
 
     push @{ $wm->{wins} }, $win;
@@ -885,10 +897,19 @@ sub _run_windows {
             my $fig = $win->{render}->($win);
             $win->{last_fig} = $fig;
             _send_msg($win->{sock}, GSP_MSG_PNG,
-                      $self->_figure_to_png($fig), $win->{seq}++);
+                      $self->_window_png($fig), $win->{seq}++);
             $win->{await_ack} = 1;
         }
     }
+}
+
+# PNG of a show_grid_scrub window: an image of the figure's own size. The
+# figure was laid out for the current size of that window (grid_render /
+# cell_render get it as $w, $h), which is not the driver's size for the
+# enlarged windows, nor for any window after it was resized.
+sub _window_png {
+    my ($self, $fig) = @_;
+    return $self->_figure_to_png($fig, $fig->width, $fig->height);
 }
 
 sub _win_by_sock {
@@ -922,6 +943,11 @@ sub _dispatch {
             # 親窓: ダブルクリック(btn の 0x10 ビット)だけ拾ってセル拡大
             if ($type == GSP_MSG_PICK && ($btn & 0x10)) {
                 $self->_dblclick_main($wm, $win, $fx, $fy);
+            }
+            elsif ($wm->{main_scrub}
+                   && ($type == GSP_MSG_PICK || ($btn & 0x0F))) {
+                # main_scrub: 親窓でのクリック/ドラッグでも潜時を選ぶ
+                $self->_main_scrub($wm, $win, $fx, $fy);
             }
         } else {
             $self->_cell_cursor($wm, $win, $type, $fx, $fy, $btn);
@@ -960,6 +986,25 @@ sub _dblclick_main {
         render => sub { my ($w) = @_; $self->_paint_cell($wm, $w) },
     );
     $wm->{cells}{$idx} = $cell;
+}
+
+# 親窓でのクリック/ドラッグ(main_scrub => 1 のとき)。ポインタ下のパネルの x を
+# 共有潜時にする。_scrub_skip を立てた Axes(時間軸でないパネル)は対象外。
+# 子窓でのドラッグと同じく、親窓は即時に、開いているセル窓はドラッグが途切れた
+# ときにまとめて更新する。
+sub _main_scrub {
+    my ($self, $wm, $win, $fx, $fy) = @_;
+    my $fig = $win->{last_fig} or return;
+    for my $ax (@{ $fig->axes_list }) {
+        next if $ax->{_scrub_skip};
+        my ($xd, $yd) = $ax->image_frac_to_data($fx, $fy);
+        next unless defined $xd;
+        $wm->{state}{_scrub_lat} = $xd;
+        $win->{dirty} = 1;
+        $wm->{_scrub_stale} = 1;
+        return 1;
+    }
+    return 0;
 }
 
 # 子窓カーソル/ドラッグ。
@@ -1012,6 +1057,7 @@ sub _paint_main {
     if (defined $lat) {
         my $vs = $wm->{vline};
         for my $ax (@{ $fig->axes_list }) {
+            next if $ax->{_scrub_skip};          # 時間軸でないパネルには引かない
             $ax->axvline($lat, color => $vs->{color}, lw => $vs->{lw});
         }
     }
