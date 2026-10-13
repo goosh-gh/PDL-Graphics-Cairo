@@ -107,6 +107,17 @@ sub BUILD {
     # Pango — デフォルトフォントは rcParams['font.family'] から取得
     # (rcParams未設定時は 'Helvetica Neue' フォールバック)
     $self->{pango}   = Pango::Cairo::create_layout($cr);
+    # 文字のアンチエイリアスはグレースケールに固定する。$cr->set_antialias は
+    # 図形にしか効かず、文字は fontconfig の rgba 設定に従う。Ubuntu 26.04 など
+    # rgba=rgb の環境ではサブピクセル描画になり、保存画像の文字に赤・青の
+    # 色にじみが出る(t/39・t/41 の色重心測定もこれで狂った)。
+    {
+        my $fo = Cairo::FontOptions->create;
+        $fo->set_antialias('gray');
+        $fo->set_subpixel_order('default');
+        Pango::Cairo::Context::set_font_options($self->{pango}->get_context, $fo);
+        $self->{pango}->context_changed;
+    }
     {
         my $rcp = \%PDL::Graphics::Cairo::_RCPARAMS;
         $self->{font_family} = $rcp->{'font.family'} // 'Helvetica Neue';
