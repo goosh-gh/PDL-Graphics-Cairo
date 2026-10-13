@@ -1,6 +1,11 @@
 Revision history for PDL-Graphics-Cairo
 
 (unreleased)
+    - Driver::Cairo: text is rendered with grayscale antialiasing.
+      $cr->set_antialias('gray') only covered shapes; Pango text followed
+      fontconfig's rgba setting, so on Ubuntu 26.04 (rgba=rgb) saved images
+      had red/blue subpixel fringes on text, and t/39 and t/41 failed
+      (their colour-centroid measurement picked up the fringes).
     - Axes: get_xlim / get_ylim now return the range resolved by the last
       draw() (autoscale padding included, as in matplotlib) when no xlim/ylim
       is set. They used to return (0, 1) for autoscaled axes. Explicit limits
