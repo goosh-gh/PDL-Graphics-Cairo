@@ -1,6 +1,7 @@
 Revision history for PDL-Graphics-Cairo
 
 (unreleased)
+0.4  2026-10-13
     - Driver::Cairo: text is rendered with grayscale antialiasing.
       $cr->set_antialias('gray') only covered shapes; Pango text followed
       fontconfig's rgba setting, so on Ubuntu 26.04 (rgba=rgb) saved images
