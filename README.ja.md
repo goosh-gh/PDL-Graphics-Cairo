@@ -248,13 +248,19 @@ PDL-Graphics-Cairo/
 
 ---
 
-## 重要: tight_layout() を必ず呼ぶこと
+## tight_layout()
 
-`$fig->show()` や `$fig->save()` の前に `$fig->tight_layout()` を呼んでください：
+`$fig->save()` や `$fig->show()` で描画するとき、`tight_layout()` がまだ
+呼ばれていなければ自動で呼ばれます。明示的に呼ぶのは、`pad` などの
+オプションを指定したいときです。呼んだ時点の内容でレイアウトが決まり、
+描画のときには計算し直されないので、Axes・ラベル・タイトルをすべて
+作ってから呼んでください：
 
 ```perl
-$fig->tight_layout();
-$fig->show();
+$ax->set_xlabel('x');
+$ax->set_ylabel('y');
+$fig->tight_layout(pad => 1.2);   # 内容をすべて作った後で
+$fig->save('plot.png');
 ```
 
 ---

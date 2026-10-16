@@ -1,6 +1,20 @@
 Revision history for PDL-Graphics-Cairo
 
 (unreleased)
+
+0.41  2026-10-16
+  - imshow draws the whole image in one call (Driver::Cairo::image_rgb)
+    instead of one rectangle per cell; ColorMap and ListedColormap have
+    rgb_norm_pdl. Pixels on the edges between cells differ slightly from
+    0.4; in PDF/SVG the image is embedded as one picture.
+  - png_bytes encodes opaque surfaces in memory, with
+    PDL::IO::PNG::png_encode when available, otherwise with
+    Compress::Zlib; PDLCAIRO_PNG_LEVEL sets the zlib level (default 1).
+  - show_grid_scrub prints per-frame timing (frame:, ack:) with
+    PDLCAIRO_DEBUG=1.
+  - New tests t/45_imshow_image.t, t/46_grid_frame_timing.t,
+    t/47_png_bytes.t.
+
 0.4  2026-10-13
     - Driver::Cairo: text is rendered with grayscale antialiasing.
       $cr->set_antialias('gray') only covered shapes; Pango text followed

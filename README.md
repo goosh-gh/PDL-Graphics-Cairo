@@ -438,7 +438,8 @@ Profiled with `eeg_viewer_raw.pl` (8 ch visible × 10 s × 1 kHz, 1100×900 wind
 | Cairo render | 60 ms | 12–22 ms | `PDLCAIRO_RENDER_SCALE=0.5–0.75` |
 | **Total/frame** | **~330 ms** | **~46 ms** | **~7× faster** |
 
-`PDLCAIRO_RENDER_SCALE` controls render resolution (default `0.75`): the figure
+`PDLCAIRO_RENDER_SCALE` controls render resolution (default `1.0`;
+`eeg_viewer_raw.pl` sets `0.75` when it is not set): the figure
 is rendered at a fraction of the window size and scaled up by the Cocoa/Xlib
 viewer — no loss of interactivity.
 

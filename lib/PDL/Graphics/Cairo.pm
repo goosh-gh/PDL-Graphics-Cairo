@@ -3,7 +3,7 @@ package PDL::Graphics::Cairo;
 use strict;
 use warnings;
 
-our $VERSION = '0.4';
+our $VERSION = '0.41';
 
 use Exporter;
 our @EXPORT_OK = qw(figure subplots subplot_mosaic imread
