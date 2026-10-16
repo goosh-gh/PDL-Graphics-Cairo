@@ -2134,8 +2134,36 @@ sub _render_cmd {
         my $upper  = ($cmd->{origin} // 'upper') eq 'upper';
         my $rows   = $dims[0];
         my $cols   = $dims[1];
+        my $is_rgb = ($ndims == 3 && $dims[2] == 3);
 
-        if ($ndims == 3 && $dims[2] == 3) {
+        # Fast path: the whole image in one call. $data is (rows, cols[, 3]);
+        # image_rgb wants (cols, rows) with row 0 at the top.
+        if ($b->can('image_rgb')) {
+            my ($rr, $gg, $bb);
+            if ($is_rgb) {
+                ($rr, $gg, $bb) = map { $data->slice(":,:,($_)") } 0 .. 2;
+            }
+            elsif ($cmd->{cmap}->can('rgb_norm_pdl')) {
+                ($rr, $gg, $bb) = $cmd->{cmap}->rgb_norm_pdl(
+                    $data, $cmd->{vmin}, $cmd->{vmax});
+            }
+            else {                      # a colormap object without rgb_norm_pdl
+                ($rr, $gg, $bb) = map { zeroes(double, $rows, $cols) } 1 .. 3;
+                for my $r (0 .. $rows-1) {
+                    for my $c (0 .. $cols-1) {
+                        my @rgb = $cmd->{cmap}->rgb_norm(
+                            $data->at($r,$c), $cmd->{vmin}, $cmd->{vmax});
+                        $rr->set($r,$c,$rgb[0]);
+                        $gg->set($r,$c,$rgb[1]);
+                        $bb->set($r,$c,$rgb[2]);
+                    }
+                }
+            }
+            my @img = map { my $p = $_->xchg(0, 1);           # (cols, rows)
+                            $upper ? $p : $p->slice(':,-1:0') } ($rr, $gg, $bb);
+            $b->image_rgb($ml, $mt, $cols*$pw, $rows*$ph, @img, $cmd->{alpha});
+        }
+        elsif ($is_rgb) {
             # RGB画像 [H, W, 3]
             for my $r (0 .. $rows-1) {
                 my $rd = $upper ? $r : $rows-1-$r;

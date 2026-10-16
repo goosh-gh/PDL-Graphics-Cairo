@@ -47,12 +47,14 @@ PDL::Graphics::Cairo (P:G:C) is a high-level 2D plotting library for [PDL](https
 - `Normalize`, `LogNorm`, `BoundaryNorm`, `TwoSlopeNorm` — data-to-color mapping
 - `colorbar(label => '...')` — colorbar with an optional title, placed on any side (`top`/`bottom`/`left`/`right`). The reserved margin is sized from the actual bar width, tick-label width and caption (not a fixed constant), so a thin bar takes little space. A colorbar normally needs a visible axis; set `$ax->{_colorbar_force} = 1` to draw one on an `axis('off')` panel (e.g. to hang a colour bar off a round topomap). `colorbar(cmap => $name_or_object, vmin => ..., vmax => ...)` attaches a colorbar that does not come from a plot command of that Axes (an image the caller coloured itself); the object needs `rgb_at($v)`, and such a colorbar is drawn on an `axis('off')` panel too. `reserve => 0` takes no room from the plot rectangle, so an equal-aspect image narrower than its panel stays centred with the bar beside it. `tick_step => 1` puts the ticks at the multiples of that value instead of automatically chosen ones (thinned to every 2nd, 3rd, ... multiple when the numbers would overlap on a short bar)
 - `pcolormesh` / `pcolor` — pseudocolor plots on a non-uniform grid (unlike `imshow`, cell boundaries don't need to be equally spaced)
+- `imshow` draws the whole image in one call (each cell scaled without smoothing); cells whose value is not finite are left transparent
 
 ### Output
 - PNG (via `PDL::IO::PNG` or Cairo), PDF, SVG
+- Frames sent to `giza-server` are encoded as PNG in memory: with `PDL::IO::PNG::png_encode` when it is installed, otherwise with `Compress::Zlib`; figures with transparent pixels take the file-writing path above. `PDLCAIRO_PNG_LEVEL` sets the zlib level (default 1)
 - Interactive display via `giza-server` (persistent window with tabs, sliders, resize, cursor/pick). Slider values arrive normalized `[0,1]` (the client assigns each slider's meaning); `show_interactive(init => { 0 => ..., 1 => ... })` sets each slider's initial thumb position.
 - Interactive **3D mesh + point viewer** via `Driver::GS3D` (see [3D](#3d-drivergs3d) below) — triangle mesh surface (z-buffer Gouraud shading) with point markers, quaternion trackball rotation, wheel zoom; **macOS (Cocoa)** viewer (the Linux Xlib viewer does not render the 3D mesh)
-- Interactive **grid scrub** via `show_grid_scrub` (`Driver::GS`) — double-click a subplot to open a zoomed child window; drag on the trace to mark that latency, draw a vertical line at the same latency in every parent subplot, and read out the point; the selection is kept after release and shared across all open child windows. With `main_scrub => 1` a click or drag on a panel of the grid itself selects the latency too. A panel whose Axes carries `$ax->{_scrub_skip} = 1` gets no latency line and is not a click target (for panels that are not a time axis, e.g. a scalp map); double-clicking it still opens it enlarged. **macOS (Cocoa)** `giza-server` only (needs a build that reports 2D double-click and button-drag events)
+- Interactive **grid scrub** via `show_grid_scrub` (`Driver::GS`) — double-click a subplot to open a zoomed child window; drag on the trace to mark that latency, draw a vertical line at the same latency in every parent subplot, and read out the point; the selection is kept after release and shared across all open child windows. With `main_scrub => 1` a click or drag on a panel of the grid itself selects the latency too. A panel whose Axes carries `$ax->{_scrub_skip} = 1` gets no latency line and is not a click target (for panels that are not a time axis, e.g. a scalp map); double-clicking it still opens it enlarged. **macOS (Cocoa)** `giza-server` only (needs a build that reports 2D double-click and button-drag events). With `PDLCAIRO_DEBUG=1` each frame prints `frame: build=.. png=.. send=.. gap=.. events=.. age=..` (time in the render callback, PNG encoding, socket write, interval since the window's previous frame, input events received since then, age of the newest one) and `ack: ..ms after send`
 - Inline display in `App::PDL::Notebook` (via `$fig->to_inline`)
 
 ### Downsampling
@@ -439,6 +441,20 @@ Profiled with `eeg_viewer_raw.pl` (8 ch visible × 10 s × 1 kHz, 1100×900 wind
 `PDLCAIRO_RENDER_SCALE` controls render resolution (default `0.75`): the figure
 is rendered at a fraction of the window size and scaled up by the Cocoa/Xlib
 viewer — no loss of interactivity.
+
+### Grid scrub (`examples/avg_grid_scrub.pl` of PDL-EEG)
+
+19 waveform panels and a scalp map, 1100×850 window, one frame while
+dragging the latency (Apple M5 Pro, perl 5.40, PDL 2.104, `PDLCAIRO_DEBUG=1`):
+
+| Step | 0.4 | 0.41 |
+|------|-----|------|
+| Cairo render | 34 ms | 13 ms |
+| PNG | 20 ms | 6 ms |
+
+The render step got faster because `imshow` (the scalp map) is drawn as one
+image instead of one rectangle per cell, and the PNG step because frames are
+encoded in memory with `PDL::IO::PNG::png_encode`.
 
 ---
 

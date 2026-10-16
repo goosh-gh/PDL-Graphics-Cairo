@@ -141,6 +141,31 @@ sub rgb_norm {
     return $self->rgb_at($v);
 }
 
+# rgb_norm_pdl($data, $vmin, $vmax) → ($r, $g, $b)
+#   rgb_norm for a whole piddle at once. Returns three piddles with the
+#   dims of $data. Elements that are not finite come back as NaN.
+sub rgb_norm_pdl {
+    my ($self, $data, $vmin, $vmax) = @_;
+    require PDL::Lite;
+    my $d = $data->double;
+    my $v = ($vmax == $vmin) ? $d * 0 + 0.5 : ($d - $vmin) / ($vmax - $vmin);
+    my $bad = !$d->isfinite;
+    $v = $v->clip(0, 1)->copy;
+    $v->where($bad) .= 0;           # interpol warns about NaN ("extrapolated")
+    my $nan = PDL::Core::pdl('nan');
+    my $pts = $self->{pts};
+    my $t   = PDL::Core::pdl([ map { $_->[0] } @$pts ]);
+    my @out;
+    for my $k (1 .. 3) {
+        my $c = PDL::Core::pdl([ map { $_->[$k] } @$pts ]);
+        # piecewise linear between the control points, as in rgb_at
+        my $o = PDL::Primitive::interpol($v, $t, $c);
+        $o->where($bad) .= $nan;
+        push @out, $o;
+    }
+    return @out;
+}
+
 # 256  RGB 
 sub lut {
     my ($self, $n) = @_;

@@ -826,10 +826,7 @@ sub _open_window {
 
     # 初期フレーム(装飾なし=カーソル未設定)。last_fig に描画済み図を保持し、
     # 以後 image_frac_to_data(プロット枠が確定した図が必要)に使う。
-    my $fig = $win->{render}->($win);
-    $win->{last_fig} = $fig;
-    _send_msg($sock, GSP_MSG_PNG, $self->_window_png($fig), $win->{seq}++);
-    $win->{await_ack} = 1;
+    $self->_send_frame($win);
 
     push @{ $wm->{wins} }, $win;
     return $win;
@@ -894,13 +891,46 @@ sub _run_windows {
         for my $win (grep { $_->{alive} } @{ $wm->{wins} }) {
             next unless $win->{dirty} && !$win->{await_ack};
             $win->{dirty} = 0;
-            my $fig = $win->{render}->($win);
-            $win->{last_fig} = $fig;
-            _send_msg($win->{sock}, GSP_MSG_PNG,
-                      $self->_window_png($fig), $win->{seq}++);
-            $win->{await_ack} = 1;
+            $self->_send_frame($win);
         }
     }
+}
+
+# Build the window's figure, send it as a PNG and wait for its ACK.
+# last_fig keeps the drawn figure (image_frac_to_data needs a figure whose
+# plot frame is fixed). With verbose, prints after the "png:" line
+#   frame: build=..ms png=..ms send=..ms
+# where build is the render callback (grid_render / cell_render, so any
+# map computation the caller does), png is _figure_to_png (cairo_render +
+# png_compress) and send is the write to the socket; and when the ACK
+# arrives,
+#   ack: ..ms after send
+# which is the time giza-server took to take the PNG in and show it.
+sub _send_frame {
+    my ($self, $win) = @_;
+    my $t0  = Time::HiRes::time();
+    my $fig = $win->{render}->($win);
+    $win->{last_fig} = $fig;
+    my $t1  = Time::HiRes::time();
+    my $png = $self->_window_png($fig);
+    my $t2  = Time::HiRes::time();
+    _send_msg($win->{sock}, GSP_MSG_PNG, $png, $win->{seq}++);
+    my $t3  = Time::HiRes::time();
+    $win->{await_ack} = 1;
+    $win->{sent_at}   = $t3;
+    if ($self->verbose) {
+        # gap: since this window's previous frame started. events: input
+        # messages (CURSOR/PICK/RESIZE, any window) since then. age: how old
+        # the newest of them was when this frame started.
+        my $gap = defined $win->{frame_at} ? sprintf('%.0fms', ($t0 - $win->{frame_at}) * 1000) : '-';
+        my $age = defined $self->{_input_at} ? sprintf('%.0fms', ($t0 - $self->{_input_at}) * 1000) : '-';
+        printf "  frame: build=%.0fms  png=%.0fms  send=%.0fms  gap=%s  events=%d  age=%s\n",
+            ($t1 - $t0) * 1000, ($t2 - $t1) * 1000, ($t3 - $t2) * 1000,
+            $gap, ($self->{_n_input} // 0) - ($win->{n_input_at_frame} // 0), $age;
+    }
+    $win->{frame_at}         = $t0;
+    $win->{n_input_at_frame} = $self->{_n_input} // 0;
+    return $fig;
 }
 
 # PNG of a show_grid_scrub window: an image of the figure's own size. The
@@ -929,8 +959,18 @@ sub _close_window {
 sub _dispatch {
     my ($self, $wm, $win, $type, $pl) = @_;
 
+    if ($type == GSP_MSG_RESIZE || $type == GSP_MSG_CURSOR || $type == GSP_MSG_PICK) {
+        $self->{_n_input}++;                        # for the verbose frame line
+        $self->{_input_at} = Time::HiRes::time();
+    }
+
     if ($type == GSP_MSG_ACK) {
         $win->{await_ack} = 0;
+        if ($self->verbose && defined $win->{sent_at}) {
+            printf "  ack: %.0fms after send\n",
+                (Time::HiRes::time() - $win->{sent_at}) * 1000;
+            $win->{sent_at} = undef;
+        }
     }
     elsif ($type == GSP_MSG_RESIZE) {
         my ($w, $h) = unpack('L L', $pl);

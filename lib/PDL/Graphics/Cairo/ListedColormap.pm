@@ -69,6 +69,30 @@ sub rgb_norm {
     return $self->rgb_at($t);
 }
 
+# rgb_norm_pdl($data, $vmin, $vmax) → ($r, $g, $b)
+#   rgb_norm for a whole piddle at once. Returns three piddles with the
+#   dims of $data. Elements that are not finite come back as NaN.
+sub rgb_norm_pdl {
+    my ($self, $data, $vmin, $vmax) = @_;
+    require PDL::Lite;
+    my $d   = $data->double;
+    my $bad = !$d->isfinite;
+    my $t = ($vmax == $vmin) ? $d * 0 + 0.5 : ($d - $vmin) / ($vmax - $vmin);
+    $t = $t->clip(0, 1)->copy;
+    $t->where($bad) .= 0;
+    my $n   = scalar @{ $self->{colors} };
+    my $idx = ($t * $n)->floor->long->clip(0, $n - 1);   # as int($t * $n) in rgb_at
+    my $nan = PDL::Core::pdl('nan');
+    my @out;
+    for my $k (0 .. 2) {
+        my $tab = PDL::Core::pdl([ map { $_->[$k] } @{ $self->{colors} } ]);
+        my $o = $tab->index($idx)->copy;
+        $o->where($bad) .= $nan;
+        push @out, $o;
+    }
+    return @out;
+}
+
 # lut($n) — return lookup table of n colors
 sub lut {
     my ($self, $n) = @_;

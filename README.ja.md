@@ -16,7 +16,7 @@ PDL::Graphics::Cairo がレンダリングを担います。
 - PNG・PDF・SVGファイル出力 — X11・libgiza 不要
 - **giza_server による macOS ネイティブ表示** — macOS の既定。素の `$fig->show()` でネイティブウィンドウが開きます。Unix ドメインソケット経由のオンメモリ PNG 転送、プログラム終了後も残る永続タブウィンドウ、giza/PGPLOT の C プログラムと共有。Linux でも動作（GTK3/Xlib サーバ）
 - **複数プロットをタブで1ウィンドウ表示**（giza_server）
-- **グリッドスクラブ** `show_grid_scrub`（`Driver::GS`）— サブプロットをダブルクリックで拡大子窓を開き、トレース上をドラッグしてその潜時にマーカを置き、親の全サブプロットに同じ潜時の縦線を引く。選択点はマウスを離した後も保持し、開いている全子窓で共有。`main_scrub => 1` を指定すると、親窓のパネル上のクリック／ドラッグでも潜時を選べる。Axes に `$ax->{_scrub_skip} = 1` を立てたパネルには縦線を引かず、クリック対象にもしない（頭皮マップなど時間軸でないパネル用。ダブルクリックでの拡大は効く）。**macOS（Cocoa）** giza_server 専用（2D のダブルクリック／ボタンドラッグを返すビルドが必要）
+- **グリッドスクラブ** `show_grid_scrub`（`Driver::GS`）— サブプロットをダブルクリックで拡大子窓を開き、トレース上をドラッグしてその潜時にマーカを置き、親の全サブプロットに同じ潜時の縦線を引く。選択点はマウスを離した後も保持し、開いている全子窓で共有。`main_scrub => 1` を指定すると、親窓のパネル上のクリック／ドラッグでも潜時を選べる。Axes に `$ax->{_scrub_skip} = 1` を立てたパネルには縦線を引かず、クリック対象にもしない（頭皮マップなど時間軸でないパネル用。ダブルクリックでの拡大は効く）。**macOS（Cocoa）** giza_server 専用（2D のダブルクリック／ボタンドラッグを返すビルドが必要）。`PDLCAIRO_DEBUG=1` で1コマごとに `frame: build=.. png=.. send=.. gap=.. events=.. age=..`（描画コールバック・PNG化・ソケット書き込みの時間、同じ窓の前のコマからの間隔、その間に届いた入力の数、その最新のものの古さ）と `ack: ..ms after send` を出す
 - gnuplot経由のインタラクティブ表示（aqua/wxt/x11）— クロスプラットフォーム。giza_server が無い場合の自動フォールバック
 - レガシー macOS Cocoa ビューア（`backend => 'osx'`、`pdlcairo_viewer`）は **deprecated** なオプトインのフォールバックとしてのみ残置 — 既定ではなく、`make` でもビルドされません
 - CairoによるAxes枠・目盛り・数値ラベルの描画
@@ -287,6 +287,8 @@ deprecated で、`make` でもビルドされません。
 | `PDLCAIRO_BACKEND` | `show()` のバックエンドを上書き: `gs`（macOS の既定）、`gnuplot`、`osx`（deprecated） |
 | `GIZA_SERVER` | `giza_server` バイナリのフルパスを指定（自動検出を上書き） |
 | `PDLCAIRO_VIEWER` | レガシー `pdlcairo_viewer` バイナリのフルパス（deprecated な `osx` バックエンド用） |
+| `PDLCAIRO_DEBUG` | `1` で `gs` ドライバが描画・PNG化の時間を出す（`show_grid_scrub` では1コマごとの `frame:` / `ack:` も） |
+| `PDLCAIRO_PNG_LEVEL` | giza_server へ送る PNG の zlib 圧縮レベル（既定 1）。PNG はメモリ上で作る（`PDL::IO::PNG::png_encode` があればそれ、無ければ `Compress::Zlib`。透明な画素のある図はファイル経由の経路） |
 
 ---
 
@@ -302,7 +304,7 @@ deprecated で、`make` でもビルドされません。
 | `fill_between` | 塗りつぶし帯 |
 | `step` | ステップ関数 |
 | `stem` | ステムプロット |
-| `imshow` | 2D画像（カラーバー付き） |
+| `imshow` | 2D画像（カラーバー付き）。画像全体を1回で描く（セルは平滑化せずに拡大）。値が有限でないセルは透明 |
 | `contourf` | 等高線（塗りつぶし） |
 | `pie` | 円グラフ |
 | `boxplot` | 箱ひげ図 |
