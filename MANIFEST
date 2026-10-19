@@ -52,6 +52,7 @@ examples/specgram_demo.pl
 lib/PDL/Graphics/Cairo.pm
 lib/PDL/Graphics/Cairo/Artist/Line.pm
 lib/PDL/Graphics/Cairo/Axes.pm
+lib/PDL/Graphics/Cairo/Axes/Decor.pm
 lib/PDL/Graphics/Cairo/Axes/Render/Bar.pm
 lib/PDL/Graphics/Cairo/Axes/Render/Basic.pm
 lib/PDL/Graphics/Cairo/Axes/Render/Image.pm
