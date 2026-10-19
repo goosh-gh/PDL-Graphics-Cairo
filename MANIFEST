@@ -136,6 +136,7 @@ t/53_twinx_right_label.t
 t/54_nice_ticks_step.t
 t/55_linewidth_keys.t
 t/56_gs_title_clip.t
+t/57_public_names.t
 tools/demo_gs3d_electrodes.pl
 tools/verify_gs3d.pl
 tools/verify_gs3d_projection.pl

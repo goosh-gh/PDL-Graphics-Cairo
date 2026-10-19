@@ -1983,7 +1983,13 @@ sub _render_cmd {
         my $cmap = $self->_resolve_cmap($cmd->{cmap});
         $b->set_alpha($cmd->{alpha});
 
-        for my $key (keys %counts) {
+        # 行・列の順に描く。隣の六角形とふちの画素が重なるので、ハッシュの
+        # 順(実行ごとに変わる)で描くと、図が実行のたびに少し変わっていた。
+        # (この sub では $b がバックエンドなので、sort { $a <=> $b } は使えない。
+        #  桁をそろえた文字列にして、既定の sort で並べる。)
+        my %by_pos = map { my ($r, $c) = split /,/; (sprintf('%010d,%010d', $r, $c) => $_) }
+                     keys %counts;
+        for my $key (map { $by_pos{$_} } sort keys %by_pos) {
             my $cnt = $counts{$key};
             next if $cnt < $mincnt;
             my ($row, $col) = split /,/, $key;
