@@ -344,6 +344,7 @@ deprecated で、`make` でもビルドされません。
 | `annotate` | 矢印アノテーション |
 | `$fig->add_connection` | 異なる Axes の2点を結ぶ直線（matplotlib `ConnectionPatch` 相当）。各端点は `'data'` / `'axes'`（プロット枠内の割合）/ `'figure'`（Figure 内の割合）座標、または `['data','axes']` のように成分ごとに指定。全 Axes の上にクリップなしで描く |
 | `$fig->add_text` | `add_connection` と同じ座標指定で置くテキスト。全 Axes の上にクリップなしで描くので、プロット枠のすぐ外にも置ける。`ha` / `va` / `offset`(px) / `fontsize` / `weight` / `color` / `angle` |
+| GridSpec / `subplot_mosaic` の `$fig->tight_layout` | `cell_margins` を指定しない GridSpec で `$fig->tight_layout` を呼ぶと、各パネルが描画領域の周りに要る幅（目盛りの数字・ラベル・タイトル・colorbar・twin の軸）から配置を決める（matplotlib の `tight_layout` と同じ）。GridSpec の `left` / `right` / `top` / `bottom` / `hspace` / `wspace` は置き換えられ、同じ行（列）のパネルの描画領域がそろい、残りの高さ（幅）を `height_ratios` / `width_ratios` で分ける。`save` / `show` が自分でレイアウトするときと、`set_position` で置いたパネルは、GridSpec 自身の位置と隙間のまま |
 | `add_gridspec(..., cell_margins => 0)` | その GridSpec に置く全 Axes に同じ固定余白を与える。グリッド内の位置や空きマスに関係なく、全パネルの描画領域が同じ大きさになる。`0` ではマスそのものがプロット枠になり（matplotlib と同じ）、目盛りの数字やラベルはマス間の隙間（`wspace` / `hspace`）とグリッドの外側（`left` / `right` / `top` / `bottom`）に描かれる。数値は四辺とも同じ px、ハッシュは辺ごと: `cell_margins => { left => 30, bottom => 20 }` |
 | `$fig->label_only($ax)` | 目盛りの数字を `$ax`（または `[$ax, ...]`）だけに出す。`axis => 'x' \| 'y' \| 'both'`、`axes => [...]`。目盛り線は全パネルに残る |
 | `$fig->label_outer` | y の数字を各行の左端のパネルだけ、x の数字を各列の最下段のパネルだけに出す。行と列はパネルの位置から求めるので、空きマスのあるグリッドでも使える |

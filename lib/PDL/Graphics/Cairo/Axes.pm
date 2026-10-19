@@ -1625,6 +1625,7 @@ sub set_position {
     $self->{fig_y}  = $new_y;
     $self->{width}  = $new_w;
     $self->{height} = $new_h;
+    $self->{_position_set} = 1;     # tight_layout does not move it (_tight_gridspec)
     return $self;
 }
 

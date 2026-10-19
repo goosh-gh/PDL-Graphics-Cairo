@@ -423,7 +423,9 @@ sub _render_to {
     }
 
     # tight_layout が未適用なら自動で適用する
-    $self->tight_layout() unless $self->{_tight_done};
+    # _auto: GridSpec cells stay as the GridSpec gives them unless tight_layout
+    # is called explicitly (see _tight_gridspec)
+    $self->tight_layout(_auto => 1) unless $self->{_tight_done};
     for my $ax (@{ $self->axes_list }) {
         $ax->draw($driver);
     }
@@ -776,6 +778,117 @@ sub clf {
 # ------------------------------------------------------------------
 # tight_layout — subplot 
 # ------------------------------------------------------------------
+# _tight_gridspec(\@entries, $measurer, $room_of, $left, $top, $right, $bottom)
+# Lays out the panels of one GridSpec inside the area (px) given. Each panel
+# needs room around its plot rectangle: tick numbers, labels and title
+# (Axes::_label_room), a twin's axis, a colorbar. A column gets on its left
+# the largest need of the panels that start there and on its right the
+# largest of those that end there (rows likewise, top and bottom); between
+# two neighbouring columns the two needs add up, with GS_PAD px between them.
+# What is left is shared among the columns (rows) by width_ratios
+# (height_ratios). Each panel's plot rectangle is then exactly the span of
+# its cells, so the plot rectangles of a row (column) line up, and its
+# margins are its own needs.
+# Returns false (and changes nothing) when the GridSpec has cell_margins, a
+# polar panel or a panel placed with set_position, or when the plot
+# rectangles would be smaller than GS_MIN px;
+# tight_layout then falls back to margins inside the GridSpec's own cells.
+# Up to 0.42 tight_layout kept the GridSpec's cells (left/right/top/bottom and
+# hspace/wspace) and added its own fixed margins (60-72 px left, 36-66 px
+# below, ...) inside each cell, so the gaps were both added and the figures
+# of examples/example_gridspec.pl were mostly empty space.
+use constant { GS_PAD => 10, GS_MIN => 40 };
+sub _tight_gridspec {
+    my ($ents, $meas, $room_of, $left, $top, $right, $bottom) = @_;
+    my $gs = $ents->[0]{gs};
+    return 0 if defined $gs->cell_margins;
+    return 0 if grep { $_->{ax}{_position_set} } @$ents;   # placed with set_position
+    return 0 if grep { $_->{ax}->isa('PDL::Graphics::Cairo::PolarAxes') } @$ents;
+    my ($nr, $nc) = ($gs->nrows, $gs->ncols);
+
+    # room each panel needs: (left, right, top, bottom)
+    my %need;
+    for my $e (@$ents) {
+        my $ax = $e->{ax};
+        my ($l, $r, $t, $b);
+        if ($ax->{_axis_off}) {
+            ($l, $r, $t, $b) = (2, 2, 2, 2);
+        } else {
+            my ($nl, $nb, $nt, $nrt) = $room_of->($ax);
+            ($l, $r, $t, $b) = ($nl, $nrt, $nt, $nb);
+            $r = 4 if $r < 4;           # the frame line and the last x tick number
+            $t = 4 if $t < 4;
+        }
+        if ($ax->_colorbar && $ax->colorbar_reserve) {
+            my $loc = $ax->colorbar_location // 'right';
+            my $res = _cbar_reserve($ax);
+            if    ($loc eq 'left')   { $l += $res }
+            elsif ($loc eq 'top')    { $t += $res }
+            elsif ($loc eq 'bottom') { $b += $res }
+            else                     { $r += $res }
+        }
+        for my $twin (@{ $ax->_twin_axes }) {
+            if (($twin->_twin_type // '') eq 'y') {
+                $t += 36 + ($twin->xlabel ne '' ? 20 : 0);
+            } else {
+                $r += $twin->_twin_yaxis_room($meas);
+            }
+        }
+        $need{$ax} = [ map { int($_ + 0.999) } $l, $r, $t, $b ];
+    }
+
+    # per column / row: the largest need on each side
+    my (@cl, @cr, @rt, @rb);
+    $cl[$_] = $cr[$_] = 0 for 0 .. $nc - 1;
+    $rt[$_] = $rb[$_] = 0 for 0 .. $nr - 1;
+    for my $e (@$ents) {
+        my ($l, $r, $t, $b) = @{ $need{ $e->{ax} } };
+        $cl[ $e->{c0} ]     = $l if $l > $cl[ $e->{c0} ];
+        $cr[ $e->{c1} - 1 ] = $r if $r > $cr[ $e->{c1} - 1 ];
+        $rt[ $e->{r0} ]     = $t if $t > $rt[ $e->{r0} ];
+        $rb[ $e->{r1} - 1 ] = $b if $b > $rb[ $e->{r1} - 1 ];
+    }
+
+    # inner (plot rectangle) start and size of each column / row
+    my $span = sub {
+        my ($lo, $hi, $before, $after, $ratios, $n) = @_;
+        my @rat = $ratios ? @$ratios : (1) x $n;
+        my $deco = $before->[0] + $after->[$n - 1];
+        $deco += $after->[$_] + GS_PAD + $before->[$_ + 1] for 0 .. $n - 2;
+        my $avail = ($hi - $lo) - $deco;
+        my $sum = 0; $sum += $_ for @rat;
+        return unless $sum > 0 && $avail > 0;
+        my @size = map { $avail * $_ / $sum } @rat;
+        return if grep { $_ < GS_MIN } @size;
+        my @start = ($lo + $before->[0]);
+        push @start, $start[-1] + $size[$_] + $after->[$_] + GS_PAD + $before->[$_ + 1]
+            for 0 .. $n - 2;
+        # whole pixels, start and size each rounded: equal ratios give equal
+        # sizes, and every panel ending on a column ends on the same pixel
+        return ([ map { int($_ + 0.5) } @start ], [ map { int($_ + 0.5) } @size ]);
+    };
+    my ($cx, $cw) = $span->($left, $right,  \@cl, \@cr, $gs->width_ratios,  $nc);
+    my ($ry, $rh) = $span->($top,  $bottom, \@rt, \@rb, $gs->height_ratios, $nr);
+    return 0 unless $cx && $ry;
+
+    for my $e (@$ents) {
+        my $ax = $e->{ax};
+        my ($l, $r, $t, $b) = @{ $need{$ax} };
+        my $x0 = $cx->[ $e->{c0} ];
+        my $x1 = $cx->[ $e->{c1} - 1 ] + $cw->[ $e->{c1} - 1 ];
+        my $y0 = $ry->[ $e->{r0} ];
+        my $y1 = $ry->[ $e->{r1} - 1 ] + $rh->[ $e->{r1} - 1 ];
+        my ($px0, $px1, $py0, $py1) = ($x0, $x1, $y0, $y1);   # already whole pixels
+        $ax->{fig_x}  = $px0 - $l;
+        $ax->{fig_y}  = $py0 - $t;
+        $ax->{width}  = ($px1 - $px0) + $l + $r;
+        $ax->{height} = ($py1 - $py0) + $t + $b;
+        $ax->margin_left($l);  $ax->margin_right($r);
+        $ax->margin_top($t);   $ax->margin_bottom($b);
+    }
+    return 1;
+}
+
 sub tight_layout {
     my ($self, %opt) = @_;
 
@@ -881,6 +994,28 @@ sub tight_layout {
         return $opt{uniform_margins} && !$gs_ax_set{$ax} ? @room_max : @$r;
     };
 
+    # GridSpec / subplot_mosaic: place the cells from what each panel needs
+    # around its plot rectangle (as matplotlib's tight_layout, which replaces
+    # the GridSpec's left/right/top/bottom/hspace/wspace). Not for a GridSpec
+    # with cell_margins (fixed margins asked for) or with polar panels.
+    # Only on an explicit $fig->tight_layout: when save/show apply it by
+    # themselves, a GridSpec keeps the left/right/.../hspace/wspace it was
+    # given (scripts that place their panels with GridSpec bounds or
+    # set_position rely on that, as with matplotlib, which never applies
+    # tight_layout unasked).
+    my %gs_done;
+    if ($meas && !$opt{_auto}) {
+        my %by_gs;
+        for my $e (@{ $self->_gs_axes }) {
+            push @{ $by_gs{ $e->{gs} } }, $e;
+        }
+        for my $ents (values %by_gs) {
+            my $done = _tight_gridspec($ents, $meas, $room_of,
+                $left, $top, $right, $bottom) or next;
+            $gs_done{ $_->{ax} } = 1 for @$ents;
+        }
+    }
+
     for my $ax (@{ $self->axes_list }) {
         # twinx/twiny の戻り値(twin object): マージンは draw() 内で
         # 親(_twin_of)と常に揃えられるため、ここでの個別計算は不要。
@@ -904,6 +1039,7 @@ sub tight_layout {
 
         # GridSpec Axes: position already set, just compute margins
         if ($gs_ax_set{$ax}) {
+            next if $gs_done{$ax};     # placed by _tight_gridspec
             # cell_margins: the same fixed margins for every Axes of the GridSpec.
             # A colorbar takes its room from the plot rectangle on its side,
             # unless it was attached with reserve => 0.
