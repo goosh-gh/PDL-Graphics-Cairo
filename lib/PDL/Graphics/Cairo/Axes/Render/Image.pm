@@ -346,4 +346,43 @@ sub _render_pcolormesh {
     }
 }
 
+sub _render_heatmap {
+    my ($self, $b, $tr, $cmd, $ml,$mt,$mr,$mb) = @_;
+    # heatmap(): one cell per value, row 0 at the top (as seaborn's heatmap),
+    # cell (r, c) centred at x = c, y = rows-1-r. Cells whose value is not
+    # finite are left empty. annot => 1 writes each value (fmt) in its cell,
+    # white on dark cells and black on light ones.
+    # Up to 0.42 heatmap() queued this type but nothing drew it: only the
+    # ticks and the colorbar appeared.
+    my $data = $cmd->{data};
+    my ($rows, $cols) = $data->dims;
+    $cols //= 1;
+    my ($vmin, $vmax) = ($cmd->{vmin}, $cmd->{vmax});
+    my @annot;
+    for my $r (0 .. $rows - 1) {
+        my $yc = $rows - 1 - $r;
+        my $y1p = $tr->y(pdl($yc + 0.5))->at(0);
+        my $y2p = $tr->y(pdl($yc - 0.5))->at(0);
+        for my $c (0 .. $cols - 1) {
+            my $v = $data->at($r, $c);
+            next unless $v == $v && abs($v) != 9**9**9;     # NaN / Inf: empty cell
+            my ($rv, $gv, $bv) = $cmd->{cmap}->rgb_norm($v, $vmin, $vmax);
+            my $x1p = $tr->x(pdl($c - 0.5))->at(0);
+            my $x2p = $tr->x(pdl($c + 0.5))->at(0);
+            $b->colored_rect($x1p, $y1p, $x2p - $x1p + 0.5, $y2p - $y1p + 0.5,
+                $rv, $gv, $bv, 1.0);
+            push @annot, [ ($x1p + $x2p) / 2, ($y1p + $y2p) / 2, $v,
+                           0.299 * $rv + 0.587 * $gv + 0.114 * $bv ] if $cmd->{annot};
+        }
+    }
+    return unless @annot;
+    $b->set_font(size => 9);
+    for my $a (@annot) {
+        my ($xp, $yp, $v, $lum) = @$a;
+        $b->set_color($lum < 0.5 ? (1, 1, 1) : (0, 0, 0));
+        $self->_text_ml($b, $xp, $yp, sprintf($cmd->{fmt}, $v),
+            align => 'center', valign => 'middle', size => 9);
+    }
+}
+
 1;

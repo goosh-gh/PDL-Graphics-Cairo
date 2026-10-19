@@ -985,6 +985,10 @@ sub stem {
         label  => $opt{label}     // undef,
     };
     $self->_expand_range($x, $y->append(pdl(0)));
+    # stem の凡例は丸いマーカー(描画と同じ)。0.42 までは label を
+    # 受け取っても凡例に積んでいなかった。
+    push @{ $self->_legends }, { type => 'marker', color => $color,
+        label => $opt{label}, marker => 'o' } if defined $opt{label};
     return $self;
 }
 
@@ -1899,6 +1903,7 @@ our %RENDER = (
     pcolormesh    => \&_render_pcolormesh,
     contour       => \&_render_contour,
     contourf      => \&_render_contourf,
+    heatmap       => \&_render_heatmap,
     hexbin        => \&_render_hexbin,
     specgram      => \&_render_specgram,
     # Axes/Render/Stats.pm
@@ -2470,7 +2475,8 @@ sub heatmap {
     $self->ymin(-0.5); $self->ymax($rows - 0.5);
     $self->_xticks([map { $_ } 0..$cols-1]);
     $self->_xticklabels(\@xlabs);
-    $self->_yticks([map { $_ } 0..$rows-1]);
+    # row 0 at the top (_render_heatmap draws row r at y = rows-1-r)
+    $self->_yticks([map { $rows - 1 - $_ } 0..$rows-1]);
     $self->_yticklabels(\@ylabs);
 
     $self->_colorbar({ cmap => $cmap, vmin => $vmin, vmax => $vmax });
