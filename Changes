@@ -2,6 +2,52 @@ Revision history for PDL-Graphics-Cairo
 
 (unreleased)
 
+0.42  2026-10-19
+  - MANIFEST lists t/42 to t/52 (t/42 to t/47 were missing).
+  - The frame, tick numbers and axis labels are drawn when the axes holds
+    anything but text. draw() listed the plot types that count, and
+    pcolormesh, contour, hexbin, heatmap and specgram were missing: an axes
+    with only one of them had no frame and no tick numbers. Text alone
+    (text(), pgmtxt, pgtick) still draws no frame. (t/52)
+  - A colorbar with vmin == vmax (hexbin where every hexagon has the same
+    count) died with "Illegal division by zero"; its tick is drawn in the
+    middle of the bar. (t/52)
+  - tight_layout measures the y tick numbers, ylabel, x tick numbers,
+    xlabel and title with Cairo (a 1x1 surface, the drawing font) and does
+    not make a margin smaller than they need. The left margin was a fixed
+    70 px: with tick numbers like -2.00e+04 the ylabel was drawn outside the
+    figure, and in low figures (two rows, 250 px) the xlabel was cut at the
+    bottom. Figures whose labels fit keep their margins. Sizes are cached,
+    so tight_layout on a 5x5 grid takes about 0.4 ms (0.1 ms before).
+    Margins are still capped at 80% of a very small cell. (t/48)
+  - ylabel is placed from the end of the tick numbers using the tick length
+    and y_pad (same position with the defaults); a horizontal ylabel
+    (ylabel_rotation 0) no longer overlaps the tick numbers.
+  - Axes::draw drew title, xlabel and ylabel twice on axes with data; they
+    are drawn once (text edges are slightly lighter than before).
+  - legend(loc => 'outside top' | 'outside right' | 'outside'): the legend
+    outside the frame, without a box, in room taken by tight_layout.
+    'outside top' is one row right-aligned in the title row (the title moves
+    left, or the legend gets its own row, when they would touch);
+    'outside right' is a column right of the frame, which gets narrower;
+    'outside' is 'outside top' up to outside_max entries (default 3), else
+    'outside right'. The four inside locations are unchanged (same pixels).
+    (t/49)
+  - Driver::GS::show_interactive(slider_labels => { 0 => ..., 1 => ... })
+    appends the meaning of each slider to the window title
+    ("title — ↔ position / ↕ width"); a label given as code is called with
+    the slider value on every frame, and the title is sent only when it
+    changes. Tested against a fake server. (t/50)
+  - Driver::GS sends a character-string payload (a title from `use utf8`
+    source) as UTF-8 with its byte length. The header carried the length in
+    characters, so a Japanese title put the protocol out of step and the
+    window stopped.
+  - Figure::subplots(N,1) / (1,N) with N >= 2 warns in scalar context (it
+    returns the number of Axes there; N = 1 returns the Axes). (t/51)
+  - examples/eeg_viewer.pl: the comments and start-up message had slider 0
+    and 1 swapped (0 is the horizontal time window, 1 the vertical gain, as
+    in the code); the window title shows both values (slider_labels).
+
 0.41  2026-10-16
   - imshow draws the whole image in one call (Driver::Cairo::image_rgb)
     instead of one rectangle per cell; ColorMap and ListedColormap have

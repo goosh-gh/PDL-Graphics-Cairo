@@ -476,6 +476,14 @@ sub text_width {
     return $w;
 }
 
+# text_size($str): (width, height) in pixels of $str in the current font,
+# the same box text() places with align/valign.
+sub text_size {
+    my ($self, $str) = @_;
+    $self->{pango}->set_markup(_to_markup($str));
+    return $self->{pango}->get_pixel_size();
+}
+
 # fillplot
 sub colored_rect {
     my ($self, $x, $y, $w, $h, $r, $g, $b, $a) = @_;

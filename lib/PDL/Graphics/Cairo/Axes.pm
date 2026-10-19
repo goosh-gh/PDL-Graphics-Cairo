@@ -1478,11 +1478,93 @@ sub yticks {
 sub set_xticks { my $s = shift; $s->xticks(@_) }
 sub set_yticks { my $s = shift; $s->yticks(@_) }
 
+# legend(loc => ...)
+#   Inside the axes frame (a white 85% box, 6 px from the frame):
+#     'upper right' (default), 'upper left', 'lower right', 'lower left'.
+#   Outside the frame (no box), with room taken by tight_layout:
+#     'outside top'   one row of entries in the title row, right-aligned to
+#                     the frame. If the title would touch it, the title is
+#                     left-aligned; if it still does not fit, the legend gets
+#                     its own row between the title and the frame.
+#     'outside right' one column right of the frame; the frame gets narrower.
+#     'outside'       'outside top' with up to outside_max entries
+#                     (default 3), else 'outside right'.
 sub legend {
     my ($self, %opt) = @_;
     $self->{_show_legend} = 1;
     $self->{_legend_loc}  = $opt{loc} // 'upper right';
+    $self->{_legend_outside_max} = $opt{outside_max} // 3;
     return $self;
+}
+
+# Where the legend goes: 'inside', 'top', 'right' or '' (no legend).
+sub _legend_place {
+    my ($self) = @_;
+    return '' unless $self->{_show_legend} && @{ $self->_legends }
+                  && !$self->{_axis_off};
+    my $loc = $self->{_legend_loc} // 'upper right';
+    if ($loc eq 'outside') {
+        $loc = @{ $self->_legends } <= ($self->{_legend_outside_max} // 3)
+             ? 'outside top' : 'outside right';
+    }
+    return 'top'   if $loc eq 'outside top';
+    return 'right' if $loc eq 'outside right';
+    return 'inside';
+}
+
+# Legend entry sizes measured with $m (a Driver, or tight_layout's measurer).
+#   entry_w: [ width of each entry: patch + gap + text ]
+#   row_w: one row with LEG_SEP px between entries; col_w: widest entry.
+use constant { LEG_FS => 11, LEG_LH => 20, LEG_PW => 24, LEG_PAD => 8,
+               LEG_SEP => 14, LEG_GAP => 10 };
+sub _text_wh {
+    my ($m, $str) = @_;
+    return $m->text_size($str) if $m->can('text_size');
+    return ($m->text_width($str), 16);
+}
+sub _legend_geom {
+    my ($self, $m) = @_;
+    $m->set_font(size => LEG_FS);
+    my @ew = map { LEG_PW + LEG_PAD + (_text_wh($m, $_->{label}))[0] }
+             @{ $self->_legends };
+    my $row_w = 0;
+    $row_w += $_ for @ew;
+    $row_w += LEG_SEP * (@ew - 1) if @ew > 1;
+    my $col_w = 0;
+    for (@ew) { $col_w = $_ if $_ > $col_w }
+    return { entry_w => \@ew, row_w => $row_w, col_w => $col_w,
+             n => scalar @ew };
+}
+
+# The 'outside top' layout for a plot rectangle from $ml to $mr, top $mt.
+# Returns { x0, yc, title_align, title_up }: the legend row starts at x0 and
+# is centred on yc; the title is drawn with title_align ('center' or 'left')
+# and title_up px higher than usual.
+sub _legend_top_layout {
+    my ($self, $m, $ml, $mr, $mt, $level) = @_;
+    my $g    = $self->_legend_geom($m);
+    my $x0   = $mr - $g->{row_w};
+    my $toff = $level == 1 ? 11 : 14;
+    my %r = (x0 => $x0, title_align => 'center', title_up => 0,
+             row_w => $g->{row_w}, entry_w => $g->{entry_w});
+    if ($self->title eq '') {
+        $r{yc} = $mt - 4 - LEG_LH / 2;
+        return \%r;
+    }
+    $m->set_font(size => ($level == 1 ? 11 : 13), weight => 'bold');
+    my ($tw, $th) = _text_wh($m, $self->title);
+    if (($ml + $mr) / 2 + $tw / 2 + LEG_SEP <= $x0) {
+        $r{yc} = $mt - $toff - $th / 2;          # beside the centred title
+    } elsif ($ml + $tw + LEG_SEP <= $x0) {
+        $r{title_align} = 'left';                # beside the title, moved left
+        $r{yc} = $mt - $toff - $th / 2;
+    } else {
+        # own row just above the frame; the title moves up above it
+        $r{yc}       = $mt - 4 - LEG_LH / 2;
+        $r{title_up} = 4 + LEG_LH + 4 - $toff;
+        $r{title_up} = 0 if $r{title_up} < 0;
+    }
+    return \%r;
 }
 
 sub set_title  { my ($s,$t,%o) = @_; $s->title($t);  return $s }
@@ -1663,6 +1745,14 @@ sub draw {
     # Figure::add_connection / data_to_pixel が描画後に参照する確定済み Transform
     $self->{_last_tr} = $tr;
 
+    # legend(loc=>'outside top'): タイトルと凡例の並べ方をここで決め、
+    # _draw_labels(タイトル)と _draw_legend の両方が使う。
+    delete $self->{_legend_top_now};
+    if (!$self->_is_twin && $self->_legend_place eq 'top') {
+        $self->{_legend_top_now} = $self->_legend_top_layout(
+            $backend, $ml, $mr, $mt, $self->_compact_labels || 0);
+    }
+
     # ---  ---
 #    $self->_draw_grid($backend, $tr, $ml,$mt,$mr,$mb) if $self->grid;  # change 2026/5/25 for Axis(off)
     # --- プロット領域背景 (facecolor) ---
@@ -1714,12 +1804,13 @@ sub draw {
     } else {
 
 
+        # 枠・目盛り・ラベルは、データを描く命令が 1 つでもあれば描く。
+        # データでない命令(text の annot、PGPLOT 互換の pgmtxt/pgtick)だけ
+        # の軸では描かない。以前は描く側の種類を列挙していて、
+        # pcolormesh・contour・hexbin・heatmap・specgram が漏れており、
+        # それだけを描いた軸に枠も目盛りも出なかった。
         my $has_plot = grep {
-            $_->{type} =~ /^(line|scatter|bar|barh|hist|errorbar|
-                              fill_between|step|stem|imshow|contourf|
-                              pie|hline|vline|vspan|hspan|quiver|
-                              boxplot_item|box_fliers|violin_item|
-                              eventplot|annotate)$/x
+            $_->{type} !~ /^(annot|pgmtxt|pgtick)$/
         } @{ $self->_queue };
         my $has_content = $has_plot || $self->{_pgbox};
 
@@ -1734,8 +1825,10 @@ sub draw {
 
         $self->_draw_frame($backend, $tr, $ml,$mt,$mr,$mb)
             unless $self->{_axis_off} || !$has_content;
-        $self->_draw_labels($backend, $ml,$mt,$mr,$mb)
-            unless $self->{_axis_off} || !$has_content;
+        # _draw_labels は下で(データの有無・twin によらず)1 回だけ呼ぶ。
+        # 以前はここでも呼んでいて、データのある軸ではタイトル・xlabel・
+        # ylabel を同じ位置に 2 回重ね描きしていた(文字のふちが濃くなり、
+        # 描画時間も余分にかかっていた)。
     }
 
 
@@ -3052,33 +3145,9 @@ sub _draw_frame {
     # ============================================================
     # X 
     # ============================================================
-    my @xtks;
-    my $date_step;  # 日付軸の場合のみ使用(fmt_date_tickに渡す目盛り間隔)
-    if ($self->_xticks) {
-        @xtks = @{ $self->_xticks };
-    } elsif ($self->_xaxis_is_date) {
-        @xtks = nice_date_ticks($self->xmin, $self->xmax, 6);
-        $date_step = (@xtks >= 2) ? ($xtks[1] - $xtks[0]) : 86400;
-    } elsif ($self->xscale eq 'log') {
-        my $sc = PDL::Graphics::Cairo::Scale::Log->new;
-        @xtks = $sc->nice_ticks($self->xmin, $self->xmax);
-    } else {
-        @xtks = nice_ticks($self->xmin, $self->xmax, 6);
-    }
-    my @xlbs;
-    if ($self->_xticklabels) {
-        @xlbs = @{ $self->_xticklabels };
-    } elsif ($self->_xformatter) {
-        my $fmt = $self->_xformatter;
-        @xlbs = map { $fmt->($xtks[$_], $_) } 0..$#xtks;
-    } elsif ($self->_xaxis_is_date) {
-        @xlbs = map { fmt_date_tick($_, $date_step) } @xtks;
-    } elsif ($self->xscale eq 'log') {
-        my $sc = PDL::Graphics::Cairo::Scale::Log->new;
-        @xlbs = map { $sc->fmt_tick($_) } @xtks;
-    } else {
-        @xlbs = map { _fmt_tick($_) } @xtks;
-    }
+    my ($xtks_r, $xlbs_r) = $self->_xtick_list;
+    my @xtks = @$xtks_r;
+    my @xlbs = @$xlbs_r;
 
     my ($xlo, $xhi) = ($self->xmin, $self->xmax);
     my $prev_xp_right = -9999;  # 直前に描いたラベルの右端(px)。固定24px間隔ではなく
@@ -3227,20 +3296,9 @@ sub _draw_frame {
     # ============================================================
     # Y 
     # ============================================================
-    my @ytks;
-    if ($self->_yticks) {
-        @ytks = @{ $self->_yticks };
-    } elsif ($self->yscale eq 'log') {
-        my $sc = PDL::Graphics::Cairo::Scale::Log->new;
-        @ytks = $sc->nice_ticks($self->ymin, $self->ymax);
-    } else {
-        @ytks = nice_ticks($self->ymin, $self->ymax, 6);
-    }
-    my @ylbs = $self->_yticklabels ? @{ $self->_yticklabels }
-        : ($self->yscale eq 'log')
-            ? do { my $sc = PDL::Graphics::Cairo::Scale::Log->new;
-                   map { $sc->fmt_tick($_) } @ytks }
-            : map { _fmt_tick($_) } @ytks;
+    my ($ytks_r, $ylbs_r) = $self->_ytick_list;
+    my @ytks = @$ytks_r;
+    my @ylbs = @$ylbs_r;
 
     my $min_ygap = 14;
     my ($ylo, $yhi) = ($self->ymin, $self->ymax);
@@ -3382,7 +3440,237 @@ sub _draw_frame {
     }
 }
 
-#
+# ------------------------------------------------------------------
+# Tick values and their label strings for the current (finalized) range.
+# Used by _draw_frame and, before drawing, by _label_room (tight_layout).
+# ------------------------------------------------------------------
+sub _xtick_list {
+    my ($self) = @_;
+    my @xtks;
+    my $date_step;  # 日付軸の場合のみ使用(fmt_date_tickに渡す目盛り間隔)
+    if ($self->_xticks) {
+        @xtks = @{ $self->_xticks };
+    } elsif ($self->_xaxis_is_date) {
+        @xtks = nice_date_ticks($self->xmin, $self->xmax, 6);
+        $date_step = (@xtks >= 2) ? ($xtks[1] - $xtks[0]) : 86400;
+    } elsif ($self->xscale eq 'log') {
+        my $sc = PDL::Graphics::Cairo::Scale::Log->new;
+        @xtks = $sc->nice_ticks($self->xmin, $self->xmax);
+    } else {
+        @xtks = nice_ticks($self->xmin, $self->xmax, 6);
+    }
+    my @xlbs;
+    if ($self->_xticklabels) {
+        @xlbs = @{ $self->_xticklabels };
+    } elsif ($self->_xformatter) {
+        my $fmt = $self->_xformatter;
+        @xlbs = map { $fmt->($xtks[$_], $_) } 0..$#xtks;
+    } elsif ($self->_xaxis_is_date) {
+        @xlbs = map { fmt_date_tick($_, $date_step) } @xtks;
+    } elsif ($self->xscale eq 'log') {
+        my $sc = PDL::Graphics::Cairo::Scale::Log->new;
+        @xlbs = map { $sc->fmt_tick($_) } @xtks;
+    } else {
+        @xlbs = map { _fmt_tick($_) } @xtks;
+    }
+    return (\@xtks, \@xlbs);
+}
+
+sub _ytick_list {
+    my ($self) = @_;
+    my @ytks;
+    if ($self->_yticks) {
+        @ytks = @{ $self->_yticks };
+    } elsif ($self->yscale eq 'log') {
+        my $sc = PDL::Graphics::Cairo::Scale::Log->new;
+        @ytks = $sc->nice_ticks($self->ymin, $self->ymax);
+    } else {
+        @ytks = nice_ticks($self->ymin, $self->ymax, 6);
+    }
+    my @ylbs = $self->_yticklabels ? @{ $self->_yticklabels }
+        : ($self->yscale eq 'log')
+            ? do { my $sc = PDL::Graphics::Cairo::Scale::Log->new;
+                   map { $sc->fmt_tick($_) } @ytks }
+            : map { _fmt_tick($_) } @ytks;
+    return (\@ytks, \@ylbs);
+}
+
+# Distance (px) from the left edge of the plot rectangle to the right edge
+# of the y tick numbers: tick length outside the frame + y_pad + 2.
+# _draw_frame places the numbers there; _draw_labels and _label_room use it.
+sub _ytick_label_offset {
+    my ($self) = @_;
+    my $pb   = $self->{_pgbox};
+    my $yopt = $pb ? uc($pb->{yopt}) : 'BCNST';
+    my $tp   = $self->_tick_params;
+    my $tlen = $tp->{y_length} // (($yopt =~ /T/) ? 5 : 3);
+    my $tdir = $tp->{y_direction} // 'out';
+    my $ext  = $tdir eq 'out' ? $tlen : $tdir eq 'inout' ? $tlen/2 : 0;
+    return $ext + ($tp->{y_pad} // 10) + 2;
+}
+
+my %LABEL_ROOM_CACHE;   # key => [left, bottom, top]; see _label_room
+
+# _label_room($m, $level): room (px) that the tick numbers, xlabel, ylabel
+# title and a legend outside the frame need outside the plot rectangle,
+# measured with $m (set_font/text_size: tight_layout's TextMeasure, or a
+# Driver::Cairo). Returns (left, bottom, top, right). $level is the label size
+# level that _draw_labels will use (0 = normal, 1 = compact).
+# It mirrors where _draw_frame, _draw_labels and _draw_legend put the text,
+# for the range the next draw() will use. The user's xlim/ylim are restored.
+sub _label_room {
+    my ($self, $m, $level) = @_;
+    $level //= 0;
+    return (0, 0, 0, 0) if $self->{_axis_off};
+
+    my @user = ($self->xmin, $self->xmax, $self->ymin, $self->ymax);
+    $self->_finalize_range;
+    my ($xlo, $xhi, $ylo, $yhi) = ($self->xmin, $self->xmax, $self->ymin, $self->ymax);
+
+    # The result depends only on what goes into the key; panels of a grid
+    # usually share it, and show_interactive asks again on every frame.
+    # An axis with a formatter coderef is not cached (its output is unknown).
+    my $key;
+    unless ($self->_xformatter) {
+        my $tp = $self->_tick_params;
+        my $pb = $self->{_pgbox};
+        $key = join "\x1f", $level, ref($m),
+            ($m->can('cache_tag') ? $m->cache_tag : 'nocache'),
+            $xlo, $xhi, $ylo, $yhi, $self->xscale, $self->yscale,
+            ($self->_xaxis_is_date ? 1 : 0),
+            map({ $_ ? join("\x1e", @$_) : '' }
+                $self->_xticks, $self->_yticks,
+                $self->_xticklabels, $self->_yticklabels),
+            join("\x1e", map { "$_=" . ($tp->{$_} // '') } sort keys %$tp),
+            ($pb ? uc($pb->{xopt}) . '/' . uc($pb->{yopt}) : ''),
+            $self->xlabel, $self->ylabel, $self->title,
+            $self->ylabel_rotation // 90,
+            $self->{_xtick_rot} // '', $self->{_ytick_rot} // '',
+            ($self->_is_twin ? $self->_twin_type // 'x' : ''),
+            $self->_legend_place, $self->width,
+            join("\x1e", map { $_->{label} // '' } @{ $self->_legends });
+        if (my $hit = $LABEL_ROOM_CACHE{$key}) {
+            $self->xmin($user[0]); $self->xmax($user[1]);
+            $self->ymin($user[2]); $self->ymax($user[3]);
+            return @$hit;
+        }
+    }
+
+    my ($xtks, $xlbs) = $self->_xtick_list;
+    my ($ytks, $ylbs) = $self->_ytick_list;
+    $self->xmin($user[0]); $self->xmax($user[1]);
+    $self->ymin($user[2]); $self->ymax($user[3]);
+    my @room = $self->_label_room_measure($m, $level,
+        $xlo, $xhi, $ylo, $yhi, $xtks, $xlbs, $ytks, $ylbs);
+    if (defined $key && $m->can('cache_tag')) {
+        %LABEL_ROOM_CACHE = () if keys %LABEL_ROOM_CACHE > 5000;
+        $LABEL_ROOM_CACHE{$key} = \@room;
+    }
+    return @room;
+}
+
+sub _label_room_measure {
+    my ($self, $m, $level, $xlo, $xhi, $ylo, $yhi, $xtks, $xlbs, $ytks, $ylbs) = @_;
+
+    my $pb   = $self->{_pgbox};
+    my $xopt = $pb ? uc($pb->{xopt}) : 'BCNST';
+    my $yopt = $pb ? uc($pb->{yopt}) : 'BCNST';
+    my $tp   = $self->_tick_params;
+    my $pi   = 3.14159265358979;
+
+    # extent of a rotated text box along x (horizontal) or y (vertical)
+    my $ext = sub {
+        my ($w, $h, $deg, $along_x) = @_;
+        my $r = $deg * $pi / 180;
+        return $along_x ? abs($w * cos($r)) + abs($h * sin($r))
+                        : abs($w * sin($r)) + abs($h * cos($r));
+    };
+
+    # ---- left: y tick numbers and ylabel ----
+    my $ytick_w = 0;      # what _draw_labels will add for the numbers
+    my $left    = 0;
+    my $yoff    = $self->_ytick_label_offset;
+    if ($yopt =~ /N/ && ($tp->{y_labelleft} // 1)) {
+        my $rot = $tp->{y_labelrotation} // $self->{_ytick_rot} // 0;
+        $m->set_font(size => $tp->{y_labelsize} // 10);
+        my $eps = ($yhi - $ylo) * 0.001 + 0.001;
+        my $wmax = 0;
+        for my $i (0 .. $#$ytks) {
+            next if $ytks->[$i] < $ylo - $eps || $ytks->[$i] > $yhi + $eps;
+            for my $ln (split /\n/, $ylbs->[$i] // '', -1) {
+                my ($w, $h) = $m->text_size($ln);
+                my $e = $ext->($w, $h, $rot, 1);
+                $wmax = $e if $e > $wmax;
+            }
+        }
+        $ytick_w = $wmax if $rot == 0;
+        $left = $yoff + $wmax;
+    }
+    if ($self->ylabel ne '' && !($self->_is_twin && ($self->_twin_type // '') ne 'y')) {
+        my $rot = $self->ylabel_rotation // 90;
+        $m->set_font(size => 11);
+        my ($w, $h) = $m->text_size($self->ylabel);
+        my $need = $rot == 0
+            ? $yoff + $ytick_w + 6 + $w
+            : $yoff + $ytick_w + 5 + $ext->($w, $h, $rot, 1);
+        $left = $need if $need > $left;
+    }
+
+    # ---- bottom: x tick numbers and xlabel ----
+    my $bottom = 0;
+    if ($xopt =~ /N/ && ($tp->{x_labelbottom} // 1)) {
+        my $rot  = $tp->{x_labelrotation} // $self->{_xtick_rot} // 0;
+        my $tlen = $tp->{x_length} // (($xopt =~ /T/) ? 5 : 3);
+        my $tdir = $tp->{x_direction} // 'out';
+        my $text = $tdir eq 'out' ? $tlen : $tdir eq 'inout' ? $tlen/2 : 0;
+        $m->set_font(size => $tp->{x_labelsize} // 10);
+        my $eps  = ($xhi - $xlo) * 0.001 + 0.001;
+        my $hmax = 0;
+        for my $i (0 .. $#$xtks) {
+            next if $xtks->[$i] < $xlo - $eps || $xtks->[$i] > $xhi + $eps;
+            my ($w, $h) = $m->text_size($xlbs->[$i] // '');
+            my $e = $ext->($w, $h, $rot, 0);
+            $hmax = $e if $e > $hmax;
+        }
+        $bottom = $text + ($tp->{x_pad} // 4) + 2 + $hmax;
+    }
+    if ($self->xlabel ne '' && !($self->_is_twin && ($self->_twin_type // '') eq 'y')) {
+        $m->set_font(size => ($level == 1 ? 9 : 11));
+        my (undef, $h) = $m->text_size($self->xlabel);
+        my $need = ($level == 1 ? 38 : 40) + $h;
+        $bottom = $need if $need > $bottom;
+    }
+
+    # ---- top: title ----
+    my $top = 0;
+    my $toff = $level == 1 ? 11 : 14;
+    my $th = 0;
+    if ($self->title ne '') {
+        $m->set_font(size => ($level == 1 ? 11 : 13), weight => 'bold');
+        (undef, $th) = $m->text_size($self->title);
+        $top = $toff + $th;
+    }
+
+    # ---- legend outside the frame: top row or right column ----
+    my $right = 0;
+    my $place = $self->_legend_place;
+    if ($place eq 'top') {
+        # the plot width is not known yet: estimate it from the Axes width
+        my $ml_est = $left > 56 ? $left : 56;
+        my $pw_est = $self->width - $ml_est - 18;
+        my $lt = $self->_legend_top_layout($m, 0, $pw_est, 0, $level);
+        my $need = $self->title eq '' || $lt->{title_up}
+            ? 4 + LEG_LH                        # own row just above the frame
+            : $toff + $th / 2 + LEG_LH / 2;     # centred on the title
+        $top += $lt->{title_up} if $lt->{title_up};
+        $top = $need if $need > $top;
+    } elsif ($place eq 'right') {
+        $right = LEG_GAP + $self->_legend_geom($m)->{col_w} + 4;
+    }
+
+    # 2 px so the outermost pixels of the glyphs stay inside the figure
+    return map { $_ > 0 ? int($_ + 0.999) + 2 : 0 } ($left, $bottom, $top, $right);
+}
 
 sub _fmt_tick {
     my ($v) = @_;
@@ -3472,8 +3760,16 @@ sub _draw_labels {
                 $mt, $twin_outer, $title_y) if $ENV{PGC_DEBUG_LABELS};
         }
         $b->set_font(size => $fsize, weight => 'bold');
-        $b->text(($ml+$mr)/2, $title_y, $self->title,
-            align=>'center', valign=>'bottom');
+        # legend(loc=>'outside top') が同じ行にあるとき、タイトルは左寄せ
+        # または上へずらす(_legend_top_layout が決める)。
+        my $lt = $self->{_legend_top_now};
+        if ($lt && $lt->{title_align} eq 'left') {
+            $b->text($ml, $title_y - $lt->{title_up}, $self->title,
+                align=>'left', valign=>'bottom');
+        } else {
+            $b->text(($ml+$mr)/2, $title_y - ($lt ? $lt->{title_up} : 0),
+                $self->title, align=>'center', valign=>'bottom');
+        }
     }
 
     # X 
@@ -3514,9 +3810,14 @@ sub _draw_labels {
         # その実測最大幅 (_y_ticklabel_maxw) より内側に ylabel が来ないよう
         # 固定オフセットへ動的なマージンを上乗せする。
         my $tick_w = $self->{_y_ticklabel_maxw} // 0;
+        # 目盛り数字の右端は枠から _ytick_label_offset (既定 5+10+2=17 px)。
+        # ylabel はその左端(さらに tick_w 左)から 5〜6 px 離す。
+        # _label_room(tight_layout の余白見積り)も同じ式を使う。
+        my $yoff = $self->_ytick_label_offset;
         if ($rot == 0) {
-            # 横書き: 枠左端から少し左、縦中央、右寄せ
-            my $gap = $level == 2 ? (9 + $tick_w) : (8 + $tick_w);
+            # 横書き: 目盛り数字の左、縦中央、右寄せ
+            # (以前は 8+tick_w で、数字の左端より 9 px 内側に重なっていた)
+            my $gap = $level == 2 ? (9 + $tick_w) : ($yoff + $tick_w + 6);
             warn sprintf("[DEBUG ylabel] rot=0 ml=%s gap=%s text_x=%s text_y=%s\n",
                 $ml, $gap, $ml-$gap, ($mt+$mb)/2) if $ENV{PGC_DEBUG_LABELS};
             $b->text($ml - $gap, ($mt+$mb)/2, $self->ylabel,
@@ -3529,7 +3830,7 @@ sub _draw_labels {
             # (8pt数値2-3文字≈6px)+ylabel文字幅(8pt≈10px)+安全余白(2px)
             # ≈ 19px。以前の14pxでは数値ラベルとylabelの文字が重なって
             # 見える(差がわずか3pxしかなかった)不具合があったため調整。
-            my $gap = $level == 2 ? (19 + $tick_w) : (14 + 8 + $tick_w);
+            my $gap = $level == 2 ? (19 + $tick_w) : ($yoff + 5 + $tick_w);
             warn sprintf("[DEBUG ylabel] rot=%s ml=%s gap=%s tick_w=%s text_x=%s text_y=%s\n",
                 $rot, $ml, $gap, $tick_w, $ml-$gap, ($mt+$mb)/2) if $ENV{PGC_DEBUG_LABELS};
             $b->text($ml - $gap, ($mt+$mb)/2, $self->ylabel,
@@ -3546,6 +3847,31 @@ sub _draw_legend {
     my ($self, $b, $ml,$mt,$mr,$mb) = @_;
     my @legs = @{ $self->_legends };
     return unless @legs;
+
+    # 枠の外の凡例(箱なし)
+    my $place = $self->_legend_place;
+    if ($place eq 'top') {
+        my $lt = $self->{_legend_top_now}
+            // $self->_legend_top_layout($b, $ml, $mr, $mt, $self->_compact_labels || 0);
+        my $x = $lt->{x0};
+        for my $i (0 .. $#legs) {
+            $self->_draw_legend_entry($b, $legs[$i], $x, $lt->{yc});
+            $x += $lt->{entry_w}[$i] + LEG_SEP;
+        }
+        return;
+    }
+    if ($place eq 'right') {
+        my $g  = $self->_legend_geom($b);
+        # tight_layout が margin_right に凡例の列を含めているので、セルの
+        # 右端に寄せる(colorbar や twinx の目盛りより外側になる)。
+        my $lx = $self->fig_x + $self->width - $g->{col_w} - 4;
+        $lx = $mr + LEG_GAP if $lx < $mr + LEG_GAP;
+        for my $i (0 .. $#legs) {
+            $self->_draw_legend_entry($b, $legs[$i], $lx,
+                $mt + 2 + $i * LEG_LH + LEG_LH / 2);
+        }
+        return;
+    }
 
     my $fs   = 11;
     my $lh   = 20;
@@ -3580,10 +3906,17 @@ sub _draw_legend {
     $b->rect_stroke($lx, $ly, $box_w, $box_h);
 
     for my $i (0 .. $#legs) {
-        my $lg  = $legs[$i];
-        my $y0  = $ly + $pad/2 + $i * $lh + $lh/2;
-        my $x0  = $lx + $pad;
+        $self->_draw_legend_entry($b, $legs[$i], $lx + $pad,
+            $ly + $pad/2 + $i * $lh + $lh/2);
+    }
+}
 
+# One legend entry: the patch (line, marker, rect or fill) from x0, then the
+# label; both centred on y0.
+sub _draw_legend_entry {
+    my ($self, $b, $lg, $x0, $y0) = @_;
+    my ($fs, $pw, $pad) = (LEG_FS, LEG_PW, LEG_PAD);
+    {
         $b->set_color(@{$lg->{color}});
 
         if ($lg->{type} eq 'line') {
@@ -3707,8 +4040,10 @@ sub _draw_colorbar {
 
         $b->set_font(size => 9);
         my @tks = $self->_colorbar_ticks($h, 10);
+        my $span = $cb->{vmax} - $cb->{vmin};
         for my $v (@tks) {
-            my $f  = ($v - $cb->{vmin}) / ($cb->{vmax} - $cb->{vmin});
+            # vmin == vmax (hexbin でどの六角形も同じ数など): 中央に 1 本
+            my $f  = $span ? ($v - $cb->{vmin}) / $span : 0.5;
             my $yp = $y0 + $h - $f * $h;
             $b->line_seg($tick_x0, $yp, $tick_x1, $yp);
             $b->text($label_x, $yp, _fmt_tick($v),
@@ -3769,8 +4104,10 @@ sub _draw_colorbar {
 
         $b->set_font(size => 9);
         my @tks = $self->_colorbar_ticks($w, 26);
+        my $span = $cb->{vmax} - $cb->{vmin};
         for my $v (@tks) {
-            my $f  = ($v - $cb->{vmin}) / ($cb->{vmax} - $cb->{vmin});
+            # vmin == vmax (hexbin でどの六角形も同じ数など): 中央に 1 本
+            my $f  = $span ? ($v - $cb->{vmin}) / $span : 0.5;
             my $xp = $x0 + $f * $w;
             $b->line_seg($xp, $tick_y0, $xp, $tick_y1);
             $b->text($xp, $label_y, _fmt_tick($v),

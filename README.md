@@ -16,6 +16,8 @@ PDL::Graphics::Cairo (P:G:C) is a high-level 2D plotting library for [PDL](https
 
 ### Axes & decoration
 - Auto-scaling with `tight_layout`; `uniform_margins => 1` option ensures all panels have identical plot-area dimensions in multi-panel grids made with `subplot` / `subplots` (avoids the default asymmetry where edge panels receive larger margins). It does not act on panels placed with `add_gridspec`; use `cell_margins` there
+- `tight_layout` measures the tick numbers, axis labels and titles with Cairo before drawing, for the data and limits set at the time it is called, and leaves room for them: long tick numbers such as `-2.00e+04` no longer push the ylabel out of the figure, and the xlabel of a low figure is not cut. In very small cells the margins are still capped at 80% of the cell
+- Legend outside the frame: `legend(loc => 'outside top')` puts the entries in one row in the title row, right-aligned (the title moves left, or the legend gets its own row, if they would touch); `legend(loc => 'outside right')` puts them in a column right of the frame and makes the frame narrower; `legend(loc => 'outside')` chooses `outside top` for up to `outside_max` entries (default 3), else `outside right`. `upper right` (default), `upper left`, `lower right`, `lower left` draw the boxed legend inside the frame
 - Linear / log scale (`set_xscale`, `set_yscale`, `semilogy`, `loglog`)
 - Tick control: `tick_params`, minor ticks, `xaxis_formatter` / `yaxis_formatter`
 - Date/time axis: `plot_date` accepts UNIX epoch values or `DateTime` objects; tick spacing and label format (`HH:MM`, `Mon DD`, `Mon YYYY`, `YYYY`) are chosen automatically based on the data range

@@ -66,6 +66,50 @@ sub _fit_margins {
 use PDL::Graphics::Cairo::Driver::Cairo;
 use PDL::Graphics::Cairo::Driver::Gnuplot;
 
+# Text measurer for tight_layout (which runs before any drawing surface
+# exists). It answers set_font/text_size like a Driver, from a cache keyed by
+# font family, size, weight and string; on a miss it measures with a 1x1
+# Driver::Cairo made on first use. The family is read from rcParams on each
+# call, so a changed 'font.family' is measured anew.
+# (A 5x5 grid asks for ~400 sizes per tight_layout; measuring each took
+# 5.7 ms per call, which show_interactive / grid scrub pay on every frame.)
+sub _measure_driver {
+    return PDL::Graphics::Cairo::Figure::TextMeasure->new;
+}
+
+package PDL::Graphics::Cairo::Figure::TextMeasure;
+my %SIZE_CACHE;
+my $DRIVER;
+sub new {
+    my $family = $PDL::Graphics::Cairo::_RCPARAMS{'font.family'} // 'Helvetica Neue';
+    return bless { family => $family, size => 11, weight => 'normal' }, shift;
+}
+# Axes::_label_room caches its result only for a measurer that names its font
+sub cache_tag { $_[0]{family} }
+sub set_font {
+    my ($self, %o) = @_;
+    $self->{size}   = $o{size}   // $self->{size};
+    $self->{weight} = $o{weight} // 'normal';
+    return $self;
+}
+sub text_size {
+    my ($self, $str) = @_;
+    my $key = join "\0", @$self{qw(family size weight)}, $str // '';
+    my $wh = $SIZE_CACHE{$key};
+    unless ($wh) {
+        $DRIVER //= eval {
+            PDL::Graphics::Cairo::Driver::Cairo->new(
+                width => 1, height => 1, file => ':memory:')
+        } or return (0, 0);
+        $DRIVER->set_font(family => $self->{family}, size => $self->{size},
+                          weight => $self->{weight});
+        %SIZE_CACHE = () if keys %SIZE_CACHE > 20000;
+        $wh = $SIZE_CACHE{$key} = [ $DRIVER->text_size($str) ];
+    }
+    return @$wh;
+}
+package PDL::Graphics::Cairo::Figure;
+
 # ------------------------------------------------------------------
 # DPI
 # ------------------------------------------------------------------
@@ -152,7 +196,15 @@ sub subplots {
     if ($nrows == 1 && $ncols == 1) {
         return $grid[0][0];
     }
-    elsif ($nrows == 1) {
+    # 1xN / Nx1 をスカラーで受けると、N=1 では Axes なのに N>=2 では黙って
+    # 個数(2, 3, ...)になる。チャンネル数で N が変わるコードで踏むので警告する。
+    if (defined wantarray && !wantarray) {
+        warn "PDL::Graphics::Cairo: subplots($nrows,$ncols) returns a list of "
+           . ($nrows * $ncols) . " Axes; in scalar context you get their count.\n"
+           . "  Use:  my \@ax = \$fig->subplots($nrows,$ncols);   (one Axes or many)\n"
+           . "  or    \$fig->ax(\$i) after subplots().\n";
+    }
+    if ($nrows == 1) {
         return @{ $grid[0] };
     }
     elsif ($ncols == 1) {
@@ -798,6 +850,36 @@ sub tight_layout {
         }
     }
 
+    # 目盛り数字・xlabel・ylabel・title が枠の外に要る幅を実測する
+    # (Axes::_label_room)。下の固定値(70px など)とセルの大きさに比例した
+    # 縮小は、この実測値を下回らない範囲で使う。以前は固定値だけで決めて
+    # いたため、目盛り数字が長い(2.00e+04 など)と ylabel が図の外に出て
+    # 見えず、高さの低い図では xlabel が下端で切れていた。
+    # 測るための Cairo は 1x1 の画像面で、描画と同じフォント(rcParams)を使う。
+    my %room;    # Axes => [left, bottom, top]
+    my $level = $opt{uniform_margins} ? 1 : 0;
+    if (my $m = _measure_driver()) {
+        for my $ax (@{ $self->axes_list }) {
+            next if $ax->_is_twin || $ax->_is_inset
+                 || $ax->isa('PDL::Graphics::Cairo::PolarAxes');
+            $room{$ax} = [ $ax->_label_room($m, $gs_ax_set{$ax} ? 0 : $level) ];
+        }
+    }
+    # uniform_margins: 全パネルで同じマージンにするので、最大値を全員に使う
+    my @room_max = (0, 0, 0, 0);
+    if ($opt{uniform_margins}) {
+        for my $r (values %room) {
+            for my $k (0..3) { $room_max[$k] = $r->[$k] if $r->[$k] > $room_max[$k] }
+        }
+    }
+    # (left, bottom, top, right); right is the column of a legend outside the
+    # frame, added to the right margin.
+    my $room_of = sub {
+        my ($ax) = @_;
+        my $r = $room{$ax} or return (0, 0, 0, 0);
+        return $opt{uniform_margins} && !$gs_ax_set{$ax} ? @room_max : @$r;
+    };
+
     for my $ax (@{ $self->axes_list }) {
         # twinx/twiny の戻り値(twin object): マージンは draw() 内で
         # 親(_twin_of)と常に揃えられるため、ここでの個別計算は不要。
@@ -875,6 +957,10 @@ sub tight_layout {
             my $mt = $ax->title ne '' ? 34 : 18;
             $mt = 44 if $r0 == 0 && ($self->{_suptitle_text} // '') ne '';
             my $mr = 14;
+            my ($need_l, $need_b, $need_t, $need_r) = $room_of->($ax);
+            $ml = $need_l if $need_l > $ml;
+            $mb = $need_b if $need_b > $mb;
+            $mt = $need_t if $need_t > $mt;
             # colorbar_location に応じて、実際にcolorbarが描かれる側の
             # マージンを拡張する。以前は colorbar の有無だけで常に mr
             # (右マージン)を拡張していたため、location=>'left'/'top'/
@@ -889,6 +975,8 @@ sub tight_layout {
                 elsif ($cbloc eq 'bottom') { $mb += $res; }
                 else                       { $mr = $res; }
             }
+            # legend(loc=>'outside right') の列(colorbar より外側)
+            $mr += $need_r;
             # カスタム y 目盛りラベルが margin_left に収まるよう下限を確保
             # (主経路と同じ。tight_layout は描画前で text_width 実測不可)。
             if ($ax->_yticklabels && @{ $ax->_yticklabels }) {
@@ -988,6 +1076,23 @@ sub tight_layout {
         $mt = int(40 * $scale_h + 0.5) if $row == 0 && $self->_suptitle_text ne '';
         $mt = 12 if $mt < 12;
 
+        # 実測した文字の必要量を下限にする(上の %room のコメント参照)。
+        # 図の外周に接するパネルは、外周の余白(pad、既定 8 px)まで文字が
+        # 入ってよいので、その分を差し引く(_label_room は端に 2 px 残す)。
+        # suptitle 用の上の余白は差し引かない。uniform_margins では全パネルを
+        # 同じにするので差し引かない。
+        {
+            my ($need_l, $need_b, $need_t) = $room_of->($ax);
+            unless ($opt{uniform_margins}) {
+                $need_l -= $left            if $col == 0;
+                $need_b -= ($fh - $bottom)  if $row == $nrows - 1;
+                $need_t -= $outer           if $row == 0 && !$rect;
+            }
+            $ml = $need_l if $need_l > $ml;
+            $mb = $need_b if $need_b > $mb;
+            $mt = $need_t if $need_t > $mt;
+        }
+
         # colorbar_location に応じて、実際にcolorbarが描かれる側の
         # マージンを拡張する。以前は colorbar の有無だけで mr(右マージン)
         # を常に拡張していたため(上の $mr 計算)、location=>'left'/'top'/
@@ -1039,6 +1144,10 @@ sub tight_layout {
             warn sprintf("[DEBUG tight_layout twin] twin_type=%s mt=%s mr=%s twin_xlabel='%s'\n",
                 $twin_type, $mt, $mr, $twin->xlabel) if $ENV{PGC_DEBUG_LABELS};
         }
+
+        # legend(loc=>'outside right') の列。colorbar や twinx の目盛りの
+        # さらに外側に置くので、それらを足した後で加える。
+        $mr += ($room_of->($ax))[3];
 
         # cell が小さいとき margin が描画域を食い尽くして $mt>$mb/$ml>$mr になる。
         # X/Y それぞれ合計が cell の 80% を超えないようクランプする。

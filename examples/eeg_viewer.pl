@@ -4,7 +4,8 @@
 # 段階C: LTTBをEEGビューアに組み込み
 #   - 表示時: LTTB間引き（窓幅×2点）でスライダ追従を高速化
 #   - 保存時: フル解像度（is_save=1 時にrenderに渡されるoptで判断）
-#   - スライダ0: gain (50〜500 μV), スライダ1: 時間窓 (100〜1000 ms)
+#   - スライダ0(下の横): 時間窓 (100 ms〜記録長), スライダ1(右の縦): gain (50〜500 μV)
+#     窓のタイトルにも slider_labels で今の値を出す
 #
 # 使い方:
 #   perl examples/eeg_viewer.pl [EEGファイル.dat]
@@ -116,8 +117,8 @@ if (@ARGV && -f $ARGV[0]) {
 my $t_full = sequence($n_samples) * (1000.0 / $srate);   # 0..2000ms
 
 # ─── 3. スライダ設定 ─────────────────────────────────────────────────
-# スライダ0: gain (50〜500μV/グリッド)
-# スライダ1: 表示時間窓（右端 ms; 最低100ms）
+# スライダ0(下の横): 表示時間窓（右端 ms; 最低100ms）
+# スライダ1(右の縦): gain (50〜500μV/グリッド)
 my %INIT_STATE = (
     0  => 0.2,      # 時間窓スライダ（水平, 0..1 → 100..2000ms）
     1  => 0.5,      # gain スライダ（垂直, 0..1 → 50..500μV）
@@ -349,14 +350,19 @@ my $drv = PDL::Graphics::Cairo::Driver::GS->new(
 printf "EEG Viewer 起動\n";
 printf "  チャンネル数: %d, サンプル数: %d, サンプリング率: %d Hz\n",
     $N_CH, $n_samples, $srate;
-printf "  スライダ0 (垂直): Gain 50..500 μV\n";
-printf "  スライダ1 (水平): 時間窓 100..%.0f ms\n", $n_samples * 1000.0 / $srate;
+printf "  スライダ0 (下の横): 時間窓 100..%.0f ms\n", $n_samples * 1000.0 / $srate;
+printf "  スライダ1 (右の縦): Gain 50..500 μV\n";
 printf "  マウス移動: カーソル座標表示\n";
 printf "  クリック: 最近傍点ピック\n\n";
 
 $drv->show_interactive(
     init           => \%INIT_STATE,
     render         => $render,
+    # 窓のタイトルの後ろに「↔ 時間窓 … / ↕ gain …」と今の値を出す
+    slider_labels  => {
+        0 => sub { sprintf '時間窓 %.0f ms', tmax_from_state($_[1]) },
+        1 => sub { sprintf 'gain %.0f uV', gain_from_state($_[1]) },
+    },
     cursor_overlay => 1,
     on_cursor => sub {
         my ($fx, $fy) = @_;

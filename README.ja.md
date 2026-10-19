@@ -263,6 +263,26 @@ $fig->tight_layout(pad => 1.2);   # 内容をすべて作った後で
 $fig->save('plot.png');
 ```
 
+`tight_layout()` は、呼んだ時点のデータと `xlim`/`ylim` から目盛り数字を
+求め、目盛り数字・xlabel・ylabel・タイトルの大きさを Cairo で測って、
+それが入る余白を取ります。`-2.00e+04` のような長い目盛り数字でも ylabel が
+図の外に出ず、高さの低い図でも xlabel が切れません。ただし、ごく小さい
+セルでは、描画領域を残すために余白をセルの 80% までに抑えます。
+
+## 凡例を軸枠の外に置く
+
+```perl
+$ax->legend(loc => 'outside top');    # タイトルの行に横 1 列、軸枠の右端にそろえる
+$ax->legend(loc => 'outside right');  # 軸枠の右に縦 1 列、軸枠はその分狭くなる
+$ax->legend(loc => 'outside');        # 項目が outside_max(既定 3)以下なら top、多ければ right
+```
+
+`outside top` では、タイトルと重なるときはタイトルを左寄せにし、それでも
+入らなければ凡例をタイトルの下(軸枠のすぐ上)の行に置きます。枠の外の
+凡例には箱を描きません。余白は `tight_layout()` が取ります。
+`upper right`(既定)・`upper left`・`lower right`・`lower left` は、
+これまでどおり軸枠の内側に箱付きで描きます。
+
 ---
 
 ## macOSネイティブバックエンド

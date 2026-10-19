@@ -30,6 +30,7 @@ use Time::HiRes;
 use Moo;
 use IO::Socket::UNIX;
 use POSIX ();
+use Encode ();
 use PDL::Graphics::Cairo::Driver::Cairo;
 use PDL::Graphics::Cairo::Interactive::Scrub;
 
@@ -179,6 +180,10 @@ sub _pack_header {
 sub _send_msg {
     my ($sock, $type, $payload, $seq) = @_;
     $payload //= '';
+    # The header carries length($payload) as a byte count. A character string
+    # (a title from `use utf8` source) would be counted in characters but
+    # written as more bytes, putting the stream out of step: send its UTF-8.
+    $payload = Encode::encode('UTF-8', $payload) if utf8::is_utf8($payload);
     $sock->print(_pack_header($type, length($payload), $seq) . $payload)
         or die "Driver::GS: write failed: $!";
 }
@@ -378,6 +383,13 @@ sub _handle_savereq {
 #       figure(width => $w, height => $h) のようにこれを使う。使わなければ
 #       従来どおり固定サイズ（リサイズ時は伸縮表示）。
 #   init   => { 0 => k0, 1 => A0 }   初期スライダ値（任意）
+#   slider_labels => { 0 => '表示位置', 1 => sub { my ($v, $state) = @_; ... } }
+#       各スライダの意味を窓のタイトルの後ろに付ける(任意)。
+#       "title — ↔ 表示位置 / ↕ 表示幅"。↔ は id 0(下の横スライダ)、
+#       ↕ は id 1(右の縦スライダ)、それ以外は "#id"。値がコードなら
+#       描くたびに (そのスライダの値 0..1, $state) で呼び、返した文字列を
+#       使う(今の値をタイトルに出せる)。undef か '' を返した id は出さない。
+#       タイトルは変わったときだけ送る(GSP_MSG_TITLE は ACK なし)。
 # ------------------------------------------------------------------
 sub show_interactive {
     my ($self, %opt) = @_;
@@ -408,7 +420,9 @@ sub show_interactive {
     }
     _send_msg($sock, GSP_MSG_NEWWIN, $newwin, $seq++);
     $self->_recv_ack_sys($sock, 'NEWWIN');
-    _send_msg($sock, GSP_MSG_TITLE, $self->title, $seq++);   # fire-and-forget
+    $self->{_slider_labels} = $opt{slider_labels};
+    delete $self->{_title_sent};
+    $seq = $self->_send_title($sock, $state, $seq);   # fire-and-forget
 
     # SAVEREQ（File>Save as PDF/SVG）への応答に必要なコンテキスト。
     # save_seq は SAVEDATA 専用の連番（サーバーは seq を順序判定に使わない）。
@@ -446,15 +460,59 @@ sub show_interactive {
     {
         my $fig = $render->($state, $self->_render_w, $self->_render_h);
         $self->{_ix}{_last_figure} = $fig;
+        $seq = $self->_send_title($sock, $state, $seq);
         _send_msg($sock, GSP_MSG_PNG, $self->_figure_to_png($fig), $seq++);
     }
     $self->_recv_ack_sys($sock, 'PNG', $state);
 
     $seq = $self->run($sock, $render, $state, $seq);
     delete $self->{_ix};
+    delete $self->{_slider_labels};
     # CLOSE は送らない（窓を残す）— ループ終了後にソケットだけ閉じる
     $sock->close;
     return;
+}
+
+# ------------------------------------------------------------------
+# _compose_title($state): the window title, with the meaning of each slider
+# from slider_labels appended: "title — ↔ position / ↕ width".
+# Returned as bytes (UTF-8): the title and the labels may each be a
+# character string (`use utf8`) or bytes already in UTF-8; joining the two
+# kinds as they are would turn the bytes into Latin-1 characters.
+# ------------------------------------------------------------------
+my %SLIDER_MARK = (0 => "\x{2194}", 1 => "\x{2195}");   # ↔ horizontal, ↕ vertical
+sub _utf8_bytes {
+    my ($s) = @_;
+    $s //= '';
+    return utf8::is_utf8($s) ? Encode::encode('UTF-8', $s) : $s;
+}
+sub _compose_title {
+    my ($self, $state) = @_;
+    my $title = _utf8_bytes($self->title);
+    my $labels = $self->{_slider_labels};
+    return $title unless ref $labels eq 'HASH' && %$labels;
+    my @parts;
+    for my $id (sort { $a <=> $b } grep { /\A[0-9]+\z/ } keys %$labels) {
+        my $l = $labels->{$id};
+        my $text = ref $l eq 'CODE' ? $l->($state->{$id}, $state) : $l;
+        next unless defined $text && $text ne '';
+        my $mark = $SLIDER_MARK{$id} // "#$id";
+        push @parts, _utf8_bytes($mark) . ' ' . _utf8_bytes($text);
+    }
+    return $title unless @parts;
+    my $sep = _utf8_bytes(" \x{2014} ");                       # em dash
+    return ($title eq '' ? '' : $title . $sep) . join(' / ', @parts);
+}
+
+# _send_title($sock, $state, $seq): send GSP_MSG_TITLE if the title changed
+# since the last one sent on this connection. Returns the next $seq.
+sub _send_title {
+    my ($self, $sock, $state, $seq) = @_;
+    my $t = $self->_compose_title($state);
+    return $seq if defined $self->{_title_sent} && $self->{_title_sent} eq $t;
+    _send_msg($sock, GSP_MSG_TITLE, $t, $seq++);
+    $self->{_title_sent} = $t;
+    return $seq;
 }
 
 # ------------------------------------------------------------------
@@ -521,6 +579,7 @@ sub run {
             while (1) {
                 my $fig = $render->($state, $self->_render_w, $self->_render_h);
                 $self->{_ix}{_last_figure} = $fig if $self->{_ix};
+                $seq = $self->_send_title($sock, $state, $seq);
                 _send_msg($sock, GSP_MSG_PNG, $self->_figure_to_png($fig), $seq++);
                 my $more = $self->_recv_ack_sys($sock, 'PNG', $state);
                 last unless $more;     # ACK待ち中に SLIDER/RESIZE が来ていたら再描画
@@ -567,6 +626,7 @@ sub run {
                 # 再描画
                 my $fig = $render->($state, $self->_render_w, $self->_render_h);
                 $ix->{_last_figure} = $fig;
+                $seq = $self->_send_title($sock, $state, $seq);
                 _send_msg($sock, GSP_MSG_PNG, $self->_figure_to_png($fig), $seq++);
                 $self->_recv_ack_sys($sock, 'PNG', $state);
             }
@@ -614,6 +674,7 @@ sub run {
                 # 再描画
                 my $fig = $render->($state, $self->_render_w, $self->_render_h);
                 $ix->{_last_figure} = $fig;
+                $seq = $self->_send_title($sock, $state, $seq);
                 _send_msg($sock, GSP_MSG_PNG, $self->_figure_to_png($fig), $seq++);
                 $self->_recv_ack_sys($sock, 'PNG', $state);
             }

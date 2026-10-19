@@ -121,6 +121,17 @@ t/38_twin_registration.t
 t/39_twin_mapping.t
 t/40_twin_redraw.t
 t/41_frac_data_autoscale.t
+t/42_connection.t
+t/43_grid_scrub_main.t
+t/44_gridspec_cell_margins.t
+t/45_imshow_image.t
+t/46_grid_frame_timing.t
+t/47_png_bytes.t
+t/48_tight_label_room.t
+t/49_legend_outside.t
+t/50_gs_slider_title.t
+t/51_subplots_context.t
+t/52_frame_for_all_plot_types.t
 tools/demo_gs3d_electrodes.pl
 tools/verify_gs3d.pl
 tools/verify_gs3d_projection.pl
