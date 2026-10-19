@@ -58,7 +58,7 @@ my @groups = map {
         capsize => 6,
         marker  => 'o',
         markersize => 6,
-        label   => 'Mean \x{00B1} SEM',
+        label   => "Mean \x{00B1} SEM",
     );
 
     # SD（標準偏差）— x をずらして重ねる
@@ -69,7 +69,7 @@ my @groups = map {
         marker  => 's',
         markersize => 6,
         x       => pdl(0.15, 1.15, 2.15, 3.15),
-        label   => 'Mean \x{00B1} SD',
+        label   => "Mean \x{00B1} SD",
     );
 
     # 95% CI
@@ -80,7 +80,7 @@ my @groups = map {
         marker  => '^',
         markersize => 6,
         x       => pdl(0.30, 1.30, 2.30, 3.30),
-        label   => 'Mean \x{00B1} 95% CI',
+        label   => "Mean \x{00B1} 95% CI",
     );
 
     $ax->xticks([0.15, 1.15, 2.15, 3.15], \@GROUP_NAMES);
@@ -237,13 +237,14 @@ my @groups = map {
     $ax3->set_grid(1);
 
     # --- [2,2] errorbar_stats 比較（SEM）---
+    # 同じ群の Pre と Post を線で結ぶ(lw)。errorbar_stats の既定は結ばない。
     $ax4->title("Mean \x{00B1} SEM: Pre vs Post");
     $ax4->errorbar_stats([$pre_pat, $post_pat],
-        type=>'sem', color=>'coral',
+        type=>'sem', color=>'coral', lw=>1.5,
         marker=>'o', markersize=>7, capsize=>6,
         label=>'Patient');
     $ax4->errorbar_stats([$pre_ctrl, $post_ctrl],
-        type=>'sem', color=>'steelblue',
+        type=>'sem', color=>'steelblue', lw=>1.5,
         marker=>'s', markersize=>7, capsize=>6,
         x=>pdl(0.15,1.15), label=>'Control');
     $ax4->xticks([0.075, 1.075], [qw(Pre Post)]);

@@ -506,9 +506,22 @@ sub _compose_title {
 
 # _send_title($sock, $state, $seq): send GSP_MSG_TITLE if the title changed
 # since the last one sent on this connection. Returns the next $seq.
+# giza_server keeps at most 255 bytes of a title and reads them as UTF-8: a
+# cut in the middle of a character makes the whole title invalid (Cocoa's
+# stringWithUTF8String returns nil). Cut at a character boundary here.
+use constant GS_TITLE_MAX => 255;
+sub _clip_utf8 {
+    my ($bytes, $max) = @_;
+    return $bytes if length($bytes) <= $max;
+    my $n = $max;
+    # step back over continuation bytes (10xxxxxx) to the start of a character
+    $n-- while $n > 0 && (ord(substr($bytes, $n, 1)) & 0xC0) == 0x80;
+    return substr($bytes, 0, $n);
+}
+
 sub _send_title {
     my ($self, $sock, $state, $seq) = @_;
-    my $t = $self->_compose_title($state);
+    my $t = _clip_utf8($self->_compose_title($state), GS_TITLE_MAX);
     return $seq if defined $self->{_title_sent} && $self->{_title_sent} eq $t;
     _send_msg($sock, GSP_MSG_TITLE, $t, $seq++);
     $self->{_title_sent} = $t;

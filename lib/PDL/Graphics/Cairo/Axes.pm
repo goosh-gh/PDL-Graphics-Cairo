@@ -410,7 +410,7 @@ sub line {
     $x = pdl($x) unless ref($x) eq 'PDL' || (ref($x) && eval { $x->isa('PDL') });
     $y = pdl($y) unless ref($y) eq 'PDL' || (ref($y) && eval { $y->isa('PDL') });
 
-    my $color = exists $opt{color}
+    my $color = defined $opt{color}
         ? $self->_parse_color($opt{color})
         : $self->_next_color();
 
@@ -418,7 +418,7 @@ sub line {
         type      => 'line',
         x         => $x, y => $y,
         color     => $color,
-        lw        => $opt{linewidth}  // $opt{lw} // 1.5,
+        lw        => _opt_lw(\%opt, 1.5),
         linestyle => $opt{linestyle}  // $opt{ls} // 'solid',
         alpha     => $opt{alpha}      // 1.0,
         label     => $opt{label}      // undef,
@@ -429,7 +429,7 @@ sub line {
     $self->_expand_range($x, $y);
     if (defined $opt{label}) {
         push @{ $self->_legends }, { type=>'line', color=>$color, label=>$opt{label},
-            lw=>$opt{linewidth}//1.5, ls=>$opt{linestyle}//'solid' };
+            lw=>_opt_lw(\%opt, 1.5), ls=>$opt{linestyle}//$opt{ls}//'solid' };
     }
     return $self;
 }
@@ -652,7 +652,7 @@ sub scatter {
     $x = pdl($x) unless ref($x) && $x->isa('PDL');
     $y = pdl($y) unless ref($y) && $y->isa('PDL');
 
-    my $color = exists $opt{color} || exists $opt{c}
+    my $color = defined $opt{color} || defined $opt{c}
         ? $self->_parse_color($opt{color} // $opt{c})
         : $self->_next_color();
 
@@ -691,7 +691,7 @@ sub bar {
 
     my $width  = $opt{width}  // 0.8;
     my $bottom = $opt{bottom} // 0;
-    my $color  = exists $opt{color}
+    my $color  = defined $opt{color}
         ? $self->_parse_color($opt{color}) : $self->_next_color();
 
     # yerr: errorbar()と同じ慣習で対称(yerr=>5 or yerr=>[...])と
@@ -752,7 +752,7 @@ sub barh {
 
     my $height = $opt{height} // 0.8;
     my $left   = $opt{left}   // 0;
-    my $color  = exists $opt{color}
+    my $color  = defined $opt{color}
         ? $self->_parse_color($opt{color}) : $self->_next_color();
 
     push @{ $self->_queue }, {
@@ -801,7 +801,7 @@ sub histogram {
         @counts = map { $_ / ($total * $bw) } @counts;
     }
 
-    my $color = exists $opt{color}
+    my $color = defined $opt{color}
         ? $self->_parse_color($opt{color}) : $self->_next_color();
 
     my @xs = map { $dmin + $_ * $bw } 0..$bins;
@@ -820,6 +820,15 @@ sub histogram {
     return $self;
 }
 
+# _opt_lw(\%opt, $default): line width from either key, `linewidth` or `lw`
+# (matplotlib accepts both). Every plot method reads it through here; up to
+# 0.42 step/errorbar/stem read only linewidth and qqplot only lw, ignoring
+# the other key without a word.
+sub _opt_lw {
+    my ($opt, $default) = @_;
+    return $opt->{linewidth} // $opt->{lw} // $default;
+}
+
 # ---- errorbar ----------------------------------------------------
 sub errorbar {
     my ($self, $x, $y, %opt) = @_;
@@ -829,7 +838,7 @@ sub errorbar {
     my $yerr = exists $opt{yerr} ? pdl($opt{yerr}) : undef;
     my $xerr = exists $opt{xerr} ? pdl($opt{xerr}) : undef;
 
-    my $color = exists $opt{color}
+    my $color = defined $opt{color}
         ? $self->_parse_color($opt{color}) : $self->_next_color();
 
     push @{ $self->_queue }, {
@@ -837,7 +846,7 @@ sub errorbar {
         x      => $x, y => $y,
         yerr   => $yerr, xerr => $xerr,
         color  => $color,
-        lw     => $opt{linewidth} // 1.5,
+        lw     => _opt_lw(\%opt, 1.5),   # 0: points not joined
         capsize=> $opt{capsize}   // 4,
         marker => $opt{marker}    // 'o',
         ms     => $opt{markersize}// 4,
@@ -848,7 +857,11 @@ sub errorbar {
     my $yhi = defined($yerr) ? ($y + $yerr)->max : $y->max;
     $self->_expand_range($x, pdl($ylo,$yhi));
     if (defined $opt{label}) {
-        push @{ $self->_legends }, { type=>'line', color=>$color, label=>$opt{label}, lw=>1.5 };
+        my $lw = _opt_lw(\%opt, 1.5);
+        push @{ $self->_legends }, $lw > 0
+            ? { type=>'line', color=>$color, label=>$opt{label}, lw=>$lw }
+            : { type=>'marker', color=>$color, label=>$opt{label},
+                marker=>$opt{marker} // 'o' };
     }
     return $self;
 }
@@ -860,7 +873,7 @@ sub fill_between {
     $y1 = pdl($y1) unless ref($y1) && $y1->isa('PDL');
     $y2 = pdl($y2) unless ref($y2) && $y2->isa('PDL');
 
-    my $color = exists $opt{color}
+    my $color = defined $opt{color}
         ? $self->_parse_color($opt{color}) : $self->_next_color();
 
     # where: PDL boolean マスク (1=塗りつぶす, 0=塗らない)
@@ -937,20 +950,20 @@ sub step {
     $x = pdl($x) unless ref($x) && $x->isa('PDL');
     $y = pdl($y) unless ref($y) && $y->isa('PDL');
 
-    my $color = exists $opt{color}
+    my $color = defined $opt{color}
         ? $self->_parse_color($opt{color}) : $self->_next_color();
     push @{ $self->_queue }, {
         type      => 'step',
         x         => $x, y => $y,
         color     => $color,
-        lw        => $opt{linewidth} // 1.5,
+        lw        => _opt_lw(\%opt, 1.5),
         linestyle => $opt{linestyle} // 'solid',
         where     => $opt{where}     // 'pre',
         label     => $opt{label}     // undef,
     };
     $self->_expand_range($x, $y);
     if (defined $opt{label}) {
-        push @{ $self->_legends }, { type=>'line', color=>$color, label=>$opt{label}, lw=>1.5 };
+        push @{ $self->_legends }, { type=>'line', color=>$color, label=>$opt{label}, lw=>_opt_lw(\%opt, 1.5) };
     }
     return $self;
 }
@@ -961,13 +974,13 @@ sub stem {
     $x = pdl($x) unless ref($x) && $x->isa('PDL');
     $y = pdl($y) unless ref($y) && $y->isa('PDL');
 
-    my $color = exists $opt{color}
+    my $color = defined $opt{color}
         ? $self->_parse_color($opt{color}) : $self->_next_color();
     push @{ $self->_queue }, {
         type   => 'stem',
         x      => $x, y => $y,
         color  => $color,
-        lw     => $opt{linewidth} // 1.0,
+        lw     => _opt_lw(\%opt, 1.0),
         ms     => $opt{markersize}// 4,
         label  => $opt{label}     // undef,
     };
@@ -1005,7 +1018,7 @@ sub errorbar_stats {
         capsize    => $opt{capsize}    // 5,
         marker     => $opt{marker}     // 'o',
         markersize => $opt{markersize} // 4,
-        lw         => $opt{lw}         // 0,
+        lw         => _opt_lw(\%opt, 0),   # 既定は点を結ばない(群の比較)
         label      => $opt{label}      // undef,
     );
 }
@@ -1027,7 +1040,7 @@ sub boxplot {
     my $showcaps= $opt{showcaps}   // 1;
     my $showfli = $opt{showfliers} // 1;
 
-    my $fc = exists $opt{color}
+    my $fc = defined $opt{color}
         ? $self->_parse_color($opt{color})
         : [0.70, 0.85, 0.95];
     my $ec = $self->_parse_color($opt{edgecolor} // 'black');
@@ -1229,7 +1242,7 @@ sub qqplot {
     my $yl = $dmean + $dstd * $xl;
     $self->line($xl, $yl,
         color => $self->_parse_color($opt{line_color} // 'red'),
-        lw    => $opt{lw} // 1.2,
+        lw    => _opt_lw(\%opt, 1.2),
         ls    => 'dashed',
         label => $opt{line_label} // 'normal',
     );
@@ -1391,7 +1404,7 @@ sub axhline {
         type   => 'hline',
         y      => $y,
         color  => $color,
-        lw     => $opt{lw} // $opt{linewidth} // 1.0,
+        lw     => _opt_lw(\%opt, 1.0),
         ls     => $opt{ls} // $opt{linestyle} // 'solid',
     };
     return $self;
@@ -1404,7 +1417,7 @@ sub axvline {
         type   => 'vline',
         x      => $x,
         color  => $color,
-        lw     => $opt{lw} // $opt{linewidth} // 1.0,
+        lw     => _opt_lw(\%opt, 1.0),
         ls     => $opt{ls} // $opt{linestyle} // 'solid',
     };
     return $self;
@@ -2105,8 +2118,10 @@ sub _render_cmd {
         my $xd = $tr->x($cmd->{x});
         my $yd = $tr->y($cmd->{y});
         $b->set_color(@{$cmd->{color}});
-        $b->set_linewidth($cmd->{lw});
-        $b->polyline($xd, $yd);
+        if ($cmd->{lw} > 0) {          # lw => 0: points not joined
+            $b->set_linewidth($cmd->{lw});
+            $b->polyline($xd, $yd);
+        }
         #
 
         for my $i (0 .. $cmd->{x}->nelem - 1) {
