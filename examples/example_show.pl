@@ -3,11 +3,15 @@
 # example_show.pl  --  PDL::Graphics::Cairo interactive display demo
 #
 # Run from PDL-Graphics-Cairo/ root:
-#   perl -I./lib examples/example_show.pl              # auto-detect terminal
-#   perl -I./lib examples/example_show.pl aqua         # macOS AquaTerm
-#   perl -I./lib examples/example_show.pl x11          # X11 / XQuartz
-#   perl -I./lib examples/example_show.pl wxt          # wxWidgets
-#   perl -I./lib examples/example_show.pl osx          # macOS native Cocoa (no gnuplot)
+#   perl -I./lib examples/example_show.pl              # default display
+#   perl -I./lib examples/example_show.pl aqua         # gnuplot, macOS AquaTerm
+#   perl -I./lib examples/example_show.pl x11          # gnuplot, X11 / XQuartz
+#   perl -I./lib examples/example_show.pl wxt          # gnuplot, wxWidgets
+#   perl -I./lib examples/example_show.pl osx          # retired pdlcairo_viewer (macOS)
+#
+# Default display: giza_server on macOS when it is available (one tab per
+# demo), otherwise gnuplot (terminal: aqua -> x11 -> wxt -> qt on macOS,
+# wxt -> x11 -> qt on Linux, the first that works).
 #
 # Also demonstrates the PGPLOT compatibility layer with /xw device:
 #   perl -I./lib examples/example_show.pl pgplot_xw
@@ -136,7 +140,7 @@ if ($term_arg eq 'osx') {
 } elsif ($term_arg) {
     print "Terminal: $term_arg\n\n";
 } else {
-    print "Terminal: auto-detect (aqua -> wxt -> x11 -> qt)\n\n";
+    print "Display: default (giza_server on macOS when available, otherwise gnuplot)\n\n";
 }
 
 # =============================================================
@@ -279,10 +283,8 @@ if ($term_arg eq 'osx') {
     print "  -> window opened\n";
 }
 
-PDL::Graphics::Cairo::Driver::OSX->wait_all() if $term_arg eq 'osx';
-
 if ($term_arg eq 'osx') {
-    print "全ウィンドウを閉じると終了します...\n";
+    print "Close all windows to exit...\n";
     PDL::Graphics::Cairo::Driver::OSX->wait_all();
 }
 print "\nAll demos done.\n";

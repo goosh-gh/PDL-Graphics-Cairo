@@ -3021,6 +3021,9 @@ sub _draw_twin_xaxis {
     }
 }
 
+# Right axis of a twinx: tick numbers at mr+TWIN_YTICK_X, label past them.
+use constant { TWIN_YTICK_FS => 10, TWIN_YTICK_X => 6,
+               TWIN_YLABEL_FS => 11, TWIN_YLABEL_GAP => 6 };
 sub _draw_twin_yaxis {
     my ($self, $b, $tr, $ml,$mt,$mr,$mb) = @_;
 
@@ -3058,7 +3061,8 @@ sub _draw_twin_yaxis {
     my $min_ygap = 14;
     my ($ylo, $yhi) = ($self->ymin, $self->ymax);
     my $prev_yp = $self->{_y_reversed} ? -9999 : 9999;
-    $b->set_font(size => 10);
+    my $wmax = 0;     # widest tick number drawn: the right label goes past it
+    $b->set_font(size => TWIN_YTICK_FS);
     for my $i (0 .. $#ytks) {
         my $v   = $ytks[$i];
         my $eps = ($yhi - $ylo) * 0.001 + 0.001;
@@ -3072,24 +3076,67 @@ sub _draw_twin_yaxis {
         # label overlap guard (same logic as _draw_frame Y section)
         # abs() で正順・逆順どちらの yticks 配列にも対応
         next if abs($yp - $prev_yp) < $min_ygap;
-        $b->text($mr+6, $yp, $ylbs[$i], align=>'left', valign=>'middle');
+        $b->text($mr + TWIN_YTICK_X, $yp, $ylbs[$i], align=>'left', valign=>'middle');
+        my $w = eval { $b->text_width($ylbs[$i]) } // 0;
+        $wmax = $w if $w > $wmax;
         $prev_yp = $yp;
     }
 
-    # Y
+    # 右の Y ラベル(set_right_ylabel、無ければ twin の ylabel)。
     # angle=>90(正)を使う。-90だと文字が上から下に読む向きになり、
     # 通常のylabel(_draw_labels内、angle=>$rot、デフォルト90)と
     # 反転して見えてしまう(ユーザー指摘により発覚)。
-    if ($self->ylabel ne '') {
-        $b->set_font(size => 11);
-        $b->text($mr + 42, ($mt+$mb)/2, $self->ylabel,
-            align=>'center', valign=>'bottom', angle=>90);
+    # 目盛り数字の右端から TWIN_YLABEL_GAP 空けた位置を文字の上端にする
+    # (valign=>'top': 縦書きの上端は左側なので、文字は右へ伸びる)。
+    # 0.42 までは数字の幅を見ずに mr+20 を下端にしていたため、文字が左へ
+    # 伸びて目盛り数字に重なっていた。_twin_yaxis_room が同じ式で余白を見積もる。
+    my $rlab = $self->_twin_ylabel_text;
+    if ($rlab ne '') {
+        $b->set_color(_fg());
+        $b->set_font(size => TWIN_YLABEL_FS);
+        $b->text($mr + TWIN_YTICK_X + $wmax + TWIN_YLABEL_GAP, ($mt+$mb)/2, $rlab,
+            align=>'center', valign=>'top', angle=>90);
     }
-    if (exists $self->{_right_ylabel} && $self->{_right_ylabel} ne '') {
-        $b->set_font(size => 11);
-        $b->text($mr + 20, ($mt+$mb)/2, $self->{_right_ylabel},
-            align=>'center', valign=>'bottom', angle=>90);
+}
+
+# The label drawn on the right of a twinx: set_right_ylabel, else its ylabel.
+sub _twin_ylabel_text {
+    my ($self) = @_;
+    for my $l ($self->{_right_ylabel}, $self->ylabel) {
+        return $l if defined $l && $l ne '';
     }
+    return '';
+}
+
+# _twin_yaxis_room($m): room (px) right of the plot rectangle that a twinx
+# needs for its tick numbers and right label, measured with $m the same way
+# _draw_twin_yaxis places them. Used by Figure::tight_layout on the parent.
+sub _twin_yaxis_room {
+    my ($self, $m) = @_;
+    my @user = ($self->xmin, $self->xmax, $self->ymin, $self->ymax);
+    $self->_finalize_range;
+    my ($ylo, $yhi) = ($self->ymin, $self->ymax);
+    my ($ytks, $ylbs) = $self->_ytick_list;
+    $self->xmin($user[0]); $self->xmax($user[1]);
+    $self->ymin($user[2]); $self->ymax($user[3]);
+
+    $m->set_font(size => TWIN_YTICK_FS);
+    my $eps  = ($yhi - $ylo) * 0.001 + 0.001;
+    my $wmax = 0;
+    for my $i (0 .. $#$ytks) {
+        next if $ytks->[$i] < $ylo - $eps || $ytks->[$i] > $yhi + $eps;
+        my ($w) = _text_wh($m, $ylbs->[$i] // '');
+        $wmax = $w if $w > $wmax;
+    }
+    my $room = TWIN_YTICK_X + $wmax;
+    my $lab  = $self->_twin_ylabel_text;
+    if ($lab ne '') {
+        $m->set_font(size => TWIN_YLABEL_FS);
+        my (undef, $h) = _text_wh($m, $lab);
+        $room += TWIN_YLABEL_GAP + $h;
+    }
+    # 2 px so the outermost pixels of the glyphs stay inside the figure
+    return int($room + 0.999) + 2;
 }
 
 # ------------------------------------------------------------------
@@ -3687,9 +3734,10 @@ sub _fmt_tick {
     if (abs($v - $rounded) < 0.001) {
         return sprintf("%d", $rounded);
     }
-    # 1
-    elsif ($abs >= 1) { return sprintf("%.1f", $v) }
-    else              { return sprintf("%.2g", $v) }
+    # 整数でない値は、有効数字 6 桁までで値をそのまま表す(1.25 → "1.25")。
+    # 以前は 1 以上を "%.1f"、1 未満を "%.2g" にしていたため、刻み 0.25 や
+    # 0.00025 の目盛りが 1.2 / 0.0013 のように隣の目盛りとずれた数字になっていた。
+    return sprintf("%.6g", $v);
 }
 
 # ------------------------------------------------------------------

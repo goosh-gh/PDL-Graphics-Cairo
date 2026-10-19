@@ -3,16 +3,20 @@
 # example_show.ja.pl  --  PDL::Graphics::Cairo インタラクティブ表示デモ
 #
 # PDL-Graphics-Cairo/ ルートから実行:
-#   perl -I./lib examples/example_show.pl              # 自動検出
-#   perl -I./lib examples/example_show.pl aqua         # macOS Aquaterm
-#   perl -I./lib examples/example_show.pl x11          # X11 / XQuartz
-#   perl -I./lib examples/example_show.pl wxt          # wxWidgets
+#   perl -I./lib examples/example_show.ja.pl           # 既定の表示先
+#   perl -I./lib examples/example_show.ja.pl aqua      # gnuplot の Aquaterm
+#   perl -I./lib examples/example_show.ja.pl x11       # gnuplot の X11 / XQuartz
+#   perl -I./lib examples/example_show.ja.pl wxt       # gnuplot の wxWidgets
+#
+# 既定の表示先: macOS で giza_server が使えれば giza_server(デモごとに
+# タブ)、それ以外は gnuplot(端末は aqua → x11 → wxt → qt、Linux は
+# wxt → x11 → qt の順に、使えるものを選ぶ)。
 #
 # PGPLOT 互換レイヤーの /xw デモ:
-#   perl -I./lib examples/example_show.pl pgplot_xw
+#   perl -I./lib examples/example_show.ja.pl pgplot_xw
 #
 # 必要なもの:
-#   gnuplot  (OS のパッケージマネージャで別途インストール)
+#   giza_server(macOS の既定)、または gnuplot(OS のパッケージマネージャで別途インストール)
 #
 #   macOS (MacPorts):
 #     sudo port install gnuplot +aquaterm
@@ -21,10 +25,9 @@
 #   Ubuntu/Debian:
 #     sudo apt install gnuplot-x11
 #
-# 動作の仕組み:
-#   ->show(nowait => 1) は一時 PNG を /tmp/pdlcairo_XXXXXX.png に書き出し、
+# 動作の仕組み(gnuplot のとき):
+#   show() は一時 PNG を /tmp/pdlcairo_XXXXXX.png に書き出し、
 #   gnuplot に渡して表示します。
-#   一時ファイルは Perl プロセス終了時に削除されます。
 #   show(keep=>1) でデバッグ用に一時ファイルを保持できます。
 #
 # PGPLOT レイヤーのデバイス文字列:
@@ -44,11 +47,11 @@ my $PI = 3.14159265358979;
 
 # このサンプルは PGPLOT_BACKGROUND の設定に関係なく白背景を使います。
 # 黒背景にしたい場合はこの行を削除してください:
-#   PGPLOT_BACKGROUND=black perl -I./lib examples/example_show.pl
+#   PGPLOT_BACKGROUND=black perl -I./lib examples/example_show.ja.pl
 $ENV{PGPLOT_BACKGROUND} //= 'white';
 
 # ターミナル選択
-# argv[0]: 'aqua' | 'x11' | 'wxt' | 'pgplot_xw' | (空 = 自動検出)
+# argv[0]: 'aqua' | 'x11' | 'wxt' | 'pgplot_xw' | (空 = 既定の表示先)
 my $term_arg = $ARGV[0] // '';
 
 # =============================================================
@@ -61,12 +64,12 @@ sub show_fig {
         # フォールバックが発生した場合は Driver::Gnuplot が警告を出す。
         $fig->show(terminal => lc($term_arg));
     } else {
-        $fig->show(nowait => 1);   # 自動検出
+        $fig->show();   # 既定の表示先(macOS は giza_server)
     }
 }
 
 # =============================================================
-# PGPLOT /xw demo (run with: perl example_show.pl pgplot_xw)
+# PGPLOT /xw demo (run with: perl example_show.ja.pl pgplot_xw)
 # =============================================================
 if ($term_arg eq 'pgplot_xw') {
     print "PGPLOT 互換レイヤー -- /xw (X11) 経由のインタラクティブ表示\n";
@@ -144,7 +147,7 @@ print "PDL::Graphics::Cairo -- インタラクティブ表示デモ\n";
 if ($term_arg) {
     print "ターミナル: $term_arg\n\n";
 } else {
-    print "ターミナル: 自動検出 (aqua -> wxt -> x11 -> qt の順)\n\n";
+    print "表示先: 既定 (macOS で giza_server が使えれば giza_server、それ以外は gnuplot)\n\n";
 }
 
 # =============================================================
@@ -281,6 +284,4 @@ if ($term_arg) {
     print "  → ウィンドウが開きました\n";
 }
 
-PDL::Graphics::Cairo::Driver::OSX->wait_all();
-print "\nAll demos done.\n";
-print "Close the windows or press Ctrl-C to exit.\n";
+print "\nすべてのデモを表示しました。\n";

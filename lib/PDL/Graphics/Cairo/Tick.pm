@@ -29,21 +29,24 @@ sub nice_ticks {
     elsif ($frac <= 5.0) { $step = 5.0  * $mag }
     else                 { $step = 10.0 * $mag }
 
-    # step 
-    my $decimals = ($step >= 1) ? 0 : ceil(-log10($step));
+    # 目盛りの値を丸める桁数は、刻みそのものを正確に表せる桁数にする
+    # (刻み 2.5 なら小数 1 桁、0.25 なら 2 桁、25 なら 0 桁)。
+    # 以前は「刻みが 1 以上なら 0 桁」としていたため、刻み 2.5 で
+    # 2.5 → 3、7.5 → 8 と目盛りの位置そのものが整数に丸められて不等間隔になり、
+    # 12.5 は 13 になって範囲外として消えていた(刻み 0.25 も同様)。
+    my $decimals = -floor(log10($mag) + 1e-9);
+    $decimals++ if $step / $mag > 2.4 && $step / $mag < 2.6;
+    $decimals = 0 if $decimals < 0;
 
-    my $start = $step * ceil($min / $step - 1e-10);
+    my $k0 = ceil($min / $step - 1e-10);
     my @ticks;
-    my $v = $start;
-    while ($v <= $max + $step * 1e-6) {
-        #
-
-        my $rounded = ($decimals > 0)
-            ? sprintf("%.${decimals}f", $v) + 0
-            : int($v + 0.5 * ($v <=> 0));
+    for (my $k = $k0; ; $k++) {
+        my $v = $k * $step;          # 足し算を重ねず、誤差を溜めない
+        last if $v > $max + $step * 1e-6;
+        my $rounded = sprintf("%.${decimals}f", $v) + 0;
+        $rounded = 0 if $rounded == 0;   # -0 を 0 に
         push @ticks, $rounded if $rounded >= $min - $step*1e-6
                               && $rounded <= $max + $step*1e-6;
-        $v += $step;
         last if @ticks > 20;
     }
     return @ticks;

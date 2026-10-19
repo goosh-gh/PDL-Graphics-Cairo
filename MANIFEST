@@ -132,6 +132,8 @@ t/49_legend_outside.t
 t/50_gs_slider_title.t
 t/51_subplots_context.t
 t/52_frame_for_all_plot_types.t
+t/53_twinx_right_label.t
+t/54_nice_ticks_step.t
 tools/demo_gs3d_electrodes.pl
 tools/verify_gs3d.pl
 tools/verify_gs3d_projection.pl

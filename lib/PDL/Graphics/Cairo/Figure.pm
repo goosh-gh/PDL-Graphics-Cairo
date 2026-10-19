@@ -858,7 +858,8 @@ sub tight_layout {
     # 測るための Cairo は 1x1 の画像面で、描画と同じフォント(rcParams)を使う。
     my %room;    # Axes => [left, bottom, top]
     my $level = $opt{uniform_margins} ? 1 : 0;
-    if (my $m = _measure_driver()) {
+    my $meas = _measure_driver();    # also used for a twinx's right axis below
+    if (my $m = $meas) {
         for my $ax (@{ $self->axes_list }) {
             next if $ax->_is_twin || $ax->_is_inset
                  || $ax->isa('PDL::Graphics::Cairo::PolarAxes');
@@ -1138,8 +1139,12 @@ sub tight_layout {
                 # twiny: 上に第2X軸の目盛り(約16px)+ラベル(約20px)
                 $mt += 36 + ($twin->xlabel ne '' ? 20 : 0);
             } else {
-                # twinx: 右に第2Y軸の目盛り数値(約36px)+ラベル(約20px)
-                $mr += 36 + ($twin->ylabel ne '' ? 20 : 0);
+                # twinx: 右に第2Y軸の目盛り数値と右ラベル。描画
+                # (_draw_twin_yaxis)と同じ式で実測する(_twin_yaxis_room)。
+                # 0.42 までは固定の 36px(+ ylabel なら 20px)で、
+                # set_right_ylabel のラベル分を数えていなかった。
+                $mr += $meas ? $twin->_twin_yaxis_room($meas)
+                             : 36 + ($twin->_twin_ylabel_text ne '' ? 20 : 0);
             }
             warn sprintf("[DEBUG tight_layout twin] twin_type=%s mt=%s mr=%s twin_xlabel='%s'\n",
                 $twin_type, $mt, $mr, $twin->xlabel) if $ENV{PGC_DEBUG_LABELS};
