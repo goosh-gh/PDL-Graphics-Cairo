@@ -414,6 +414,12 @@ sub line {
         ? $self->_parse_color($opt{color})
         : $self->_next_color();
 
+    # decimate => 'm4': 描画のときに、画素の列ごとに 最初・最小・最大・最後 の 4 点に間引く
+    # (PDL::Graphics::Cairo::LTTB::m4_index_px)。'none' か未指定なら間引かない
+    my $decimate = $opt{decimate} // 'none';
+    die "line: decimate must be 'm4' or 'none' (got '$decimate')\n"
+        unless $decimate eq 'm4' || $decimate eq 'none';
+
     push @{ $self->_queue }, {
         type      => 'line',
         x         => $x, y => $y,
@@ -425,6 +431,7 @@ sub line {
         marker    => $opt{marker}     // undef,  # 'o','s','^','d','+','x' or undef=no marker
         ms        => $opt{markersize} // $opt{ms} // 4,
         fill      => (($opt{fillstyle}//'full') eq 'none') ? 0 : 1,
+        decimate  => $decimate,
     };
     $self->_expand_range($x, $y);
     if (defined $opt{label}) {

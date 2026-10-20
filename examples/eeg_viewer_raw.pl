@@ -9,8 +9,14 @@
 #
 # giza-server physical sliders: not used (all controls in custom button bar)
 #
+# Waveforms are drawn with line(..., decimate => 'm4'): each pixel column keeps
+# its first, minimum, maximum and last sample, so a frame costs about the same
+# for a 10 s and a 120 s window. Saving (is_save) draws all samples.
+#
 # Usage:
 #   perl eeg_viewer_raw.pl [file.EEG] [--block=N] [--blocks=N,M,...]
+#   perl eeg_viewer_raw.pl file.edf          — EDF / EDF+ (PDL::EEG::IO::EDF)
+#   (no file: synthetic demo data)
 #   PDLCAIRO_DEBUG=1   — enable debug output
 #   PDLCAIRO_RENDER_SCALE=0.75  — render resolution (default 0.75)
 
@@ -23,7 +29,6 @@ binmode(STDOUT, ':utf8');
 binmode(STDERR, ':utf8');
 use PDL::Graphics::Cairo qw(figure);
 use PDL::Graphics::Cairo::Driver::GS;
-use PDL::Graphics::Cairo::LTTB qw(lttb lttb_minmax);
 
 my $DEBUG = $ENV{PDLCAIRO_DEBUG} ? 1 : 0;
 
@@ -93,6 +98,21 @@ if (@ARGV && -f $ARGV[0] && $ARGV[0] =~ /\.eeg$/i) {
     $n_samples = $eeg->dim(1);
     warn sprintf("Loaded: %dch x %d samples @ %d Hz (%.1f s)\n",
         $n_ch_valid, $n_samples, $srate, $n_samples/$srate);
+} elsif (@ARGV && -f $ARGV[0] && $ARGV[0] =~ /\.edf$/i) {
+    # EDF / EDF+: {data} is [n_ch, n_samp] in uV
+    eval { require PDL::EEG::IO::EDF };
+    die "PDL::EEG::IO::EDF is required: $@\n" if $@;
+    my $rec = PDL::EEG::IO::EDF::read_edf(shift @ARGV);
+    $eeg       = $rec->{data}->double;
+    $srate     = $rec->{fs};
+    @CH_NAMES  = @{ $rec->{labels} };
+    $n_samples = $eeg->dim(1);
+    warn sprintf("Loaded EDF: %dch x %d samples @ %g Hz (%.1f s)\n",
+        scalar(@CH_NAMES), $n_samples, $srate, $n_samples/$srate);
+} elsif (@ARGV && !-f $ARGV[0]) {
+    die "No such file: $ARGV[0]\n";
+} elsif (@ARGV) {
+    die "Reads Nihon Kohden .EEG and .edf files: $ARGV[0]\n";
 } else {
     # Demo mode: synthetic 34-channel x 30 s data
     $srate     = 1000;
@@ -200,7 +220,6 @@ sub pos_from_tstart {
     my $v = $t_ms / $max;
     $v < 0.0 ? 0.0 : $v > 1.0 ? 1.0 : $v;
 }
-sub n_out_for_width { int($_[0] * 1) || 400 }
 
 # ═══════════════════════════════════════════════════════════════════════
 # 3. Button bar UI constants (button-bar Axes coordinates: xlim=0..1)
@@ -318,8 +337,7 @@ my $render = sub {
 
     my $t_view  = $t_full->slice("$idx0:$idx1");
     my $ns_view = $t_view->nelem;
-    my $n_lttb  = $is_save ? $ns_view : n_out_for_width($w);
-    $n_lttb     = $ns_view if $n_lttb >= $ns_view;
+    my $decim   = $is_save ? 'none' : 'm4';
 
     my $fig = figure(width => $w, height => $h);
 
@@ -347,13 +365,7 @@ my $render = sub {
         last if $ch_idx >= $N_CH_ALL;
         my $ax     = $axes[$row];
         my $y_full = $eeg->slice("($ch_idx),$idx0:$idx1");
-        my ($t_plot, $y_plot);
-        if ($n_lttb < $ns_view) {
-            ($t_plot, $y_plot) = lttb_minmax($t_view, $y_full, $n_lttb);
-        } else {
-            ($t_plot, $y_plot) = ($t_view, $y_full);
-        }
-        $ax->line($t_plot, $y_plot, color=>'#1a5276', lw=>0.8);
+        $ax->line($t_view, $y_full, color=>'#1a5276', lw=>0.8, decimate=>$decim);
         $ax->xlim($t_start, $t_end);
         # _neg_up=1: ylim(+gain, -gain) → negative-up (EEG convention)
         # _neg_up=0: ylim(-gain, +gain) → positive-up
@@ -459,18 +471,16 @@ my $render = sub {
         _draw_hslider($ax_btn, $state->{_pos} // 0.0,
                       $t_start, $page_ms, $DATA_MS);
 
-        # Debug info: ch range | LTTB (shown only when PDLCAIRO_DEBUG=1)
+        # Debug info: ch range | samples per channel (shown only when PDLCAIRO_DEBUG=1)
         if ($DEBUG) {
             my $ch_str = $ch_max > 0
                 ? sprintf("ch %d\x{2013}%d / %d  |",
                     $ch_off+1, $ch_off+$N_ROWS_VIS, $N_CH_ALL)
                 : sprintf("%d ch  |", $N_CH_ALL);
-            my $lttb_str = ($n_lttb < $ns_view)
-                ? sprintf("  LTTB:%d\x{2192}%d/ch", $ns_view, $n_lttb)
-                : sprintf("  Full:%d pts/ch", $ns_view);
-            $ax_btn->text(0.75, INFO_Y1, $ch_str . $lttb_str,
+            my $pts_str = sprintf("  %d pts/ch (%s)", $ns_view, $decim);
+            $ax_btn->text(0.75, INFO_Y1, $ch_str . $pts_str,
                 ha=>'left', va=>'bottom', fontsize=>8,
-                color=>($n_lttb < $ns_view ? '#27ae60' : '#555555'));
+                color=>($decim eq 'm4' ? '#27ae60' : '#555555'));
         }
 
         # PICK/Cursor info: always shown at bottom-right of slider row

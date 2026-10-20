@@ -145,6 +145,7 @@ t/56_gs_title_clip.t
 t/57_public_names.t
 t/58_heatmap_stem_legend.t
 t/59_gridspec_tight.t
+t/60_m4_decimate.t
 tools/demo_gs3d_electrodes.pl
 tools/verify_gs3d.pl
 tools/verify_gs3d_projection.pl

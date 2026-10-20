@@ -17,7 +17,14 @@ sub _render_line {
     $b->set_color(@{$cmd->{color}}, $cmd->{alpha});
     $b->set_linewidth($cmd->{lw});
     $b->set_linestyle($cmd->{linestyle}, $cmd->{lw});
-    $b->polyline($xd, $yd);
+    if (($cmd->{decimate} // 'none') eq 'm4' && $xd->nelem > 4 * ($mr - $ml + 2)) {
+        # 確定した画素の x で列を決める(マーカーは下で全点に描く)
+        require PDL::Graphics::Cairo::LTTB;
+        my $i = PDL::Graphics::Cairo::LTTB::m4_index_px($xd, $yd, $ml, $mr);
+        $b->polyline($xd->index($i), $yd->index($i));
+    } else {
+        $b->polyline($xd, $yd);
+    }
     $b->set_linestyle('solid');
     # marker: marker引数が指定されていれば各点にマーカーを描く
     if (defined $cmd->{marker}) {
