@@ -19,6 +19,15 @@ Revision history for PDL-Graphics-Cairo
     PDL. (t/61)
   - Driver::GS no longer warns "isn't numeric in sort" when the state has
     keys such as _pos.
+  - show_interactive(redraw_key => sub { ... }): with cursor_overlay, a
+    CURSOR or PICK message draws the figure again only when the string the
+    callback returns (with the window size) changed. Every message drew a
+    frame before, also with the mouse over a part where nothing follows it.
+    (t/62)
+  - examples/eeg_viewer_raw.pl: gain steps up to +-10 mV for EMG (the
+    label is in mV from 1 mV); the data are stored with each channel
+    contiguous, and an EDF stays float; it uses redraw_key, so moving the
+    mouse over the button bar or within one sample does not draw again.
 
 0.43  2026-10-19
   - twinx: the right label (set_right_ylabel, or the twin's ylabel) is
