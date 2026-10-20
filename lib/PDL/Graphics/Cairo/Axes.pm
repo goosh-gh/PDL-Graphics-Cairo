@@ -61,6 +61,15 @@ use PDL::Graphics::Cairo::ListedColormap;
 # PDL::Stats::Basic  optional
 my $_has_pdl_stats = eval { require PDL::Stats::Basic; 1 } // 0;
 
+# 母標準偏差(N で割る。PDL::Stats::Basic の stdv と同じ定義)を Perl の数で返す。
+# qqplot と hist_kde は PDL::Stats が無くても動くよう、こちらを使う。
+sub _stdv_pop {
+    my ($x) = @_;
+    my $d = $x->double->flat;
+    return 0 unless $d->nelem;
+    return sqrt((($d - $d->avg) ** 2)->avg->sclr);
+}
+
 
 # ------------------------------------------------------------------
 # Figure subplot
@@ -1248,7 +1257,7 @@ sub qqplot {
     my $dmax = $sorted->max;
     # 45: y = mean + std * x
     my $dmean = $sorted->average;
-    my $dstd  = $sorted->stdv;
+    my $dstd  = _stdv_pop($sorted);
     my $xl = pdl($qmin, $qmax);
     my $yl = $dmean + $dstd * $xl;
     $self->line($xl, $yl,
@@ -1309,7 +1318,7 @@ sub hist_kde {
 
     # KDE
     my $n    = $data->nelem;
-    my $std  = $data->stdv || 1;
+    my $std  = _stdv_pop($data) || 1;
     my $h    = 1.06 * $std * ($n ** (-0.2));   # Silverman
 
     my $dmin = $data->min - $std;

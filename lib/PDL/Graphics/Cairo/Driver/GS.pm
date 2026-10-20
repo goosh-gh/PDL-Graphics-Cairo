@@ -411,8 +411,9 @@ sub show_interactive {
     # 生成時点で正しいつまみ位置で窓を作る（既定0.0→initへ跳ぶチラつきを回避）。
     # val は正規化 [0,1]。8バイトだけの旧 NEWWIN とは後方互換。
     my $newwin = pack('L L', $self->width, $self->height);
-    for my $id (sort { $a <=> $b } keys %$state) {
-        next unless $id =~ /\A[0-9]+\z/;          # スライダidは非負整数のみ（_cursor_* 等を除外）
+    # スライダidは非負整数のみ（_pos・_cursor_* 等を除外）。並べる前に絞る
+    # (先に数値として並べると、数字でないキーで "isn't numeric in sort" の警告が出る)
+    for my $id (sort { $a <=> $b } grep { /\A[0-9]+\z/ } keys %$state) {
         my $v = $state->{$id};
         next unless defined $v && $v =~ /\A-?[0-9.eE+]+\z/;  # 数値のみ
         $v = 0 if $v < 0; $v = 1 if $v > 1;       # クランプ [0,1]
