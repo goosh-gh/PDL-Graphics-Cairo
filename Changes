@@ -28,6 +28,12 @@ Revision history for PDL-Graphics-Cairo
     label is in mV from 1 mV); the data are stored with each channel
     contiguous, and an EDF stays float; it uses redraw_key, so moving the
     mouse over the button bar or within one sample does not draw again.
+  - show_grid_scrub(static_key => sub { ... }): the main window draws the
+    figure without the _scrub_skip panels once and keeps it as a background,
+    drawn again only when the string or the window size changes; each frame
+    paints it and draws the latency lines and the _scrub_skip panels. The
+    frames are the same as without it except at the two pixels where a
+    latency line meets the top and bottom frame lines. (t/63)
 
 0.43  2026-10-19
   - twinx: the right label (set_right_ylabel, or the twin's ylabel) is
