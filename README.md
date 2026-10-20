@@ -57,17 +57,18 @@ PDL::Graphics::Cairo (P:G:C) is a high-level 2D plotting library for [PDL](https
 ### Output
 - PNG (via `PDL::IO::PNG` or Cairo), PDF, SVG
 - Frames sent to `giza-server` are encoded as PNG in memory: with `PDL::IO::PNG::png_encode` when it is installed, otherwise with `Compress::Zlib`; figures with transparent pixels take the file-writing path above. `PDLCAIRO_PNG_LEVEL` sets the zlib level (default 1)
-- Interactive display via `giza-server` (persistent window with tabs, sliders, resize, cursor/pick). Slider values arrive normalized `[0,1]` (the client assigns each slider's meaning); `show_interactive(init => { 0 => ..., 1 => ... })` sets each slider's initial thumb position.
+- Interactive display via `giza-server` (persistent window with tabs, sliders, resize, cursor/pick). Slider values arrive normalized `[0,1]` (the client assigns each slider's meaning); `show_interactive(init => { 0 => ..., 1 => ... })` sets each slider's initial thumb position. With `cursor_overlay => 1`, `redraw_key => sub { my ($state) = @_; ...; return $string }` draws a frame on a mouse move or click only when that string (with the window size) changed, e.g. not while the mouse is over a button bar.
 - Interactive **3D mesh + point viewer** via `Driver::GS3D` (see [3D](#3d-drivergs3d) below) — triangle mesh surface (z-buffer Gouraud shading) with point markers, quaternion trackball rotation, wheel zoom; **macOS (Cocoa)** viewer (the Linux Xlib viewer does not render the 3D mesh)
-- Interactive **grid scrub** via `show_grid_scrub` (`Driver::GS`) — double-click a subplot to open a zoomed child window; drag on the trace to mark that latency, draw a vertical line at the same latency in every parent subplot, and read out the point; the selection is kept after release and shared across all open child windows. With `main_scrub => 1` a click or drag on a panel of the grid itself selects the latency too. A panel whose Axes carries `$ax->{_scrub_skip} = 1` gets no latency line and is not a click target (for panels that are not a time axis, e.g. a scalp map); double-clicking it still opens it enlarged. **macOS (Cocoa)** `giza-server` only (needs a build that reports 2D double-click and button-drag events). With `PDLCAIRO_DEBUG=1` each frame prints `frame: build=.. png=.. send=.. gap=.. events=.. age=..` (time in the render callback, PNG encoding, socket write, interval since the window's previous frame, input events received since then, age of the newest one) and `ack: ..ms after send`
+- Interactive **grid scrub** via `show_grid_scrub` (`Driver::GS`) — double-click a subplot to open a zoomed child window; drag on the trace to mark that latency, draw a vertical line at the same latency in every parent subplot, and read out the point; the selection is kept after release and shared across all open child windows. With `main_scrub => 1` a click or drag on a panel of the grid itself selects the latency too. A panel whose Axes carries `$ax->{_scrub_skip} = 1` gets no latency line and is not a click target (for panels that are not a time axis, e.g. a scalp map); double-clicking it still opens it enlarged. With `static_key => sub { my ($state) = @_; ...; return $string }` the parent window draws everything but the `_scrub_skip` panels once, keeps it as a background and draws it again only when that string or the window size changes; each frame paints the background, the latency lines and the `_scrub_skip` panels. **macOS (Cocoa)** `giza-server` only (needs a build that reports 2D double-click and button-drag events). With `PDLCAIRO_DEBUG=1` each frame prints `frame: build=.. png=.. send=.. gap=.. events=.. age=..` (time in the render callback, PNG encoding, socket write, interval since the window's previous frame, input events received since then, age of the newest one) and `ack: ..ms after send`
 - Inline display in `App::PDL::Notebook` (via `$fig->to_inline`)
 
 ### Downsampling
-- `PDL::Graphics::Cairo::LTTB` — Largest-Triangle-Three-Buckets downsampling
-  - `lttb($x, $y, $n_out)` — original LTTB (Steinarsson 2013), spike-preserving
-  - `lttb_minmax($x, $y, $n_out)` — **MinMax-LTTB** (v0.05+): selects min+max per bucket; pure PDL vector ops, ~10× faster than original LTTB for interactive use
-- Preserves visual spikes (EOG artifacts, transients) unlike simple decimation
-- Used automatically in `eeg_viewer_raw.pl` and `eeg_viewer.pl`
+- `$ax->line($x, $y, decimate => 'm4')` — **M4** (Jugel et al., PVLDB 2014): when the axes is drawn, each pixel column of the plot area keeps its first, minimum, maximum and last point, with the transform of that drawing, so the columns stay right after `tight_layout` and window resizes. Of the points outside the plot area only the one just before and the one just after it are kept; markers are drawn at every point. The line covers the same pixels as the undecimated one; where many points fall in one column, the anti-aliased edges are slightly lighter. Default `decimate => 'none'`.
+- `PDL::Graphics::Cairo::LTTB`
+  - `m4($x, $y, x0 => .., x1 => .., left => .., width => ..)` / `m4_index_px($px, $y, $lo, $hi)` — the same M4 selection for a given plot rectangle, without drawing
+  - `lttb($x, $y, $n_out)` — original LTTB (Steinarsson 2013)
+  - `lttb_minmax($x, $y, $n_out)` — min and max of each bucket (a Perl loop over the buckets). The buckets are not aligned with the pixel columns and keep no first/last point, so a dense trace comes out thinner than undecimated
+- `eeg_viewer_raw.pl` draws its waveforms with `decimate => 'm4'`; `eeg_viewer.pl` uses `lttb`
 
 ### Compatibility layers
 - matplotlib API (`line`, `scatter`, `set_xlim`, `tick_params`, ...)
@@ -219,8 +220,7 @@ See the `examples/` directory:
 
 | File | Description |
 |---|---|
-| `eeg_viewer_raw.pl` | **MNE `raw.plot()`-style multi-channel EEG viewer (giza-server)** — page buttons, time-window control, amplitude gain, channel scroll, polarity toggle, time-position slider, LTTB downsampling, cursor/pick overlay, resize support |
-| `eeg_viewer_raw.jp.pl` | Japanese-commented version of `eeg_viewer_raw.pl` |
+| `eeg_viewer_raw.pl` | **MNE `raw.plot()`-style multi-channel EEG viewer (giza-server)** — page buttons, time-window control, amplitude gain, channel scroll, polarity toggle, time-position slider, M4 decimation, cursor/pick overlay, resize support; reads Nihon Kohden `.eeg` and EDF |
 | `example_gridspec.pl` | GridSpec, subplot_mosaic layouts |
 | `example_hexbin.pl` | 2D density, scatter vs hexbin comparison |
 | `example_colormap.pl` | ListedColormap, LogNorm, TwoSlopeNorm, BoundaryNorm |
@@ -245,6 +245,9 @@ perl examples/eeg_viewer_raw.pl
 # Real data (Nihon Kohden .eeg, requires PDL::EEG)
 GIZA_SERVER=/path/to/giza_server \
 perl examples/eeg_viewer_raw.pl /path/to/recording.eeg
+
+# EDF / EDF+ (requires PDL::EEG)
+perl examples/eeg_viewer_raw.pl /path/to/recording.edf
 ```
 
 **App-PDL-Notebook version** (browser UI, ~7 ms/frame — see [App-PDL-Notebook](https://github.com/goosh-gh/App-PDL-Notebook)):
@@ -266,7 +269,7 @@ re-renders via `param`/`on_change`/`to_inline`. No giza-server required.
 |---|---|
 | `[◀]` `[▶]` | Page backward / forward by one time window |
 | `[−]` `[10s]` `[+]` | Shrink / expand time window (1 s steps) |
-| `[−]` `[±100µV]` `[+]` | Decrease / increase amplitude gain (log steps: 10→20→50→100→…→500 µV) |
+| `[−]` `[±100µV]` `[+]` | Decrease / increase amplitude gain (10→20→50→100→150→200→300→500 µV→1→2→5→10 mV) |
 | `[▲]` `[▼]` | Scroll channels up / down |
 | `[neg↑]` / `[pos↑]` | Toggle polarity: negative-up (EEG convention) ↔ positive-up |
 | Position slider | Jump to any time position |
@@ -455,14 +458,29 @@ viewer — no loss of interactivity.
 19 waveform panels and a scalp map, 1100×850 window, one frame while
 dragging the latency (Apple M5 Pro, perl 5.40, PDL 2.104, `PDLCAIRO_DEBUG=1`):
 
-| Step | 0.4 | 0.41 |
-|------|-----|------|
-| Cairo render | 34 ms | 13 ms |
-| PNG | 20 ms | 6 ms |
+| Step | 0.4 | 0.41 | `static_key` (unreleased) |
+|------|-----|------|------|
+| Cairo render | 34 ms | 13 ms | 2 ms |
+| PNG | 20 ms | 6 ms | 5–6 ms |
+| Interval between frames | | 22 ms | 10 ms |
 
 The render step got faster because `imshow` (the scalp map) is drawn as one
 image instead of one rectangle per cell, and the PNG step because frames are
-encoded in memory with `PDL::IO::PNG::png_encode`.
+encoded in memory with `PDL::IO::PNG::png_encode`. With `static_key` the 19
+waveform panels, which do not change with the latency, are drawn once; a
+frame draws the latency lines and the map.
+
+### Raw EEG viewer and M4
+
+`eeg_viewer_raw.pl` with a 32-channel, 1 kHz EDF, 825×675 image
+(`PDLCAIRO_RENDER_SCALE=0.75`), one frame (figure + Cairo render), Apple M5
+Pro, perl 5.40, PDL 2.104:
+
+| Window | 21 rows, all samples | 21 rows, M4 | 8 rows, all samples | 8 rows, M4 |
+|------|------|------|------|------|
+| 10 s | 118 ms | 70 ms | 74 ms | 39 ms |
+| 30 s | 457 ms | 77 ms | 306 ms | 41 ms |
+| 120 s | 1749 ms | 97 ms | 1222 ms | 47 ms |
 
 ---
 

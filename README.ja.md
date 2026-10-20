@@ -16,12 +16,13 @@ PDL::Graphics::Cairo がレンダリングを担います。
 - PNG・PDF・SVGファイル出力 — X11・libgiza 不要
 - **giza_server による macOS ネイティブ表示** — macOS の既定。素の `$fig->show()` でネイティブウィンドウが開きます。Unix ドメインソケット経由のオンメモリ PNG 転送、プログラム終了後も残る永続タブウィンドウ、giza/PGPLOT の C プログラムと共有。Linux でも動作（GTK3/Xlib サーバ）
 - **複数プロットをタブで1ウィンドウ表示**（giza_server）
-- **グリッドスクラブ** `show_grid_scrub`（`Driver::GS`）— サブプロットをダブルクリックで拡大子窓を開き、トレース上をドラッグしてその潜時にマーカを置き、親の全サブプロットに同じ潜時の縦線を引く。選択点はマウスを離した後も保持し、開いている全子窓で共有。`main_scrub => 1` を指定すると、親窓のパネル上のクリック／ドラッグでも潜時を選べる。Axes に `$ax->{_scrub_skip} = 1` を立てたパネルには縦線を引かず、クリック対象にもしない（頭皮マップなど時間軸でないパネル用。ダブルクリックでの拡大は効く）。**macOS（Cocoa）** giza_server 専用（2D のダブルクリック／ボタンドラッグを返すビルドが必要）。`PDLCAIRO_DEBUG=1` で1コマごとに `frame: build=.. png=.. send=.. gap=.. events=.. age=..`（描画コールバック・PNG化・ソケット書き込みの時間、同じ窓の前のコマからの間隔、その間に届いた入力の数、その最新のものの古さ）と `ack: ..ms after send` を出す
+- **グリッドスクラブ** `show_grid_scrub`（`Driver::GS`）— サブプロットをダブルクリックで拡大子窓を開き、トレース上をドラッグしてその潜時にマーカを置き、親の全サブプロットに同じ潜時の縦線を引く。選択点はマウスを離した後も保持し、開いている全子窓で共有。`main_scrub => 1` を指定すると、親窓のパネル上のクリック／ドラッグでも潜時を選べる。Axes に `$ax->{_scrub_skip} = 1` を立てたパネルには縦線を引かず、クリック対象にもしない（頭皮マップなど時間軸でないパネル用。ダブルクリックでの拡大は効く）。`static_key => sub { my ($state) = @_; ...; return $string }` を渡すと、親窓は `_scrub_skip` 以外のパネルを 1 回描いて背景として取っておき、その文字列か窓の大きさが変わったときだけ描き直す。毎コマは背景を写し、潜時の縦線と `_scrub_skip` のパネルだけを描く。**macOS（Cocoa）** giza_server 専用（2D のダブルクリック／ボタンドラッグを返すビルドが必要）。`PDLCAIRO_DEBUG=1` で1コマごとに `frame: build=.. png=.. send=.. gap=.. events=.. age=..`（描画コールバック・PNG化・ソケット書き込みの時間、同じ窓の前のコマからの間隔、その間に届いた入力の数、その最新のものの古さ）と `ack: ..ms after send` を出す
 - gnuplot経由のインタラクティブ表示（aqua/wxt/x11）— クロスプラットフォーム。giza_server が無い場合の自動フォールバック
 - レガシー macOS Cocoa ビューア（`backend => 'osx'`、`pdlcairo_viewer`）は **deprecated** なオプトインのフォールバックとしてのみ残置 — 既定ではなく、`make` でもビルドされません
 - CairoによるAxes枠・目盛り・数値ラベルの描画
 - Dual Y軸サポート（`twinx`）— 両軸独立した目盛り・ラベル。右のラベル（`set_right_ylabel`、または twin の `ylabel`）は右の目盛り数字の外側に描かれ、`tight_layout` が両方の幅を取る
 - 線幅はどの描画メソッドでも `lw` と `linewidth` のどちらでも指定でき、凡例の線も同じ太さになる
+- 折れ線の間引き `$ax->line($x, $y, decimate => 'm4')`（M4、Jugel et al., PVLDB 2014）— 描くときに、描画領域の画素の列ごとに最初・最小・最大・最後の 4 点だけを残す。列はその描画の座標変換で決まるので、`tight_layout` や窓の大きさの変更の後もそろう。描画領域の外の点は、入る直前と出た直後の 1 点ずつだけ残し、マーカーは全点に描く。塗られる画素は間引かない線と同じ（1 列に多くの点が入る所では、アンチエイリアスの縁がわずかに薄い）。`PDL::Graphics::Cairo::LTTB` の `m4` / `m4_index_px` は、同じ選び方を描画領域の位置を指定して行う。`examples/eeg_viewer_raw.pl` の波形はこれで描く
 - 黒背景サポート（`PGPLOT_BACKGROUND=black`）
 - Negative-up Y軸: `pgenv`でymin>ymax、`$ax->ylim(lo, hi)`でlo>hiのとき自動反転
 - `tight_layout()`によるマルチパネルサブプロット
@@ -192,6 +193,11 @@ $gs->show_interactive(
 を埋めません。`examples/example_gs.pl`、`examples/example_gs_slider.pl` を
 参照。
 
+`cursor_overlay => 1` でマウスの位置を描くときは、
+`redraw_key => sub { my ($state) = @_; ...; return $string }` を渡すと、マウスの
+移動やクリックで、その文字列（と窓の大きさ）が変わったときだけ描き直します
+（マウスがボタンの帯の上にあるときなどは描き直さない）。
+
 #### gnuplot経由（クロスプラットフォームのフォールバック）
 
 ```bash
@@ -326,7 +332,7 @@ deprecated で、`make` でもビルドされません。
 
 | メソッド | 説明 |
 |----------|------|
-| `line` | 折れ線グラフ |
+| `line` | 折れ線グラフ（`decimate => 'm4'` で画素の列ごとに 4 点に間引く） |
 | `scatter` | 散布図（カラーマップ対応） |
 | `bar` / `barh` | 縦・横棒グラフ |
 | `hist` / `hist_kde` | ヒストグラム / KDEオーバーレイ |
