@@ -1,6 +1,24 @@
 Revision history for PDL-Graphics-Cairo
 
 (unreleased)
+  - line(..., decimate => 'm4') draws, for each pixel column of the plot
+    area, the first, minimum, maximum and last point (M4). The columns come
+    from the transform at draw time, so they stay right after tight_layout
+    and window resizes. Of the points outside the plot area, only the one
+    just before and the one just after it are drawn; markers are drawn at
+    every point. The default is decimate => 'none'. (t/60)
+  - PDL::Graphics::Cairo::LTTB exports m4($x, $y, x0, x1, left, width) and
+    m4_index_px($px, $y, $lo, $hi). The comments and POD of lttb_minmax say
+    that it loops in Perl and that dense traces come out thinner.
+  - examples/eeg_viewer_raw.pl draws with decimate => 'm4' instead of
+    lttb_minmax: a frame costs about the same for a 10 s and a 120 s window.
+    It reads .edf files (PDL::EEG::IO::EDF) and stops on a file it cannot
+    read; it switched to the demo data before.
+  - qqplot and hist_kde work without PDL::Stats. They called ->stdv and died
+    without it; they use the population standard deviation computed with
+    PDL. (t/61)
+  - Driver::GS no longer warns "isn't numeric in sort" when the state has
+    keys such as _pos.
 
 0.43  2026-10-19
   - twinx: the right label (set_right_ylabel, or the twin's ylabel) is
