@@ -9,6 +9,31 @@ PDL::Graphics::Cairo (P:G:C) is a high-level 2D plotting library for [PDL](https
 
 ---
 
+## Gallery
+
+Each image is drawn by the script it links to (in `examples/`).
+
+<table>
+<tr>
+<td><a href="examples/specgram_demo.pl"><img src="docs/gallery/specgram_demo__02.png" width="400" alt="EEG-like signal and its spectrogram"></a><br><code>specgram_demo.pl</code> — waveform and spectrogram</td>
+<td><a href="examples/example_contour.pl"><img src="docs/gallery/example_contour__02.png" width="400" alt="Contour gallery"></a><br><code>example_contour.pl</code> — contour / contourf gallery</td>
+</tr>
+<tr>
+<td><a href="examples/example_png.pl"><img src="docs/gallery/example_png__12.png" width="400" alt="Statistical dashboard"></a><br><code>example_png.pl</code> — 2×2 statistical dashboard</td>
+<td><a href="examples/example_png.pl"><img src="docs/gallery/example_png__07.png" width="400" alt="imshow colormaps"></a><br><code>example_png.pl</code> — imshow with colormaps</td>
+</tr>
+<tr>
+<td><a href="examples/example_colormap.pl"><img src="docs/gallery/example_colormap__01.png" width="400" alt="ListedColormap classes"></a><br><code>example_colormap.pl</code> — ListedColormap: 5 classes</td>
+<td><a href="examples/example_colormap.pl"><img src="docs/gallery/example_colormap__04.png" width="400" alt="BoundaryNorm zones"></a><br><code>example_colormap.pl</code> — BoundaryNorm + ListedColormap</td>
+</tr>
+<tr>
+<td><a href="examples/example_show.pl"><img src="docs/gallery/example_show__04.png" width="400" alt="example_show figure 4"></a><br><code>example_show.pl</code></td>
+<td></td>
+</tr>
+</table>
+
+---
+
 ## Features
 
 ### Plot types

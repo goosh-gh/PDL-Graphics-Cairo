@@ -8,6 +8,29 @@ CairoとPangoをレンダリングバックエンドとして使用します。
 matplotlib・PGPLOT・gnuplot、いずれのスタイルでも書けます。
 PDL::Graphics::Cairo がレンダリングを担います。
 
+## ギャラリー
+
+各画像は、リンク先のスクリプト（`examples/`）で描いたものです。
+
+<table>
+<tr>
+<td><a href="examples/specgram_demo.pl"><img src="docs/gallery/specgram_demo__02.png" width="400" alt="EEG 風の信号とスペクトログラム"></a><br><code>specgram_demo.pl</code> — 波形とスペクトログラム</td>
+<td><a href="examples/example_contour.pl"><img src="docs/gallery/example_contour__02.png" width="400" alt="等高線のギャラリー"></a><br><code>example_contour.pl</code> — contour / contourf</td>
+</tr>
+<tr>
+<td><a href="examples/example_png.ja.pl"><img src="docs/gallery/example_png.ja__12.png" width="400" alt="統計ダッシュボード"></a><br><code>example_png.ja.pl</code> — 2×2 の統計ダッシュボード</td>
+<td><a href="examples/example_png.ja.pl"><img src="docs/gallery/example_png.ja__07.png" width="400" alt="imshow とカラーマップ"></a><br><code>example_png.ja.pl</code> — imshow とカラーマップ</td>
+</tr>
+<tr>
+<td><a href="examples/example_colormap.pl"><img src="docs/gallery/example_colormap__01.png" width="400" alt="ListedColormap の 5 クラス"></a><br><code>example_colormap.pl</code> — ListedColormap（5 クラス）</td>
+<td><a href="examples/example_colormap.pl"><img src="docs/gallery/example_colormap__04.png" width="400" alt="BoundaryNorm の区間"></a><br><code>example_colormap.pl</code> — BoundaryNorm + ListedColormap</td>
+</tr>
+<tr>
+<td><a href="examples/example_show.pl"><img src="docs/gallery/example_show__04.png" width="400" alt="example_show の 4 枚目"></a><br><code>example_show.pl</code></td>
+<td></td>
+</tr>
+</table>
+
 ## 特徴
 
 - matplotlib風API（`figure`、`axes`、`line`、`scatter`、`hist` など）
