@@ -103,7 +103,7 @@ if (@ARGV && -f $ARGV[0] && $ARGV[0] =~ /\.eeg$/i) {
     eval { require PDL::EEG::IO::EDF };
     die "PDL::EEG::IO::EDF is required: $@\n" if $@;
     my $rec = PDL::EEG::IO::EDF::read_edf(shift @ARGV);
-    $eeg       = $rec->{data}->double;
+    $eeg       = $rec->{data};
     $srate     = $rec->{fs};
     @CH_NAMES  = @{ $rec->{labels} };
     $n_samples = $eeg->dim(1);
@@ -163,6 +163,10 @@ if (@ARGV && -f $ARGV[0] && $ARGV[0] =~ /\.eeg$/i) {
     warn sprintf("Demo: %dch x %.0fs @ %dHz\n", $N, $n_samples/$srate, $srate);
 }
 
+# Store each channel's samples contiguously: [n_samp, n_ch]. The readers give
+# [n_ch, n_samp], where one channel's window is every n_ch-th value in memory.
+$eeg = $eeg->xchg(0, 1)->copy;
+
 my $N_CH_ALL = scalar @CH_NAMES;
 $N_ROWS_VIS  = $N_CH_ALL if $N_ROWS_VIS > $N_CH_ALL;
 my $t_full   = sequence($n_samples) * (1000.0 / $srate);  # time axis in ms
@@ -186,8 +190,14 @@ my %state = (
     _neg_up  => 1,       # EEG convention: negative-up by default
 );
 
-# Gain steps (quasi-logarithmic)
-my @GAIN_STEPS = (10, 20, 50, 100, 150, 200, 300, 500);
+# Gain steps (quasi-logarithmic), in µV half-range. Up to ±10 mV for EMG.
+my @GAIN_STEPS = (10, 20, 50, 100, 150, 200, 300, 500, 1000, 2000, 5000, 10000);
+
+# Gain label: µV below 1000, mV from 1000 (keeps the label inside its box)
+sub gain_label {
+    my ($g) = @_;
+    return $g >= 1000 ? sprintf("\xB1%g mV", $g / 1000) : sprintf("\xB1%d\xB5V", $g);
+}
 
 sub gain_step_down {
     my $g = $_[0];
@@ -364,7 +374,7 @@ my $render = sub {
         my $ch_idx = $ch_off + $row;
         last if $ch_idx >= $N_CH_ALL;
         my $ax     = $axes[$row];
-        my $y_full = $eeg->slice("($ch_idx),$idx0:$idx1");
+        my $y_full = $eeg->slice("$idx0:$idx1,($ch_idx)");
         $ax->line($t_view, $y_full, color=>'#1a5276', lw=>0.8, decimate=>$decim);
         $ax->xlim($t_start, $t_end);
         # _neg_up=1: ylim(+gain, -gain) → negative-up (EEG convention)
@@ -392,7 +402,7 @@ my $render = sub {
                 my $t_snap = $t_view->at($t_idx);
                 $axes[$_]->axvline($t_snap, color=>$color, lw=>0.7, ls=>'--')
                     for (0 .. $N_ROWS_VIS-1);
-                my $data_v  = $eeg->slice("($ch_idx),$idx0:$idx1")->at($t_idx);
+                my $data_v  = $eeg->slice("$idx0:$idx1,($ch_idx)")->at($t_idx);
                 my $ch_name = $CH_NAMES[$ch_idx];
                 if ($type eq 'pick') {
                     $axes[$ax_idx]->scatter(pdl($t_snap), pdl($data_v),
@@ -434,7 +444,7 @@ my $render = sub {
             pdl(GAN_Y0,GAN_Y0,GAN_Y1,GAN_Y1,GAN_Y0),
             color=>'#888888', lw=>1.0);
         $ax_btn->text((GAN_V_X0+GAN_V_X1)/2, (GAN_Y0+GAN_Y1)/2,
-            sprintf("\xB1%d\xB5V", $gain),
+            gain_label($gain),
             ha=>'center', va=>'center', fontsize=>10, color=>'#8e44ad');
         _draw_button($ax_btn, GAN_P_X0, GAN_P_X1, GAN_Y0, GAN_Y1, "+", 1);
 
@@ -532,10 +542,27 @@ printf "  [\x{2212}][\xB1gain][+]: change amplitude gain\n";
 printf "  [\x{25B2}][\x{25BC}]: scroll channels\n";
 printf "  [neg\x{2191}]: toggle polarity (neg-up / pos-up)\n\n";
 
+# Everything that changes the picture, as one string. On a mouse move the
+# frame is drawn again only when this changes (not while the mouse is over
+# the button bar, nor while it stays on the same sample).
+sub redraw_key {
+    my ($s) = @_;
+    my $cur = 'none';
+    my $ax_idx = $s->{_cursor_ax_idx} // -1;
+    if (defined $s->{_cursor_x} && $ax_idx >= 0 && $ax_idx < $N_ROWS_VIS
+        && ch_off_from_state($s) + $ax_idx < $N_CH_ALL) {
+        my $i = int($s->{_cursor_x} / 1000.0 * $srate + 0.5);   # nearest sample
+        $cur = join ':', $s->{_cursor_type} // 'cursor', $ax_idx, $i;
+    }
+    return join '|', page_ms($s), tstart_from_state($s), gain_from_state($s),
+        ch_off_from_state($s), $s->{_neg_up} // 1, $s->{_pos} // 0, $cur;
+}
+
 $drv->show_interactive(
     init           => \%state,
     render         => $render,
     cursor_overlay => 1,
+    redraw_key     => \&redraw_key,
 
     on_cursor => sub {
         my ($fx, $fy, $btn) = @_;
@@ -610,14 +637,14 @@ $drv->show_interactive(
                      && $by >= GAN_Y0 && $by <= GAN_Y1) {
                 my $new = gain_step_down($state{_gain});
                 $state{_gain} = $new;
-                printf "  gain: \xB1%d\xB5V\n", $new if $DEBUG;
+                printf "  gain: %s\n", gain_label($new) if $DEBUG;
 
             # [+] Increase gain (zoom out)
             } elsif ($bx >= GAN_P_X0 && $bx <= GAN_P_X1
                      && $by >= GAN_Y0 && $by <= GAN_Y1) {
                 my $new = gain_step_up($state{_gain});
                 $state{_gain} = $new;
-                printf "  gain: \xB1%d\xB5V\n", $new if $DEBUG;
+                printf "  gain: %s\n", gain_label($new) if $DEBUG;
 
             # [▲] Scroll channels up
             } elsif ($bx >= CHU_X0 && $bx <= CHU_X1
