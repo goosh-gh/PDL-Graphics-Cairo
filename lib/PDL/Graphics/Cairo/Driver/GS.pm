@@ -446,6 +446,13 @@ sub show_interactive {
         on_zoom        => $opt{on_zoom},
         cursor_overlay => $opt{cursor_overlay} // 0,
         zoom_pan_redraw => $opt{zoom_pan_redraw} // 0,
+        # redraw_key => sub { my ($state) = @_; ...; return $string }
+        #   cursor_overlay の CURSOR/PICK で、描き直す前に呼ぶ。返した文字列(と窓の大きさ)が
+        #   前回この経路で描いたときと同じなら、描き直さない(絵が変わらないので)。
+        #   文字列には、絵を変えるものをすべて入れる(表示範囲・ゲイン・カーソルの位置など)。
+        #   渡さなければ、CURSOR/PICK のたびに描き直す(従来どおり)。
+        redraw_key     => $opt{redraw_key},
+        _last_key      => undef,
         _cursor_pending => undef,
         _zoom  => 1.0, _pan_x => 0.0, _pan_y => 0.0,
     };
@@ -684,6 +691,12 @@ sub run {
                 } else {
                     $state->{_cursor_x} = undef;
                     $state->{_cursor_y} = undef;
+                }
+                # redraw_key: 絵が変わらないなら描き直さない(マウスがボタンの帯の上にある、など)
+                if (my $kf = $ix->{redraw_key}) {
+                    my $key = join "\x00", $kf->($state) // '', $self->_render_w, $self->_render_h;
+                    next if defined $ix->{_last_key} && $key eq $ix->{_last_key};
+                    $ix->{_last_key} = $key;
                 }
                 # 再描画
                 my $fig = $render->($state, $self->_render_w, $self->_render_h);
