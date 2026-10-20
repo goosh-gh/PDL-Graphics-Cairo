@@ -21,7 +21,7 @@ PDL::Graphics::Cairo (P:G:C) is a high-level 2D plotting library for [PDL](https
 - Linear / log scale (`set_xscale`, `set_yscale`, `semilogy`, `loglog`)
 - Tick control: `tick_params`, minor ticks, `xaxis_formatter` / `yaxis_formatter`
 - Date/time axis: `plot_date` accepts UNIX epoch values or `DateTime` objects; tick spacing and label format (`HH:MM`, `Mon DD`, `Mon YYYY`, `YYYY`) are chosen automatically based on the data range
-- Twin axes: `twinx` (shared X, independent Y on the right), `twiny` (shared Y, independent X on top) — combinable on the same parent Axes. The right label (`set_right_ylabel`, or the twin's `ylabel`) is drawn past the right tick numbers, and `tight_layout` leaves room for both
+- Twin axes: `twinx` (shared X, independent Y on the right), `twiny` (shared Y, independent X on top) — combinable on the same parent Axes. The right label (`set_right_ylabel`, or the twin's `ylabel`) is drawn past the right tick numbers, and `tight_layout` leaves room for both. As in matplotlib, `xlim` on a `twinx` (`ylim` on a `twiny`) sets the range of the shared axis, i.e. the parent's
 - Line width as `lw` or `linewidth` in every plot method, and the legend line has the plotted width; `errorbar(..., lw => 0)` does not join the points (the legend shows the marker), and `errorbar_stats` does not join them unless given `lw`
 - `heatmap`: one cell per value, row 0 at the top; cells whose value is not finite are left empty; `annot => 1` writes each value (`fmt`, default `%.1f`) in its cell
 - Inset axes: `inset_axes`

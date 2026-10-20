@@ -1447,8 +1447,17 @@ sub axvline {
 #  API —
 # ==================================================================
 
+# twin の共有軸(twinx の x、twiny の y)の範囲は親の範囲(matplotlib と同じ)。
+# twin に指定したら親に渡す。親と twin の両方に指定したら、後の指定が使われる。
+sub _shares_x { my ($s) = @_; $s->_is_twin && $s->_twin_of && ($s->_twin_type // '') ne 'y' }
+sub _shares_y { my ($s) = @_; $s->_is_twin && $s->_twin_of && ($s->_twin_type // '') eq 'y' }
+
 sub xlim {
     my ($self, $lo, $hi) = @_;
+    if ($self->_shares_x) {
+        $self->_twin_of->xlim($lo, $hi);
+        return $self;
+    }
     $self->xmin($lo); $self->xmax($hi);
     return $self;
 }
@@ -1456,6 +1465,11 @@ sub xlim {
 
 sub ylim {
     my ($self, $lo, $hi) = @_;
+    if ($self->_shares_y) {
+        $self->_twin_of->ylim($lo, $hi);
+        $self->{_y_reversed} = $self->_twin_of->{_y_reversed};
+        return $self;
+    }
     if ($lo > $hi) {
         # negative up: ymin > ymax → Y軸反転
         $self->{_y_reversed} = 1;

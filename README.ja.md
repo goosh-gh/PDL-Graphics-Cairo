@@ -20,7 +20,7 @@ PDL::Graphics::Cairo がレンダリングを担います。
 - gnuplot経由のインタラクティブ表示（aqua/wxt/x11）— クロスプラットフォーム。giza_server が無い場合の自動フォールバック
 - レガシー macOS Cocoa ビューア（`backend => 'osx'`、`pdlcairo_viewer`）は **deprecated** なオプトインのフォールバックとしてのみ残置 — 既定ではなく、`make` でもビルドされません
 - CairoによるAxes枠・目盛り・数値ラベルの描画
-- Dual Y軸サポート（`twinx`）— 両軸独立した目盛り・ラベル。右のラベル（`set_right_ylabel`、または twin の `ylabel`）は右の目盛り数字の外側に描かれ、`tight_layout` が両方の幅を取る
+- Dual Y軸サポート（`twinx`）— 両軸独立した目盛り・ラベル。右のラベル（`set_right_ylabel`、または twin の `ylabel`）は右の目盛り数字の外側に描かれ、`tight_layout` が両方の幅を取る。matplotlib と同じく、`twinx` に `xlim`(`twiny` に `ylim`)を指定すると、共有している軸、つまり親の範囲になる
 - 線幅はどの描画メソッドでも `lw` と `linewidth` のどちらでも指定でき、凡例の線も同じ太さになる
 - 折れ線の間引き `$ax->line($x, $y, decimate => 'm4')`（M4、Jugel et al., PVLDB 2014）— 描くときに、描画領域の画素の列ごとに最初・最小・最大・最後の 4 点だけを残す。列はその描画の座標変換で決まるので、`tight_layout` や窓の大きさの変更の後もそろう。描画領域の外の点は、入る直前と出た直後の 1 点ずつだけ残し、マーカーは全点に描く。塗られる画素は間引かない線と同じ（1 列に多くの点が入る所では、アンチエイリアスの縁がわずかに薄い）。`PDL::Graphics::Cairo::LTTB` の `m4` / `m4_index_px` は、同じ選び方を描画領域の位置を指定して行う。`examples/eeg_viewer_raw.pl` の波形はこれで描く
 - 黒背景サポート（`PGPLOT_BACKGROUND=black`）
