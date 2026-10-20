@@ -1,9 +1,9 @@
 package PDL::Graphics::Cairo::Driver::Cairo;
 
 # =============================================================
-# Driver::Cairo — Cairo/Pango 
-#   - PNG / PDF / SVG 
-#   - 
+# Driver::Cairo — Cairo/Pango
+#   - PNG / PDF / SVG
+#   -
 #   - Axes  API
 # =============================================================
 
@@ -147,7 +147,7 @@ sub _update_pango_font {
 #
 
 # -------------------------------------------------------------
-# Unicode → Pango markup 
+# Unicode → Pango markup
 sub _to_markup {
     my ($str) = @_;
     # UTF-8UTF-8
@@ -155,7 +155,7 @@ sub _to_markup {
         my $decoded = eval { Encode::decode('UTF-8', $str, Encode::FB_CROAK()) };
         $str = $decoded if defined $decoded;
     }
-    # Pango markup 
+    # Pango markup
     $str =~ s/&/&amp;/g;
     $str =~ s/</&lt;/g;
     $str =~ s/>/&gt;/g;
@@ -305,7 +305,7 @@ sub rect_fill {
     $self->{cr}->fill;
 }
 
-#  or 
+#  or
 sub circle {
     my ($self, $cx, $cy, $r, $fill) = @_;
     my $cr = $self->{cr};
@@ -313,7 +313,7 @@ sub circle {
     $fill ? $cr->fill : $cr->stroke;
 }
 
-# scatter 
+# scatter
 # style: 'o' circle / 's' square / '^' triangle / '+' plus / 'x' cross / 'd' diamond
 sub marker {
     my ($self, $cx, $cy, $size, $style, $fill) = @_;

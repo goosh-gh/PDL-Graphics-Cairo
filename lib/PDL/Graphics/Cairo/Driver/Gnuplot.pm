@@ -1,12 +1,12 @@
 package PDL::Graphics::Cairo::Driver::Gnuplot;
 
 # =============================================================
-# Driver::Gnuplot — gnuplot 
+# Driver::Gnuplot — gnuplot
 #
 # :
-#   1. Figure  PNG Driver::Cairo 
-#   2. gnuplot 
-#   3. 
+#   1. Figure  PNG Driver::Cairo
+#   2. gnuplot
+#   3.
 #      : aqua (Aquaterm/macOS) → wxt → x11 → qt
 #
 # :
@@ -39,8 +39,8 @@ has keep     => (is => 'ro', default  => sub { 0 });
 #
 
 #
-# qx{gnuplot -e "set terminal"}  macOS 
-# OSDISPLAY 
+# qx{gnuplot -e "set terminal"}  macOS
+# OSDISPLAY
 # ------------------------------------------------------------------
 sub _resolve_terminal {
     my ($self) = @_;
@@ -52,7 +52,7 @@ sub _resolve_terminal {
 
     if ($self->terminal ne '') {
         my $requested = $self->terminal;
-        # x11  _terminal_works  False 
+        # x11  _terminal_works  False
         # (DISPLAY )
         my $skip_check = ($requested eq 'x11' && $has_display);
         if ($skip_check || $self->_terminal_works($requested)) {
@@ -61,7 +61,7 @@ sub _resolve_terminal {
         # fallback: reported in show()
     }
 
-    # macOS + XQuartz: DISPLAY  :0 
+    # macOS + XQuartz: DISPLAY  :0
     if ($is_mac && !$has_display) {
         $ENV{DISPLAY} = ':0';
         $has_display = 1;
@@ -96,17 +96,17 @@ sub _resolve_terminal {
 # ------------------------------------------------------------------
 #
 
-# gnuplot  'set terminal XXX'  stderr 
+# gnuplot  'set terminal XXX'  stderr
 # 5
 # ------------------------------------------------------------------
 sub _terminal_works {
     my ($self, $term) = @_;
 
-    # gnuplot  echo 
-    # 'set terminal aqua'  stderr  "unknown terminal" 
+    # gnuplot  echo
+    # 'set terminal aqua'  stderr  "unknown terminal"
     my $gp_cmd = $self->gnuplot;
 
-    # open3 
+    # open3
     require IPC::Open3;
     require POSIX;
 
@@ -156,12 +156,12 @@ sub _terminal_works {
 }
 
 # ------------------------------------------------------------------
-# show($figure) — Figure 
+# show($figure) — Figure
 # ------------------------------------------------------------------
 sub show {
     my ($self, $figure) = @_;
 
-    # 1.  PNG 
+    # 1.  PNG
     my ($fh, $tmpfile) = tempfile(
         'pdlcairo_XXXXXX',
         SUFFIX => '.png',
@@ -177,7 +177,7 @@ sub show {
     );
     $figure->_render_to($png);
 
-    # 2. 
+    # 2.
     my $requested = $self->terminal;
     my $term      = $self->_resolve_terminal();
     my $w         = $self->width;
@@ -194,12 +194,12 @@ sub show {
     warn "Driver::Gnuplot: terminal=$term  file=$tmpfile\n"
         if $ENV{PDLCAIRO_DEBUG};
 
-    # 3. 
+    # 3.
     if ($term eq 'open' || $term eq 'xdg-open') {
-        # OS 
+        # OS
         system($term, $tmpfile);
     } else {
-        # gnuplot 
+        # gnuplot
         my $term_cmd = _terminal_cmd($term, $w, $h);
         $self->_gnuplot_show($term_cmd, $tmpfile, $w, $h, $term);
     }
@@ -248,7 +248,7 @@ sub _terminal_cmd {
     my ($term, $w, $h) = @_;
 
     # aqua: Aquaterm（macOS）
-    # 96 dpi 
+    # 96 dpi
     if ($term eq 'aqua') {
         my $wi = sprintf("%.1f", $w / 96);
         my $hi = sprintf("%.1f", $h / 96);

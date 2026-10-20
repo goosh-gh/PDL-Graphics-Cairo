@@ -1,7 +1,7 @@
 package PDL::Graphics::Cairo::Axes;
 
 # =============================================================
-# Axes — matplotlib  Axes 
+# Axes — matplotlib  Axes
 #
 # :
 #   line / scatter / bar / barh / hist / errorbar
@@ -21,7 +21,7 @@ use PDL;
 use PDL::Graphics::Cairo::TextLayout qw(ml_layout ml_max_width);
 # PDL exports hist; override with our method
 no warnings "redefine";
-# List::Util  min/max  PDL 
+# List::Util  min/max  PDL
 sub _min { my $m = shift; for (@_) { $m = $_ if $_ < $m } $m }
 sub _max { my $m = shift; for (@_) { $m = $_ if $_ > $m } $m }
 
@@ -63,7 +63,7 @@ my $_has_pdl_stats = eval { require PDL::Stats::Basic; 1 } // 0;
 
 
 # ------------------------------------------------------------------
-# Figure subplot 
+# Figure subplot
 # ------------------------------------------------------------------
 has width    => (is => 'rw', required => 1);
 has height   => (is => 'rw', required => 1);
@@ -130,7 +130,7 @@ has _queue   => (is => 'ro', default => sub { [] });
 has _legends => (is => 'ro', default => sub { [] });
 
 # ------------------------------------------------------------------
-# imshow/contourf 
+# imshow/contourf
 # ------------------------------------------------------------------
 has _colorbar => (is => 'rw');
 
@@ -145,7 +145,7 @@ has colorbar_reserve  => (is => 'rw', default => sub { 1 });   # 0: no layout ro
 has colorbar_tick_step => (is => 'rw', default => sub { undef });  # see colorbar()
 
 # ==================================================================
-# matplotlib tab10 
+# matplotlib tab10
 # ==================================================================
 my @COLOR_CYCLE = (
     [0.122, 0.467, 0.706],  # blue
@@ -339,7 +339,7 @@ sub _parse_color {
 }
 
 # ==================================================================
-# autoscale 
+# autoscale
 # ==================================================================
 sub _expand_range {
     my ($self, $xs, $ys) = @_;
@@ -401,7 +401,7 @@ sub _finalize_range {
 }
 
 # ==================================================================
-#  API — 
+#  API —
 # ==================================================================
 
 # ---- line --------------------------------------------------------
@@ -665,12 +665,12 @@ sub scatter {
         alpha  => $opt{alpha}  // 0.8,
         label  => $opt{label}  // undef,
         fill   => (($opt{fillstyle}//'full') eq 'none') ? 0 : 1,
-        # c  PDL 
+        # c  PDL
         cdata  => (ref($opt{c}) && $opt{c}->isa('PDL')) ? $opt{c} : undef,
         cmap   => $opt{cmap}   // 'viridis',
     };
     $self->_expand_range($x, $y);
-    # cdata 
+    # cdata
     if (ref($opt{c}) && $opt{c}->isa('PDL')) {
         my ($cdmin, $cdmax) = $opt{c}->minmax;
         my $cmap_obj = $self->_resolve_cmap($opt{cmap});
@@ -930,7 +930,7 @@ sub imshow {
         origin => $opt{origin} // 'upper',
     };
 
-    # axes  shape 
+    # axes  shape
     my @dims = $data->dims;
     my ($rows, $cols) = @dims;
     $self->xmin(0); $self->xmax($cols);
@@ -993,7 +993,7 @@ sub stem {
 }
 
 # ---- errorbar_stats -----------------------------------------------
-# PDL::Stats::Basic 
+# PDL::Stats::Basic
 # data: arrayref of PDL1 2D PDL (obs x groups)
 # type: 'sem'(default) / 'sd' / 'ci95' / 'iqr'
 sub errorbar_stats {
@@ -1028,7 +1028,7 @@ sub errorbar_stats {
 }
 
 # ---- boxplot ------------------------------------------------------
-# Tukey 
+# Tukey
 # data: arrayref of PDL  2D PDL (obs x groups)
 sub boxplot {
     my ($self, $data, %opt) = @_;
@@ -1111,7 +1111,7 @@ sub boxplot {
 }
 
 # ---- violinplot --------------------------------------------------
-# Gaussian KDE 
+# Gaussian KDE
 sub violinplot {
     my ($self, $data, %opt) = @_;
 
@@ -1151,7 +1151,7 @@ sub violinplot {
         my $kmax = $kde->max;
         my $knorm = $kmax > 0 ? $kde * ($hw / $kmax) : $kde;
 
-        # colors:  / color: 
+        # colors:  / color:
         my $color;
         if (exists $opt{colors} && ref($opt{colors}) eq 'ARRAY') {
             my $ci = $i % scalar @{$opt{colors}};
@@ -1198,8 +1198,8 @@ sub violinplot {
 
 
 # ---- qqplot -------------------------------------------------------
-# Q-Q 
-# $data: 1D PDL 
+# Q-Q
+# $data: 1D PDL
 # dist: 'normal'
 sub qqplot {
     my ($self, $data, %opt) = @_;
@@ -1215,7 +1215,7 @@ sub qqplot {
     my $theoretical;
 
     if ($dist eq 'normal') {
-        # Beasley-Springer-Moro 
+        # Beasley-Springer-Moro
         $theoretical = _qnorm_pdl($probs);
     } else {
         die "qqplot: unsupported dist '$dist' (only 'normal' supported)
@@ -1224,7 +1224,7 @@ sub qqplot {
 
     my $color = $self->_parse_color($opt{color} // 'steelblue');
 
-    # Q-Q 
+    # Q-Q
     $self->scatter($theoretical, $sorted,
         color  => $color,
         s      => $opt{s} // $opt{size} // 4,
@@ -1259,7 +1259,7 @@ sub qqplot {
     return $self;
 }
 
-# Beasley-Springer-Moro — PDL piddle 
+# Beasley-Springer-Moro — PDL piddle
 sub _qnorm_pdl {
     my ($p) = @_;
     $p = pdl($p) unless ref($p) && $p->isa('PDL');
@@ -1277,7 +1277,7 @@ sub _qnorm_pdl {
 }
 
 # ---- hist_kde -------------------------------------------------------
-#  + KDE 
+#  + KDE
 # $data: 1D PDL
 sub hist_kde {
     my ($self, $data, %opt) = @_;
@@ -1326,7 +1326,7 @@ sub hist_kde {
     return $self;
 }
 
-#  @PDL 
+#  @PDL
 sub _normalize_groups {
     my ($data) = @_;
     if (ref($data) eq 'ARRAY') {
@@ -1428,7 +1428,7 @@ sub axvline {
 }
 
 # ==================================================================
-#  API — 
+#  API —
 # ==================================================================
 
 sub xlim {
@@ -1637,7 +1637,7 @@ sub set_grid {
 }
 
 # ==================================================================
-# draw($backend) — Figure::save() 
+# draw($backend) — Figure::save()
 # ==================================================================
 sub draw {
     my ($self, $backend) = @_;
@@ -1736,7 +1736,7 @@ sub draw {
     $self->_plot_mb($mb);
     $self->_plot_range([ $self->xmin, $self->xmax, $self->ymin, $self->ymax ]);
 
-    # xscale/yscale  Transform 
+    # xscale/yscale  Transform
     # _y_reversed PGPLOT  negative up: ymin>ymax
     my ($ymin_tr, $ymax_tr) = ($self->ymin, $self->ymax);
     if ($self->{_y_reversed}) {
@@ -1851,7 +1851,7 @@ sub draw {
 
 
 #    } else {
-#        # pgenv  pgline 
+#        # pgenv  pgline
 #        $self->_draw_frame($backend, $tr, $ml,$mt,$mr,$mb); ## modified for Axis(off) 2026/5/25
 #        $self->_draw_frame($backend, $tr, $ml,$mt,$mr,$mb) unless $self->{_axis_off};
 #    }
@@ -1930,7 +1930,7 @@ sub _render_cmd {
 
 
 # ==================================================================
-# pie() — 
+# pie() —
 # ==================================================================
 sub pie {
     my ($self, $sizes, %opt) = @_;
@@ -1955,7 +1955,7 @@ sub pie {
         shadow    => $shadow,
     };
 
-    # pie 
+    # pie
     $self->xmin(-1.4); $self->xmax(1.4);
     $self->ymin(-1.4); $self->ymax(1.4);
     return $self;
@@ -1989,11 +1989,11 @@ sub axhspan {
 }
 
 # ==================================================================
-# annotate() — 
+# annotate() —
 # ==================================================================
 sub annotate {
     my ($self, $text, %opt) = @_;
-    # xy: , xytext: 
+    # xy: , xytext:
     my ($ax, $ay) = @{ $opt{xy}     // [0,0] };
     my ($tx, $ty) = @{ $opt{xytext} // [$ax+0.5, $ay+0.5] };
     my $color = $self->_parse_color($opt{color} // 'black');
@@ -2010,7 +2010,7 @@ sub annotate {
 }
 
 # ==================================================================
-# contourf() — 
+# contourf() —
 #   $z  2D PDL (rows x cols)
 # ==================================================================
 sub contourf {
@@ -2083,7 +2083,7 @@ sub pcolormesh {
 sub pcolor; *pcolor = \&pcolormesh;
 
 # ==================================================================
-# set_aspect() — 'equal' or 
+# set_aspect() — 'equal' or
 # ==================================================================
 sub set_aspect {
     my ($self, $asp, $anchor) = @_;
@@ -2094,7 +2094,7 @@ sub set_aspect {
     return $self;
 }
 
-# colorbar location/width/pad/length 
+# colorbar location/width/pad/length
 # colorbar(%opt)
 #   location / loc, width, pad, length / shrink, label   as before
 #   cmap => name or ColorMap object, vmin => .., vmax => ..
@@ -2131,7 +2131,7 @@ sub colorbar {
     $self->colorbar_pad($opt{pad}        // 10);
     $self->colorbar_length($opt{length}  // 1.0);
     $self->colorbar_label($opt{label}    // '');
-    # shrink  length 
+    # shrink  length
     $self->colorbar_length($opt{shrink}) if exists $opt{shrink};
     return $self;
 }
@@ -2199,7 +2199,7 @@ sub set_tight_layout {
 sub set_xscale {
     my ($self, $scale) = @_;
     $self->xscale($scale);
-    # log  ymin 
+    # log  ymin
     if ($scale eq 'log' && defined $self->_xmin_auto && $self->_xmin_auto <= 0) {
         $self->_xmin_auto(1e-10);
     }
@@ -2221,15 +2221,15 @@ sub semilogx { my $s = shift; $s->set_xscale('log'); $s->line(@_) }
 sub semilogy { my $s = shift; $s->set_yscale('log'); $s->line(@_) }
 
 # ==================================================================
-# twinx — Y Axes 
+# twinx — Y Axes
 #   : my $ax2 = $ax->twinx();
 #           $ax2->line($x, $y2, color=>'red');
-#   Figure::save() 
+#   Figure::save()
 # ==================================================================
 sub twinx {
     my ($self, %opt) = @_;
 
-    #  fig_x/fig_y  Axes 
+    #  fig_x/fig_y  Axes
     my $twin = PDL::Graphics::Cairo::Axes->new(
         width         => $self->width,
         height        => $self->height,
@@ -2271,12 +2271,12 @@ sub set_right_ylabel {
 }
 
 # ==================================================================
-# savefig — Figure Axes  Figure 
+# savefig — Figure Axes  Figure
 # ==================================================================
-# Figure::save() Axes savefig 
+# Figure::save() Axes savefig
 
 # ==================================================================
-# cla() — Axes 
+# cla() — Axes
 # ==================================================================
 sub cla {
     my ($self) = @_;
@@ -2295,14 +2295,14 @@ sub cla {
 sub clear { goto &cla }
 
 # ==================================================================
-# scatter scatter 
+# scatter scatter
 # ==================================================================
-# scatter() 
-# _colorbar  scatter 
+# scatter()
+# _colorbar  scatter
 
 
 # ==================================================================
-# contour() — 
+# contour() —
 # ==================================================================
 sub contour {
     my ($self, $x, $y, $z, %opt) = @_;
@@ -2366,10 +2366,10 @@ sub violin {
         my $std = $d->stddev + 1e-10;
         my $n   = $d->nelem;
 
-        # Silverman 
+        # Silverman
         my $bw = 1.06 * $std * $n**(-0.2);
 
-        # KDE 
+        # KDE
         my $ys = $mn + sequence($points) * ($mx - $mn) / ($points - 1);
         my $ks = zeroes($points);
         for my $j (0 .. $n-1) {
@@ -2409,7 +2409,7 @@ sub violin {
 }
 
 # ==================================================================
-# quiver() — 
+# quiver() —
 # ==================================================================
 sub quiver {
     my ($self, $x, $y, $u, $v, %opt) = @_;
@@ -2434,9 +2434,9 @@ sub quiver {
 }
 
 # ==================================================================
-# heatmap() — 
+# heatmap() —
 #   $data: 2D PDL (rows x cols)
-#   xticklabels / yticklabels 
+#   xticklabels / yticklabels
 # ==================================================================
 sub heatmap {
     my ($self, $data, %opt) = @_;
@@ -2485,7 +2485,7 @@ sub heatmap {
 }
 
 # ==================================================================
-# stackplot() — 
+# stackplot() —
 # ==================================================================
 sub stackplot {
     my ($self, $x, @ys_and_opts) = @_;
@@ -2554,12 +2554,12 @@ sub stackplot {
 }
 
 # ==================================================================
-# eventplot() — 
+# eventplot() —
 # ==================================================================
 sub eventplot {
     my ($self, $positions, %opt) = @_;
 
-    # ArrayRef of arrays → 
+    # ArrayRef of arrays →
     my @channels;
     if (ref($positions) eq 'ARRAY' && ref($positions->[0]) eq 'ARRAY') {
         @channels = map { pdl($_) } @$positions;

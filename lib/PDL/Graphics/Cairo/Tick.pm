@@ -1,7 +1,7 @@
 package PDL::Graphics::Cairo::Tick;
 
 # =============================================================
-# matplotlib  AutoLocator 
+# matplotlib  AutoLocator
 #   nice_ticks($min, $max, $n_target) → @tick_values
 # =============================================================
 
@@ -21,7 +21,7 @@ sub nice_ticks {
     my $mag    = 10 ** floor(log10(abs($rough) || 1));
     my $frac   = $rough / $mag;
 
-    # nice 
+    # nice
     my $step;
     if    ($frac <= 1.0) { $step = 1.0  * $mag }
     elsif ($frac <= 2.0) { $step = 2.0  * $mag }
@@ -52,7 +52,7 @@ sub nice_ticks {
     return @ticks;
 }
 
-#  nice 
+#  nice
 sub nice_range {
     my ($min, $max, $margin_ratio) = @_;
     $margin_ratio //= 0.05;

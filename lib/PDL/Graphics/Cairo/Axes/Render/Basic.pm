@@ -98,7 +98,7 @@ sub _render_errorbar {
                 $cmd->{capsize});
         }
     }
-    #  xerr  yerr 
+    #  xerr  yerr
 
     if (defined $cmd->{xerr}) {
         $b->set_linewidth(1.0);

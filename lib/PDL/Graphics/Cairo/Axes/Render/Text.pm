@@ -32,7 +32,7 @@ sub _render_pgmtxt {
     # side: T=, B=, L=, R=
     # disp: =, =
     # coord:  0()1()
-    # fjust:  0= coord , 0.5=, 1.0= coord 
+    # fjust:  0= coord , 0.5=, 1.0= coord
     my $side  = $cmd->{side};
     my $coord = $cmd->{coord} // 0.5;
     my $fjust = $cmd->{fjust} // 0.5;
@@ -41,12 +41,12 @@ sub _render_pgmtxt {
     #
 
     # pgsch(1)=, pgsch(2)=, pgsch(4)=
-    # 6x6 160px: ch=1→8px, ch=2→9px, ch=4→11px 
+    # 6x6 160px: ch=1→8px, ch=2→9px, ch=4→11px
     my $pw_px = $mr - $ml;
     my $ph_px = $mb - $mt;
     my $panel_min = $pw_px < $ph_px ? $pw_px : $ph_px;
-    # pgsch(ch) → 
-    # ch=1: 8px, ch=2: 9px, ch=4: 11px 
+    # pgsch(ch) →
+    # ch=1: 8px, ch=2: 9px, ch=4: 11px
     # (6x6)
     my $panel_scale = $panel_min > 150 ? 1.0 : $panel_min / 150.0;
     my $fs_base = 8;
@@ -55,8 +55,8 @@ sub _render_pgmtxt {
     $fs = 10 if $fs > 10;
 
     # fjust → Cairo  align
-    # fjust: 0=, 0.5=, 1=  coord 
-    # → Cairo  align 
+    # fjust: 0=, 0.5=, 1=  coord
+    # → Cairo  align
     my $align = $fjust < 0.25 ? 'left' : $fjust > 0.75 ? 'right' : 'center';
 
     my ($xp, $yp, $valign);
@@ -73,7 +73,7 @@ sub _render_pgmtxt {
         # : fs + 3px
         my $line_h = $fs + 3;
         if ($fjust < 0.1 && $coord < 0.05) {
-            # : disp 
+            # : disp
             # disp=-1 → 1(), disp=-2 → 2...
             my $row = abs($disp) - 1;
             $xp     = $ml + 2;
@@ -82,7 +82,7 @@ sub _render_pgmtxt {
             $yp     = $mt + $row * $line_h + 2;
             $valign = 'top';
         } else {
-            # : 
+            # :
             $xp     = $ml + 2;
             $align  = 'left';
             $yp     = $mt - 1;

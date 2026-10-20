@@ -93,7 +93,7 @@ sub _render_hist {
 
 sub _render_pie {
     my ($self, $b, $tr, $cmd, $ml,$mt,$mr,$mb) = @_;
-    # pie  tr 
+    # pie  tr
     my $cx = ($ml + $mr) / 2;
     my $cy = ($mt + $mb) / 2;
     my $r  = (PDL::Graphics::Cairo::Axes::_min($mr-$ml, $mb-$mt) / 2) * 0.85;

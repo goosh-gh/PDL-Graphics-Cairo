@@ -3,8 +3,8 @@ package PDL::Graphics::Cairo::PGPLOT;
 # =============================================================
 # PDL::Graphics::Cairo::PGPLOT
 #
-# PGPLOT  —  PGPLOT 
-# PDL::Graphics::Cairo 
+# PGPLOT  —  PGPLOT
+# PDL::Graphics::Cairo
 #
 # :
 #   cpgbeg / cpgopen / cpgend / cpgclos / cpgpage / cpgsubp
@@ -30,8 +30,8 @@ package PDL::Graphics::Cairo::PGPLOT;
 #   "/PNG"   → Driver::Cairo (PNG )
 #   "/PDF"   → Driver::Cairo (PDF )
 #   "/SVG"   → Driver::Cairo (SVG )
-#   "file.png/PNG" → file.png 
-#   "file.pdf/PDF" → file.pdf 
+#   "file.png/PNG" → file.png
+#   "file.pdf/PDF" → file.pdf
 #
 # :
 #   use PDL::Graphics::Cairo::PGPLOT;
@@ -94,7 +94,7 @@ our @EXPORT = qw(
     cpgbox pgbox
 );
 
-# pg cpg — PDL::Graphics::PGPLOT 
+# pg cpg — PDL::Graphics::PGPLOT
 our @EXPORT_OK = qw(
     pgbeg pgopen pgend pgclos pgpage pgsubp
     pgenv pgswin pgsvp pgvstd pgvsiz pgpap
@@ -118,7 +118,7 @@ our @EXPORT_OK = qw(
     cpgbox pgbox
 );
 
-# :pg  pg 
+# :pg  pg
 our %EXPORT_TAGS = (
     pg  => \@EXPORT_OK,
     cpg => \@EXPORT,
@@ -164,7 +164,7 @@ my %_state = (
     buffering    => 0,
     # ask
     ask          => 0,
-    # world 
+    # world
     pen_x => 0, pen_y => 0,
 );
 
@@ -214,7 +214,7 @@ my @_CI_COLORS = (
     # 15: light gray
     [0.667, 0.667, 0.667],
 );
-# cpgscr 
+# cpgscr
 my %_custom_colors;
 
 # line style: PGPLOT → PDL::Graphics::Cairo
@@ -264,7 +264,7 @@ sub _ci_to_rgb {
 sub _parse_device {
     my ($device) = @_;
 
-    #  PGPLOT_DEV 
+    #  PGPLOT_DEV
     if (!defined $device || $device eq '' || $device eq ' ') {
         $device = $ENV{PGPLOT_DEV} // '/xw';
     }
@@ -286,7 +286,7 @@ sub _parse_device {
     } elsif ($type eq 'SVG') {
         return (interactive=>0, file => $file || 'pgplot.svg', ext=>'svg');
     } elsif ($type eq 'PS' || $type eq 'CPS' || $type eq 'VCPS') {
-        # PS  PDF 
+        # PS  PDF
         return (interactive=>0, file => ($file || 'pgplot').'.pdf', ext=>'pdf');
     }
 
@@ -346,7 +346,7 @@ sub _flush {
     # 反映させる。
     _apply_pgplot_margins();
 
-    #  Axes 1 Figure 
+    #  Axes 1 Figure
     my $has_content = grep { defined $_->xmin } @{ $fig->axes_list };
     return unless $has_content;
     if ($_state{interactive}) {
@@ -395,7 +395,7 @@ sub _new_figure {
     _apply_pgplot_margins();
 }
 
-# PGPLOT  Axes 
+# PGPLOT  Axes
 sub _apply_pgplot_margins {
     my $nx = abs($_state{nxsub} || 1) || 1;
     my $ny = abs($_state{nysub} || 1) || 1;
@@ -405,8 +405,8 @@ sub _apply_pgplot_margins {
     # "-10" ≈ 18px → margin_left=22px
     # X 8px → margin_bottom=14px
     #  8px → margin_top=12px
-    # X(8px) + (3px) = 11px → mb 
-    # YminX mb 
+    # X(8px) + (3px) = 11px → mb
+    # YminX mb
     # mt: (8px) + (2px) = 10px
     # mb: X(8px) + (3px) + Y(4px) = 15px → 18px
     # ml: ylabel('uV'等)の縦書きgap(19px)に対して数値ラベルとの
@@ -470,14 +470,14 @@ sub _build_panels {
     my $fh  = $fig->height;
 
     @{ $_state{axes} } = ();
-    # Figure  axes_list 
+    # Figure  axes_list
     $fig->{axes_list} = [];
 
     my $cw = int($fw / $nx);
     my $ch = int($fh / $ny);
 
     if ($nx == 1 && $ny == 1) {
-        # : Figure 
+        # : Figure
         my $ax = PDL::Graphics::Cairo::Axes->new(
             width  => $fw, height => $fh,
             fig_x  => 0,   fig_y  => 0,
@@ -569,20 +569,20 @@ sub cpgpage {
         _flush();
         _new_figure();
     } else {
-        # subpanel : Figure 
+        # subpanel : Figure
         my $next = $_state{panel_idx} + 1;
         if ($next >= $total) {
             #  →  flush
             my $has_content = grep { defined $_->xmin } @{ $_state{fig}->axes_list };
             _flush() if $has_content;
             _new_figure();
-            #  pgenv  xlim/ylim 
+            #  pgenv  xlim/ylim
         } else {
             $_state{panel_idx} = $next;
             $_state{current_ax} = $_state{axes}[$next];
             #
 
-            #  pgenv 
+            #  pgenv
             my $ax = $_state{current_ax};
             if (defined $_state{xmin}) {
                 my ($xl,$xr) = $_state{xmin} < $_state{xmax}
@@ -595,7 +595,7 @@ sub cpgpage {
                 $ax->ylim($yb, $yt);
                 $ax->{_y_reversed} = $_state{y_reversed};
             }
-            #  pgenv/pgbox 
+            #  pgenv/pgbox
             $ax->{_pgenv_called} = 0;
             $ax->{_pgbox}        = undef;
         }
@@ -629,7 +629,7 @@ sub cpgenv {
 
     #
 
-    #  pgpage  pgenv 
+    #  pgpage  pgenv
     {
         my $ax = _ax();
         if ($ax->{_pgenv_called} && scalar @{$ax->_queue} > 0) {
@@ -640,13 +640,13 @@ sub cpgenv {
     $_state{xmin} = $xmin; $_state{xmax} = $xmax;
     $_state{ymin} = $ymin; $_state{ymax} = $ymax;
 
-    # PGPLOT : XMAX < XMIN  YMAX < YMIN 
-    # YMIN > YMAX  → Ynegative up: 
+    # PGPLOT : XMAX < XMIN  YMAX < YMIN
+    # YMIN > YMAX  → Ynegative up:
     $_state{y_reversed} = ($ymin + 0 > $ymax + 0) ? 1 : 0;
 
     my $ax = _ax();
 
-    # xlim/ylim  min max 
+    # xlim/ylim  min max
     my ($xl, $xr) = $xmin < $xmax ? ($xmin, $xmax) : ($xmax, $xmin);
     my ($yb, $yt) = $ymin < $ymax ? ($ymin, $ymax) : ($ymax, $ymin);
     $ax->xlim($xl, $xr);
@@ -659,12 +659,12 @@ sub cpgenv {
         $ax->{_y_reversed} = 0;
     }
 
-    # axis 
+    # axis
     $ax->set_grid(1) if defined $axis && $axis == 2;
 
-    # pgenv pgbox 
+    # pgenv pgbox
     $ax->{_pgenv_called} = 1;
-    # axis=-2 →  pgbox _draw_frame 
+    # axis=-2 →  pgbox _draw_frame
     $ax->{_axis_opt} = $axis // 0;
 }
 
@@ -685,7 +685,7 @@ sub cpgsvp {
     my ($xleft, $xright, $ybot, $ytop) = @_;
     $_state{vxmin} = $xleft;  $_state{vxmax} = $xright;
     $_state{vymin} = $ybot;   $_state{vymax} = $ytop;
-    # viewport  margin 
+    # viewport  margin
     my $ax = _ax();
     my $w  = $_state{width};
     my $h  = $_state{height};
@@ -703,7 +703,7 @@ sub cpgvstd {
 
 sub cpgvsiz {
     my ($xleft, $xright, $ybot, $ytop) = @_;
-    #  → 
+    #  →
     cpgvstd();
 }
 
@@ -715,20 +715,20 @@ sub cpgwnad {
 
 sub cpgpap {
     my ($width, $aspect) = @_;
-    # PGPLOT 1=96px 
+    # PGPLOT 1=96px
     # pgpap(13, 0.75) → 13*96=1248px , =1248*0.75=936px
     my $dpi = 96;
     my $w   = $width  > 0 ? int($width * $dpi)   : 800;
     my $h   = $aspect > 0 ? int($w     * $aspect) : 600;
     $_state{width}  = $w;
     $_state{height} = $h;
-    # pgpap  pgbegin 
-    # → Figure 
+    # pgpap  pgbegin
+    # → Figure
     if ($_state{fig}) {
         my $fig = $_state{fig};
         $fig->{width}  = $w;
         $fig->{height} = $h;
-        #  Axes subplot 
+        #  Axes subplot
         my $nx = abs($_state{nxsub} || 1) || 1;
         my $ny = abs($_state{nysub} || 1) || 1;
         my $cw = int($w / $nx);
@@ -765,17 +765,17 @@ sub cpgmtxt {
     my $ax  = _ax();
     my $s1  = uc(substr($side, 0, 1));
 
-    # T/B/L/R title/xlabel/ylabel 
-    # disp > 0 → , disp < 0 → 
+    # T/B/L/R title/xlabel/ylabel
+    # disp > 0 → , disp < 0 →
     if ($disp >= 0) {
         if    ($s1 eq 'T') { $ax->title($text) }
         elsif ($s1 eq 'B') { $ax->xlabel($text) }
         elsif ($s1 eq 'L') { $ax->ylabel($text) }
-        # R  twinx 
+        # R  twinx
     } else {
-        # disp < 0 → 
+        # disp < 0 →
         # coord: 0=, 1=  fjust: 0=, 1=
-        #  draw 
+        #  draw
         push @{ $ax->_queue }, {
             type      => 'pgmtxt',
             side      => $s1,
@@ -805,7 +805,7 @@ sub cpgptxt {
 }
 
 sub cpgiden {
-    # ID — 
+    # ID —
 }
 
 # =============================================================
@@ -817,7 +817,7 @@ sub cpgline {
     my ($n, $xpts, $ypts) = @_;
     $xpts = _to_pdl($xpts);
     $ypts = _to_pdl($ypts);
-    # pgline 
+    # pgline
     _ax()->{_pgenv_called} = 1;
     _ax()->line($xpts, $ypts,
         color => _current_color(),
@@ -914,7 +914,7 @@ sub cpgpt1 {
 # =============================================================
 
 sub cpgerry {
-    # cpgerry(n, x, y1, y2, t) — 
+    # cpgerry(n, x, y1, y2, t) —
     my ($n, $x, $y1, $y2, $t) = @_;
     $x  = _to_pdl($x);
     $y1 = _to_pdl($y1);
@@ -995,7 +995,7 @@ sub cpgbin {
 
 sub cpggray {
     my ($a, $idim, $jdim, $i1, $i2, $j1, $j2, $fg, $bg, $tr) = @_;
-    # 2D  imshow gray 
+    # 2D  imshow gray
     my $mat = $a;
     $mat = pdl($mat) unless ref($mat) && $mat->isa('PDL');
     _ax()->imshow($mat, cmap=>'gray', vmin=>$bg, vmax=>$fg);
@@ -1010,17 +1010,17 @@ sub cpgimag {
 
 sub cpgwedg {
     my ($side, $disp, $width, $fg, $bg, $label) = @_;
-    #  — imshow/contourf 
+    #  — imshow/contourf
 }
 
 sub cpgctab {
     my ($l, $r, $g, $b, $nc, $contra, $bright) = @_;
-    #  — viridis 
+    #  — viridis
 }
 
 sub cpgsitf {
     my ($itf) = @_;
-    # image transfer function — 
+    # image transfer function —
 }
 
 # =============================================================
@@ -1031,7 +1031,7 @@ sub cpgsitf {
 sub cpgcont {
     my ($a, $idim, $jdim, $i1, $i2, $j1, $j2, $c, $nc, $tr) = @_;
     my $mat = pdl($a);
-    # x, y  $tr 
+    # x, y  $tr
     my $ny  = $mat->dim(0);
     my $nx  = $mat->dim(1);
     my @xs  = map { $tr->[0] + $tr->[1] * $_ } 0..$nx-1;
@@ -1062,7 +1062,7 @@ sub cpgscr {
 
 sub cpgshls {
     my ($ci, $h, $l, $s) = @_;
-    # HLS → RGB 
+    # HLS → RGB
     require POSIX;
     #
 
@@ -1114,13 +1114,13 @@ sub cpgsfs {
 
 sub cpgsah {
     my ($fs, $angle, $vent) = @_;
-    # arrowhead Cairo 
+    # arrowhead Cairo
     $_state{arrow_fs}    = $fs    // 1;
     $_state{arrow_angle} = $angle // 45.0;
     $_state{arrow_vent}  = $vent  // 0.3;
 }
 
-# pgsave/cpgunsa 
+# pgsave/cpgunsa
 my @_attr_stack;
 
 sub cpgsave {
@@ -1166,7 +1166,7 @@ sub cpgebuf {
 sub cpgupdt { _flush() }
 
 sub cpgeras {
-    #  Axes 
+    #  Axes
     _new_figure();
 }
 
@@ -1361,7 +1361,7 @@ sub cpgaxis {
 sub cpgask  { my ($f) = @_; $_state{ask} = $f }
 sub cpgrnd {
     my ($x, $nsub) = @_;
-    # PGPLOT: x  nsub  nice 
+    # PGPLOT: x  nsub  nice
     return 0 unless $x;
     my $sign = $x > 0 ? 1 : -1;
     my $ax   = abs($x);
@@ -1377,7 +1377,7 @@ sub cpgrnd {
 }
 sub cpgrnge {
     my ($x1, $x2, $xlo, $xhi) = @_;
-    # PGPLOT: x1x2  nice 
+    # PGPLOT: x1x2  nice
     my ($lo, $hi) = ($x1 < $x2) ? ($x1, $x2) : ($x2, $x1);
     my $range = $hi - $lo;
     return unless $range > 0;
@@ -1389,13 +1389,13 @@ sub cpgrnge {
 }
 sub cpgnumb {
     my ($mm, $pp, $form, $string, $nc) = @_;
-    # PGPLOT: mm * 10^pp 
+    # PGPLOT: mm * 10^pp
     my $val = $mm * (10 ** $pp);
     my $str;
     if ($form == 1) {
         $str = sprintf("%.2e", $val);
     } else {
-        # floating: 
+        # floating:
         if (abs($pp) > 4) {
             $str = sprintf("%.2e", $val);
         } elsif ($pp >= 0) {
@@ -1421,11 +1421,11 @@ sub cpglcur { return 0 }
 
 #
 # :
-#   cpgXxx  C giza/PGPLOT C ← 
+#   cpgXxx  C giza/PGPLOT C ←
 #   pgXxx   PGPLOT Perl XS require PGPLOT
-#   pgXxx   pg cpg  1:1 
+#   pgXxx   pg cpg  1:1
 #
-# require PGPLOT 
+# require PGPLOT
 # =============================================================
 
 {

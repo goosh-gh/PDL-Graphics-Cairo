@@ -2,7 +2,7 @@ package PDL::Graphics::Cairo::Figure;
 
 # =============================================================
 # Figure -- equivalent to matplotlib Figure
-#   subplot / subplots 
+#   subplot / subplots
 # =============================================================
 
 use strict;
@@ -119,7 +119,7 @@ has dpi    => (is => 'ro', default => sub { 96 });
 
 # figsize 展開は Cairo.pm の _apply_figsize() が担う。
 
-# Figure 
+# Figure
 has _suptitle_text  => (is => 'rw', default => sub { '' });
 has _suptitle_fontsize => (is => 'rw', default => sub { 15 });
 has _suptitle_y        => (is => 'rw', default => sub { 18 });
@@ -128,12 +128,12 @@ has _suptitle_y        => (is => 'rw', default => sub { 18 });
 has axes_list => (is => 'ro', default => sub { [] });
 has _gs_axes  => (is => 'ro', default => sub { [] });  # [{ax=>, r0=>, r1=>, c0=>, c1=>}, ...]
 
-# subplot 
+# subplot
 has _nrows => (is => 'rw', default => sub { 1 });
 has _ncols => (is => 'rw', default => sub { 1 });
 
 # ------------------------------------------------------------------
-# subplot(rows, cols, index) — 1-indexedmatplotlib 
+# subplot(rows, cols, index) — 1-indexedmatplotlib
 # ------------------------------------------------------------------
 sub subplot {
     my ($self, $nrows, $ncols, $idx) = @_;
@@ -171,7 +171,7 @@ sub subplot {
     return $ax;
 }
 
-# subplots(rows, cols) — Axes 
+# subplots(rows, cols) — Axes
 sub subplots {
     my ($self, $nrows, $ncols, %opt) = @_;
     $nrows //= 1;
@@ -397,7 +397,7 @@ sub axes {
 # save
 # ------------------------------------------------------------------
 # ------------------------------------------------------------------
-# _render_to($driver) —  driver 
+# _render_to($driver) —  driver
 # ------------------------------------------------------------------
 # suptitle($text, fontsize=>N, size=>N, y=>0..1)
 # matplotlib互換: $fig->suptitle('T') または $fig->set_suptitle('T', fontsize=>16)
@@ -613,7 +613,7 @@ sub add_axes {
 }
 
 # ------------------------------------------------------------------
-# savefig — save() matplotlib 
+# savefig — save() matplotlib
 # ------------------------------------------------------------------
 sub savefig {
     my ($self, $file, %opt) = @_;
@@ -764,7 +764,7 @@ sub set_facecolor {
 }
 
 # ------------------------------------------------------------------
-# clf — Figure 
+# clf — Figure
 # ------------------------------------------------------------------
 sub clf {
     my ($self) = @_;
@@ -776,7 +776,7 @@ sub clf {
 }
 
 # ------------------------------------------------------------------
-# tight_layout — subplot 
+# tight_layout — subplot
 # ------------------------------------------------------------------
 # _tight_gridspec(\@entries, $measurer, $room_of, $left, $top, $right, $bottom)
 # Lays out the panels of one GridSpec inside the area (px) given. Each panel
@@ -905,10 +905,10 @@ sub tight_layout {
     my $fw    = $self->width;
     my $fh    = $self->height;
 
-    # suptitle 
+    # suptitle
     my $top_pad = ($self->{_suptitle_text} // '') ne '' ? 36 : 8;
 
-    # Figure pad  px 
+    # Figure pad  px
     my $outer = int(($fw < $fh ? $fw : $fh) * ($pad - 1.0) * 0.5);
     $outer = 8 if $outer < 8;
 
@@ -940,9 +940,9 @@ sub tight_layout {
     my $cell_w = (($right - $left) - $w_pad * ($ncols - 1)) / $ncols;
     my $cell_h = (($bottom - $top) - $h_pad * ($nrows - 1)) / $nrows;
 
-    #  Axes  margin 
-    # Y Axes  margin_left 
-    # X Axes  margin_bottom 
+    #  Axes  margin
+    # Y Axes  margin_left
+    # X Axes  margin_bottom
     # Build GS axes lookup for skip
     my %gs_ax_set = map { $_ => 1 } map { $_->{ax} } @{ $self->_gs_axes };
 
@@ -1131,7 +1131,7 @@ sub tight_layout {
             $ax->margin_bottom($mb); $ax->margin_top($mt);
             next;
         }
-        # Axes  fig_x/fig_y 
+        # Axes  fig_x/fig_y
         # (cell_w+w_pad)/(cell_h+h_pad) を1セル分の周期として逆算する。
         my $col = int(($ax->fig_x - $left + ($cell_w+$w_pad) * 0.5) / ($cell_w+$w_pad));
         my $row = int(($ax->fig_y - $top  + ($cell_h+$h_pad) * 0.5) / ($cell_h+$h_pad));
@@ -1310,11 +1310,11 @@ sub tight_layout {
         $ax->margin_bottom($mb);
         $ax->margin_top($mt);
 
-        # Axes 
+        # Axes
         # (cell_w+w_pad)/(cell_h+h_pad) を1セル分の周期として配置する。
         my $new_x = $left + $col * ($cell_w + $w_pad);
         my $new_y = $top  + $row * ($cell_h + $h_pad);
-        # fig_x/fig_y  ro 
+        # fig_x/fig_y  ro
         $ax->{fig_x}  = $new_x;
         $ax->{fig_y}  = $new_y;
         $ax->{width}  = $cell_w;

@@ -117,7 +117,7 @@ sub _draw_twin_yaxis {
 
     $b->line_seg($mr, $mt, $mr, $mb);
 
-    # Y 
+    # Y
     my @ytks;
     if ($self->_yticks) {
         @ytks = @{ $self->_yticks };
@@ -232,7 +232,7 @@ sub _draw_frame {
     # 描いて全面塗りつぶし（"真っ青"等）になるのを防ぐ
     return if $mt >= $mb - 4 || $ml >= $mr - 4;
 
-    # pgbox 
+    # pgbox
     my $pb   = $self->{_pgbox};
     my $xopt = $pb ? uc($pb->{xopt}) : 'BCNST';
     my $yopt = $pb ? uc($pb->{yopt}) : 'BCNST';
@@ -242,7 +242,7 @@ sub _draw_frame {
     $b->set_linestyle('solid');
 
     # ============================================================
-    # A: y=0 x=0 
+    # A: y=0 x=0
     # ============================================================
     my ($x0p, $y0p);
 
@@ -259,20 +259,20 @@ sub _draw_frame {
         $x0p = $tr->x(pdl(0))->at(0);
         if ($x0p >= $ml - 1 && $x0p <= $mr + 1) {
             $b->set_color(@fc);
-            # X(mb+2) mb-1 
+            # X(mb+2) mb-1
             $b->line_seg($x0p, $mt, $x0p, $mb);
         }
     }
     $x0p //= $ml;
 
-    # B/C: 
+    # B/C:
     if (!$pb || $xopt =~ /[BC]/ || $yopt =~ /[BC]/) {
         $b->set_color(@fc);
         $b->rect_stroke($ml, $mt, $mr-$ml, $mb-$mt);
     }
 
     # ============================================================
-    # X 
+    # X
     # ============================================================
     my ($xtks_r, $xlbs_r) = $self->_xtick_list;
     my @xtks = @$xtks_r;
@@ -423,7 +423,7 @@ sub _draw_frame {
     }
 
     # ============================================================
-    # Y 
+    # Y
     # ============================================================
     my ($ytks_r, $ylbs_r) = $self->_ytick_list;
     my @ytks = @$ytks_r;
@@ -902,7 +902,7 @@ sub _draw_labels {
         }
     }
 
-    # X 
+    # X
     # twiny() が作った twin オブジェクト(_is_twin かつ _twin_type='y')の
     # xlabel は、_draw_twin_xaxis() がすでに上端の専用位置に描画して
     # いるため、ここで通常の下軸ラベル位置(mb+xoff)に重複して描かない

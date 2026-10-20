@@ -18,7 +18,7 @@ sub BUILD {
     $self->{sy} = ($self->bottom - $self->top)    / ($self->ymax - $self->ymin);
 }
 
-# data → screenPDL piddle 
+# data → screenPDL piddle
 sub x { $_[0]->left   + ($_[1] - $_[0]->xmin) * $_[0]->{sx} }
 sub y { $_[0]->bottom - ($_[1] - $_[0]->ymin) * $_[0]->{sy} }
 

@@ -134,7 +134,7 @@ sub rgb_at {
     return @{$pts->[-1]}[1..3];
 }
 
-#  rgb_at 
+#  rgb_at
 sub rgb_norm {
     my ($self, $val, $vmin, $vmax) = @_;
     my $v = ($vmax == $vmin) ? 0.5 : ($val - $vmin) / ($vmax - $vmin);
@@ -166,7 +166,7 @@ sub rgb_norm_pdl {
     return @out;
 }
 
-# 256  RGB 
+# 256  RGB
 sub lut {
     my ($self, $n) = @_;
     $n //= 256;

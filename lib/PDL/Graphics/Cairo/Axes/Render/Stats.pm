@@ -103,7 +103,7 @@ sub _render_violin_item {
     $b->polyline(pdl(@rx, $lx[0]), pdl(@ry, $ly[0]));
     $b->polyline(pdl(@lx, $rx[0]), pdl(@ly, $ry[0]));
 
-    # IQR 
+    # IQR
     if ($cmd->{showbox}) {
         my $xl  = $tr->x(pdl($xc - $kde->max * 0.15))->at(0);
         my $xr  = $tr->x(pdl($xc + $kde->max * 0.15))->at(0);
