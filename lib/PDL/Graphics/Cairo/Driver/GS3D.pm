@@ -802,6 +802,30 @@ sub _mesh_tris {
     return \@tris;
 }
 
+# 三角セクションのバイト列: n_tris(u16) と三角形(頂点 x,y,z(f32) r,g,b(u8) × 3)。
+# n_tris は u16 なので、65535 を超えたら奥の三角形から捨てて 65535 にする(1 回警告)。
+# 深度は大きいほど手前。捨てるのは 3 頂点の深度の和が小さいもの(手前の面に隠れて
+# いることが多い)。超えたまま送ると数が折り返し、サーバが三角形を読み違える。
+my $_warned_tris;
+sub _pack_tris {
+    my ($tris) = @_;
+    my @t = @$tris;
+    if (@t > 65535) {
+        warn sprintf("Driver::GS3D: %d triangles exceed the u16 count; drawing the 65535 nearest.\n",
+                     scalar @t) unless $_warned_tris++;
+        my @depth = map { $_->[0][2] + $_->[1][2] + $_->[2][2] } @t;
+        my @keep  = (sort { $depth[$b] <=> $depth[$a] || $a <=> $b } 0 .. $#t)[0 .. 65534];
+        @t = @t[ sort { $a <=> $b } @keep ];    # 元の順序のまま
+    }
+    my $out = pack('S', scalar @t);
+    for my $tr (@t) {
+        $out .= pack('f<f<f<CCC', @{$tr->[0]})
+              . pack('f<f<f<CCC', @{$tr->[1]})
+              . pack('f<f<f<CCC', @{$tr->[2]});
+    }
+    return $out;
+}
+
 sub _send_3d_frame {
     my ($self) = @_;
     my $rot   = $self->_rotation();
@@ -1106,14 +1130,7 @@ sub _send_3d_frame {
     # 面は描かれないが破綻しない(後方互換)。頂点レコード(15 bytes):
     #   x,y(f32 スクリーン座標) z(f32 深度, 大きいほど手前) r,g,b(u8 Gouraud色)
     # 三角 = 頂点×3 = 45 bytes。n_tris(u16) が先頭。
-    if (@tris) {
-        $payload .= pack('S', scalar @tris);
-        for my $t (@tris) {
-            $payload .= pack('f<f<f<CCC', @{$t->[0]})
-                      . pack('f<f<f<CCC', @{$t->[1]})
-                      . pack('f<f<f<CCC', @{$t->[2]});
-        }
-    }
+    $payload .= _pack_tris(\@tris) if @tris;
 
     PDL::Graphics::Cairo::Driver::GS::_send_msg(
         $self->{_ix3d}{sock}, GSP_MSG_3D_FRAME, $payload, $self->{_ix3d}{seq}++);
