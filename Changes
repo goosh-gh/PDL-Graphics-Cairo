@@ -2,6 +2,61 @@ Revision history for PDL-Graphics-Cairo
 
 (unreleased)
 
+0.43  2026-10-19
+  - twinx: the right label (set_right_ylabel, or the twin's ylabel) is
+    drawn past the measured right tick numbers. It was anchored by its lower
+    edge at 20 px from the frame and grew left over the numbers.
+    tight_layout measures the right axis (tick numbers and label) instead of
+    a fixed 36 px, which did not count set_right_ylabel. When both are
+    given, set_right_ylabel is drawn. (t/53)
+  - Automatic ticks are evenly spaced: tick values are rounded to the
+    decimals of the step. With a step of 2.5 (or 0.25, 0.0025 ...) they were
+    rounded to whole numbers of the wrong size, e.g. 0, 3, 5, 8, 10 for
+    0..12.9, and 12.5 became 13 and was dropped. Tick labels that are not
+    integers show the value (%.6g): 1.25 was "1.2", 0.00125 "0.0013". (t/54)
+  - Every plot method takes the line width as lw or linewidth: step,
+    errorbar and stem ignored lw, qqplot ignored linewidth. The legend line
+    has the plotted width (it was 1.5 for step and errorbar, and line's
+    legend read only linewidth).
+  - errorbar(lw => 0) does not join the points; its legend shows the
+    marker. errorbar_stats does not join them unless given lw (it passed
+    lw => 0, which errorbar ignored, so the points were joined).
+  - color => undef means no colour given (the colour cycle). errorbar_stats
+    without color was drawn black, with warnings. (t/55)
+  - Driver::GS cuts the window title at a UTF-8 character boundary within
+    255 bytes (giza_server keeps 255 bytes; a cut inside a character made
+    the whole title invalid). (t/56)
+  - heatmap draws its cells. It queued a command that nothing drew, so only
+    the ticks and the colorbar appeared. Row 0 at the top (as seaborn), the y
+    ticks to match; cells whose value is not finite are empty; annot => 1
+    writes each value, white on dark cells. (t/58)
+  - stem(label => ...) adds a marker entry to the legend. (t/58)
+  - hexbin draws the hexagons in row/column order. They were drawn in hash
+    order, so their anti-aliased edges changed from run to run.
+  - An explicit $fig->tight_layout places the panels of a GridSpec /
+    subplot_mosaic from what each needs around its plot rectangle (tick
+    numbers, labels, title, colorbar, twin axis), as matplotlib does: the
+    GridSpec's left/right/top/bottom/hspace/wspace are replaced, the plot
+    rectangles of a row (column) line up, and height_ratios/width_ratios
+    share the rest. The GridSpec gaps used to be kept and fixed margins
+    added inside each cell, so the figures were mostly empty (the mosaic in
+    examples/example_gridspec.pl had a panel 25 px high). When save/show
+    apply the layout by themselves, with cell_margins, polar panels or
+    panels moved with set_position, the GridSpec's own cells are kept.
+    (t/59)
+  - Axes.pm is split into files of the same package: the drawing of each
+    plot type in Axes/Render/{Basic,Bar,Image,Stats,Text}.pm (_render_cmd
+    looks it up in %RENDER), and the grid, frame, ticks, labels, legend,
+    colorbar and twin axes in Axes/Decor.pm (Axes.pm 5150 -> 2952 lines).
+    Nothing drawn changes: the 98 PNGs of the examples are byte-identical
+    before and after. t/57 checks that every public name of Axes, Figure,
+    PDL::Graphics::Cairo and ::PGPLOT is still there.
+  - examples/example_show(.ja).pl: the ja demo died at the end (wait_all on
+    the retired OSX driver); both describe the default display (giza_server
+    on macOS, otherwise gnuplot). examples/example_stats.ja.pl: the Pre/Post
+    panel joins its points (lw); the legend shows the ± sign.
+  - Trailing white space removed from comments.
+
 0.42  2026-10-19
   - MANIFEST lists t/42 to t/52 (t/42 to t/47 were missing).
   - The frame, tick numbers and axis labels are drawn when the axes holds

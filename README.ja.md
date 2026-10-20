@@ -20,7 +20,8 @@ PDL::Graphics::Cairo がレンダリングを担います。
 - gnuplot経由のインタラクティブ表示（aqua/wxt/x11）— クロスプラットフォーム。giza_server が無い場合の自動フォールバック
 - レガシー macOS Cocoa ビューア（`backend => 'osx'`、`pdlcairo_viewer`）は **deprecated** なオプトインのフォールバックとしてのみ残置 — 既定ではなく、`make` でもビルドされません
 - CairoによるAxes枠・目盛り・数値ラベルの描画
-- Dual Y軸サポート（`twinx`）— 両軸独立した目盛り・ラベル
+- Dual Y軸サポート（`twinx`）— 両軸独立した目盛り・ラベル。右のラベル（`set_right_ylabel`、または twin の `ylabel`）は右の目盛り数字の外側に描かれ、`tight_layout` が両方の幅を取る
+- 線幅はどの描画メソッドでも `lw` と `linewidth` のどちらでも指定でき、凡例の線も同じ太さになる
 - 黒背景サポート（`PGPLOT_BACKGROUND=black`）
 - Negative-up Y軸: `pgenv`でymin>ymax、`$ax->ylim(lo, hi)`でlo>hiのとき自動反転
 - `tight_layout()`によるマルチパネルサブプロット
@@ -216,7 +217,10 @@ PDL-Graphics-Cairo/
 ├── lib/PDL/Graphics/Cairo/
 │   ├── Cairo.pm          # 公開APIエントリポイント: figure(), subplots()
 │   ├── Figure.pm         # Figureクラス: save(), show(), tight_layout()
-│   ├── Axes.pm           # Axesクラス: line(), scatter(), xlim(), ylim(), ...
+│   ├── Axes.pm           # Axesクラス: line(), scatter(), xlim(), ylim(), ...（API・範囲・レイアウト・描画の流れ）
+│   ├── Axes/
+│   │   ├── Render/*.pm   # 種類ごとの描画（Basic, Bar, Image, Stats, Text）。Axes と同じパッケージ
+│   │   └── Decor.pm      # グリッド・枠・目盛り・ラベル・凡例・colorbar・twin の軸。Axes と同じパッケージ
 │   ├── PGPLOT.pm         # PGPLOT互換レイヤー: pgbegin/pgline/pgend/...
 │   ├── Driver/
 │   │   ├── Cairo.pm      # Cairo/Pangoレンダリングバックエンド（PNG/PDF/SVG出力）
@@ -326,17 +330,17 @@ deprecated で、`make` でもビルドされません。
 | `scatter` | 散布図（カラーマップ対応） |
 | `bar` / `barh` | 縦・横棒グラフ |
 | `hist` / `hist_kde` | ヒストグラム / KDEオーバーレイ |
-| `errorbar` / `errorbar_stats` | エラーバー |
+| `errorbar` / `errorbar_stats` | エラーバー。`errorbar(..., lw => 0)` は点を線で結ばない（凡例はマーカー）。`errorbar_stats` は `lw` を指定しない限り結ばない |
 | `fill_between` | 塗りつぶし帯 |
 | `step` | ステップ関数 |
-| `stem` | ステムプロット |
+| `stem` | ステムプロット（`label` は凡例に丸いマーカーで出る） |
 | `imshow` | 2D画像（カラーバー付き）。画像全体を1回で描く（セルは平滑化せずに拡大）。値が有限でないセルは透明 |
 | `contourf` | 等高線（塗りつぶし） |
 | `pie` | 円グラフ |
 | `boxplot` | 箱ひげ図 |
 | `violinplot` | バイオリンプロット |
 | `qqplot` | Q-Qプロット（正規分布比較） |
-| `heatmap` | ヒートマップ（ラベル付き） |
+| `heatmap` | ヒートマップ（ラベル付き）。値ごとに 1 セル、行 0 が上。値が有限でないセルは塗らない。`annot => 1` で各セルに値（`fmt`、既定 `%.1f`）を書く |
 | `stackplot` | 積み上げ面グラフ |
 | `eventplot` | ラスタ・スパイクプロット |
 | `axhline` / `axvline` | 水平・垂直参照線 |
