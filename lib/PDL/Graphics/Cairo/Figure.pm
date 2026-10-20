@@ -412,8 +412,11 @@ sub suptitle {
 
 sub set_suptitle { my ($self, $title, %opt) = @_; $self->suptitle($title, %opt) }
 
+# _render_to($driver, skip => sub { my ($ax) = @_; ... })
+#   skip: axes for which it returns true are not drawn (Driver::GS draws the
+#   background of a grid without the panels that change from frame to frame).
 sub _render_to {
-    my ($self, $driver) = @_;
+    my ($self, $driver, %o) = @_;
 
     if (($self->{_suptitle_text} // '') ne '') {
         $driver->set_font(size => $self->_suptitle_fontsize, weight => 'bold');
@@ -427,9 +430,12 @@ sub _render_to {
     # is called explicitly (see _tight_gridspec)
     $self->tight_layout(_auto => 1) unless $self->{_tight_done};
     for my $ax (@{ $self->axes_list }) {
+        next if $o{skip} && $o{skip}->($ax);
         $ax->draw($driver);
     }
-    $self->_draw_connections($driver);
+    # with skip: only the connections / texts that refer to no skipped axes
+    $self->_draw_connections($driver,
+        $o{skip} ? (pick => sub { !grep { $o{skip}->($_) } @_ }) : ());
 
     $driver->finish();
 }
@@ -496,9 +502,15 @@ sub _connection_point {
     return @p;
 }
 
+# _draw_connections($driver, pick => sub { my (@axes) = @_; ... })
+#   pick: draw only the connections / texts for which it returns true, given
+#   the axes they refer to (none for a text in figure coordinates). Driver::GS
+#   draws those of the _scrub_skip panels on each frame and the rest once.
 sub _draw_connections {
-    my ($self, $driver) = @_;
+    my ($self, $driver, %o) = @_;
+    my $pick = $o{pick} // sub { 1 };
     for my $c (@{ $self->{_connections} // [] }) {
+        next unless $pick->(grep { defined } $c->{axA}, $c->{axB});
         my @a = $self->_connection_point($c->{axA}, $c->{xyA}, $c->{coordsA}) or next;
         my @b = $self->_connection_point($c->{axB}, $c->{xyB}, $c->{coordsB}) or next;
         my $lw  = $c->{lw} // $c->{linewidth} // 1;
@@ -510,6 +522,7 @@ sub _draw_connections {
         $driver->set_linestyle('solid', $lw);
     }
     for my $t (@{ $self->{_fig_texts} // [] }) {
+        next unless $pick->(grep { defined } $t->{ax});
         my @p = $self->_connection_point($t->{ax}, $t->{xy}, $t->{coords}) or next;
         my ($dx, $dy) = @{ $t->{offset} // [0, 0] };
         my $col = PDL::Graphics::Cairo::Axes->_parse_color($t->{color} // 'black');

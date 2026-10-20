@@ -148,6 +148,7 @@ t/59_gridspec_tight.t
 t/60_m4_decimate.t
 t/61_without_pdl_stats.t
 t/62_gs_redraw_key.t
+t/63_grid_static_key.t
 tools/demo_gs3d_electrodes.pl
 tools/verify_gs3d.pl
 tools/verify_gs3d_projection.pl

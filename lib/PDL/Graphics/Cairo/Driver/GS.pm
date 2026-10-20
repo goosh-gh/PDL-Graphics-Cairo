@@ -840,6 +840,12 @@ sub show {
 #   cell_title   => sub { my ($ax_idx)=@_; return "Cell $ax_idx" }  子窓タイトル
 #   main_scrub   => 1                親窓でのクリック/ドラッグでも潜時を選ぶ
 #                                    (既定 0 = 親窓はダブルクリックのみ)
+#   static_key   => sub { my ($state)=@_; return $string }
+#       親窓の背景の作り置き。grid_render の図のうち、_scrub_skip のパネルを除いた
+#       部分が、この文字列(と窓の大きさ)だけで決まるときに渡す。背景はその部分を
+#       1 回描いて取っておき、文字列か窓の大きさが変わったときだけ描き直す。
+#       毎コマは背景を写し、潜時の縦線と _scrub_skip のパネル(頭皮マップなど)だけを
+#       描く。渡さなければ毎コマ図全体を描く(従来どおり)。
 #
 # grid_render が返す Figure の Axes に $ax->{_scrub_skip} = 1 を立てると、その
 # パネルには潜時縦線を引かず、main_scrub のクリック対象にもしない(頭皮マップ
@@ -866,6 +872,7 @@ sub show_grid_scrub {
         readout     => $opt{readout} || sub { sprintf("x=%.4g\ny=%.4g", $_[0], $_[1]) },
         cell_title  => $opt{cell_title} || sub { "cell $_[0]" },
         main_scrub  => $opt{main_scrub} ? 1 : 0,
+        static_key  => $opt{static_key},
         wins        => [],            # 全窓レコード
         cells       => {},            # ax_idx => 子窓レコード(重複オープン防止)
     };
@@ -876,6 +883,9 @@ sub show_grid_scrub {
         w     => $self->width, h => $self->height,
         title => $self->title,
         render => sub { my ($win) = @_; $self->_paint_main($wm, $win) },
+        ($wm->{static_key}
+            ? (compose => sub { my ($win, $fig) = @_; $self->_compose_main($wm, $win, $fig) })
+            : ()),
     );
     $wm->{main} = $main;
 
@@ -903,6 +913,7 @@ sub _open_window {
         kind => $a{kind}, ax_idx => $a{ax_idx},
         w => $a{w}, h => $a{h},
         render => $a{render},
+        compose => $a{compose},       # 任意: ($win, $fig) から PNG のバイト列を作る
         cursor => undef, last_fig => undef,
         dirty => 0, await_ack => 0, alive => 1,
     };
@@ -1000,7 +1011,7 @@ sub _send_frame {
     my $fig = $win->{render}->($win);
     $win->{last_fig} = $fig;
     my $t1  = Time::HiRes::time();
-    my $png = $self->_window_png($fig);
+    my $png = $win->{compose} ? $win->{compose}->($win, $fig) : $self->_window_png($fig);
     my $t2  = Time::HiRes::time();
     _send_msg($win->{sock}, GSP_MSG_PNG, $png, $win->{seq}++);
     my $t3  = Time::HiRes::time();
@@ -1182,7 +1193,8 @@ sub _paint_main {
     my $fig = $wm->{grid_render}->($wm->{state}, $win->{w}, $win->{h});
     $self->_bind_axes($fig);
     my $lat = $wm->{state}{_scrub_lat};
-    if (defined $lat) {
+    # static_key のときは縦線を _compose_main が背景の上に引く
+    if (defined $lat && !$wm->{static_key}) {
         my $vs = $wm->{vline};
         for my $ax (@{ $fig->axes_list }) {
             next if $ax->{_scrub_skip};          # 時間軸でないパネルには引かない
@@ -1190,6 +1202,50 @@ sub _paint_main {
         }
     }
     return $fig;
+}
+
+# static_key の親窓の 1 コマ: 背景(_scrub_skip 以外のパネル・suptitle)を作り置きし、
+# その上に潜時の縦線と _scrub_skip のパネルを描いて PNG にする。
+# 背景は static_key の文字列か図の大きさが変わったときだけ描き直す。
+# 波形パネルはこのコマの図では描かないので、クリックの読み取り(image_frac_to_data)に
+# 要る描画矩形・範囲・座標変換を、背景を描いた図の同じ番号のパネルから写す。
+sub _compose_main {
+    my ($self, $wm, $win, $fig) = @_;
+    my ($w, $h) = ($fig->width, $fig->height);
+    my $t0  = Time::HiRes::time();
+    my $key = join "\x00", $wm->{static_key}->($wm->{state}) // '', $w, $h;
+    my $skip = sub { $_[0]->{_scrub_skip} };
+    if (!$win->{bg} || $win->{bg_key} ne $key) {
+        my $bg = PDL::Graphics::Cairo::Driver::Cairo->new(width => $w, height => $h, file => ':memory:');
+        $fig->_render_to($bg, skip => $skip);
+        @{$win}{qw(bg bg_key bg_fig)} = ($bg->{surface}, $key, $fig);
+    }
+    my $cairo = PDL::Graphics::Cairo::Driver::Cairo->new(width => $w, height => $h, file => ':memory:');
+    $cairo->paint_surface($win->{bg});
+    $fig->tight_layout(_auto => 1) unless $fig->{_tight_done};
+    my @ax  = @{ $fig->axes_list };
+    my @bga = @{ $win->{bg_fig}->axes_list };
+    my $lat = $wm->{state}{_scrub_lat};
+    my $vs  = $wm->{vline};
+    for my $i (0 .. $#ax) {
+        my $ax = $ax[$i];
+        if ($skip->($ax)) {
+            $ax->draw($cairo);
+            next;
+        }
+        $ax->_adopt_drawn($bga[$i]) if $bga[$i] && $bga[$i] != $ax;
+        $ax->_overlay_vline($cairo, $lat, color => $vs->{color}, lw => $vs->{lw}) if defined $lat;
+    }
+    # add_text / add_connection that refer to a _scrub_skip panel (the rest is in the background)
+    $fig->_draw_connections($cairo, pick => sub { grep { $skip->($_) } @_ });
+    $cairo->finish;
+    my $t1 = Time::HiRes::time();
+    my $bytes = $cairo->png_bytes;
+    my $t2 = Time::HiRes::time();
+    printf "  png: cairo_render=%.0fms  png_compress=%.0fms  size=%dKB  (background cached)\n",
+        ($t1-$t0)*1000, ($t2-$t1)*1000, length($bytes)/1024
+        if $self->verbose;
+    return $bytes;
 }
 
 # 子窓の描画: cell_render の返り Figure に、直近点マーカ(ドラッグ時)と

@@ -2674,6 +2674,52 @@ sub _frac_range {
             $self->ymax // $self->_ymax_auto // 1);
 }
 
+# _adopt_drawn($other) — $other(同じ配置で描かれた別の Axes)が draw で確定した
+# 描画矩形・範囲・座標変換を写す。Driver::GS の static_key で、背景として描いた図の
+# パネルから、そのコマの図(波形パネルは描かない)の同じパネルへ写すのに使う。
+# image_frac_to_data・data_to_pixel・_overlay_vline がこれだけを読む。
+sub _adopt_drawn {
+    my ($self, $o) = @_;
+    $self->_plot_ml($o->_plot_ml);
+    $self->_plot_mr($o->_plot_mr);
+    $self->_plot_mt($o->_plot_mt);
+    $self->_plot_mb($o->_plot_mb);
+    $self->_plot_range($o->_plot_range);
+    $self->{_last_tr} = $o->{_last_tr};
+    return $self;
+}
+
+# _overlay_vline($backend, $x, color => [r,g,b], lw => ..) — draw で確定した描画矩形と
+# 座標変換で、データの x に縦線を引く。draw のキューの axvline と同じクリップと描き方
+# (_render_vline)。背景の上に潜時の縦線だけを足すのに使う(Driver::GS の static_key)。
+sub _overlay_vline {
+    my ($self, $b, $x, %o) = @_;
+    my ($ml, $mr, $mt, $mb) = ($self->_plot_ml, $self->_plot_mr, $self->_plot_mt, $self->_plot_mb);
+    my $tr = $self->{_last_tr};
+    return unless defined $ml && $tr;
+    $b->save;
+    if ($self->{_axis_off}) {
+        # 枠なし: draw のキューと同じクリップ
+        my $clip_w = $mr - $ml + 2;
+        my $pad_t  = $self->{_clip_pad_top} // 15;
+        my $clip_h = $mb - $mt + $pad_t + 1;
+        $b->clip_rect($ml - 1, $mt - $pad_t, $clip_w, $clip_h) if $clip_w > 0 && $clip_h > 0;
+    } else {
+        # 枠あり: draw では縦線の後に枠(太さ 1.5 px、辺の上)を描くので、枠が縦線の上に来る。
+        # 枠はもう背景にあるので、縦線は枠の線の内側だけに描く(枠の線を塗り替えない)
+        # クリップは画素の境目にそろえる(そろっていないと Cairo がマスクで切り、
+        # 縦線の画素の丸めが draw の結果と変わる)
+        my $f  = 0.75;
+        my $x0 = POSIX::ceil($ml + $f);  my $x1 = POSIX::floor($mr - $f);
+        my $y0 = POSIX::ceil($mt + $f);  my $y1 = POSIX::floor($mb - $f);
+        $b->clip_rect($x0, $y0, $x1 - $x0, $y1 - $y0) if $x1 > $x0 && $y1 > $y0;
+    }
+    $self->_render_vline($b, $tr, { x => $x, color => $self->_parse_color($o{color} // 'red'),
+                                    lw => $o{lw} // 1.2, ls => 'solid' }, $ml, $mt, $mr, $mb);
+    $b->restore;
+    return $self;
+}
+
 # image_frac_to_data($fx, $fy) — 画像分率（0..1）→ データ座標
 # draw() または tight_layout() → to_png/to_inline の後に呼ぶこと。
 # $fx: Figure全体の横方向分率 (0=左端, 1=右端)

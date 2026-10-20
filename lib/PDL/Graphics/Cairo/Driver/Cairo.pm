@@ -200,6 +200,18 @@ sub set_font {
 sub save    { $_[0]->{cr}->save }
 sub restore { $_[0]->{cr}->restore }
 
+# paint_surface($surface) — copy a Cairo surface of the same size onto this one
+# at (0, 0), replacing what is there (Driver::GS: the cached background of a grid).
+sub paint_surface {
+    my ($self, $surface) = @_;
+    my $cr = $self->{cr};
+    $cr->save;
+    $cr->set_operator('source');
+    $cr->set_source_surface($surface, 0, 0);
+    $cr->paint;
+    $cr->restore;
+}
+
 # -------------------------------------------------------------
 #
 
