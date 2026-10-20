@@ -70,26 +70,36 @@ use PDL::Graphics::Cairo qw(subplots);
 # ----------------------------------------------------------------
 # uniform_margins => 1 でコンパクトラベルモードが有効になり、
 # mt+mb の合計が非uniform時より圧縮されること。
+# 比べる相手は同じ図の非 uniform の余白(同じフォントで測る)。0.42 から
+# tight_layout が文字を実測するので、固定の 90 px と比べるとフォントで
+# 結果が変わる(Ubuntu 26.04 の VM で 34+57=91 になった)。
 # ----------------------------------------------------------------
 {
-    my ($fig, @rows) = subplots(3, 3, width=>600, height=>500);
-    for my $r (0..2) {
-        for my $c (0..2) {
-            my $idx = $r*3+$c;
-            $rows[$r][$c]->line(sequence(10), sequence(10));
-            $rows[$r][$c]->set_title("ch$idx");
-            $rows[$r][$c]->xlabel('s');
+    my $grid = sub {
+        my ($uniform) = @_;
+        my ($fig, @rows) = subplots(3, 3, width=>600, height=>500);
+        for my $r (0..2) {
+            for my $c (0..2) {
+                my $idx = $r*3+$c;
+                $rows[$r][$c]->line(sequence(10), sequence(10));
+                $rows[$r][$c]->set_title("ch$idx");
+                $rows[$r][$c]->xlabel('s');
+            }
         }
-    }
-    $fig->tight_layout(uniform_margins=>1);
+        $fig->tight_layout(uniform_margins=>$uniform);
+        return ($fig, @rows);
+    };
+    my (undef, @plain) = $grid->(0);
+    my ($fig, @rows)   = $grid->(1);
 
     ok $rows[1][1]->_compact_labels,
         'uniform_margins enables compact label mode on each Axes';
 
     my $mt = $rows[1][1]->margin_top;
     my $mb = $rows[1][1]->margin_bottom;
-    ok $mt + $mb < 90,
-        "uniform_margins: compact mt+mb total ($mt+$mb=" . ($mt+$mb) . ") is below the old 90px baseline";
+    my $base = $plain[1][1]->margin_top + $plain[1][1]->margin_bottom;
+    ok $mt + $mb < $base,
+        "uniform_margins: compact mt+mb total ($mt+$mb=" . ($mt+$mb) . ") is below the non-uniform $base px";
 
     eval { $fig->to_png };
     ok !$@, 'uniform_margins grid with title+xlabel on every panel does not crash'
