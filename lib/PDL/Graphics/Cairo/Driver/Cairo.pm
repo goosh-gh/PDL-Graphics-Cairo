@@ -321,6 +321,9 @@ sub rect_fill {
 sub circle {
     my ($self, $cx, $cy, $r, $fill) = @_;
     my $cr = $self->{cr};
+    # arc() joins the current point (left e.g. by text()) to the start of the
+    # arc with a straight line: start from an empty path
+    $cr->new_path;
     $cr->arc($cx, $cy, $r, 0, 2*3.14159265358979);
     $fill ? $cr->fill : $cr->stroke;
 }
@@ -335,6 +338,9 @@ sub marker {
     my $cr = $self->{cr};
 
     $cr->save;
+    # start from an empty path: arc() would join the current point (left e.g.
+    # by text(), as between legend entries) to the circle with a straight line
+    $cr->new_path;
     if ($style eq 'o') {
         $cr->arc($cx, $cy, $size, 0, 2*3.14159265358979);
         $fill ? $cr->fill_preserve : ();

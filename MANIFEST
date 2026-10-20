@@ -151,6 +151,7 @@ t/62_gs_redraw_key.t
 t/63_grid_static_key.t
 t/64_gs3d_tri_count.t
 t/65_twin_shared_limits.t
+t/66_marker_after_text.t
 tools/demo_gs3d_electrodes.pl
 tools/verify_gs3d.pl
 tools/verify_gs3d_projection.pl

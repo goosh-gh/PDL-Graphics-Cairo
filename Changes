@@ -40,6 +40,10 @@ Revision history for PDL-Graphics-Cairo
   - xlim / set_xlim on a twinx (ylim / set_ylim on a twiny) sets the range
     of the shared axis, the parent's, as in matplotlib; it was ignored.
     Given on both, the later call wins. (t/65)
+  - Circle markers and circle() start from an empty path. Cairo's arc()
+    joined the current point left by text() to the circle with a straight
+    line, so a legend of scatter entries had a line from each label to the
+    next marker. (t/66)
 
 0.43  2026-10-19
   - twinx: the right label (set_right_ylabel, or the twin's ylabel) is
