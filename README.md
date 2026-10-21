@@ -28,7 +28,7 @@ Each image is drawn by the script it links to (in `examples/`).
 </tr>
 <tr>
 <td><a href="examples/example_show.pl"><img src="docs/gallery/example_show__04.png" width="400" alt="example_show figure 4"></a><br><code>example_show.pl</code></td>
-<td></td>
+<td><a href="examples/example_stats.pl"><img src="docs/gallery/example_stats__04.png" width="400" alt="errorbar_stats, boxplot and violinplot"></a><br><code>example_stats.pl</code> — errorbar_stats / boxplot / violinplot</td>
 </tr>
 </table>
 

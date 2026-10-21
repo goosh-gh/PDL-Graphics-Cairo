@@ -18,8 +18,8 @@ PDL::Graphics::Cairo がレンダリングを担います。
 <td><a href="examples/example_contour.pl"><img src="docs/gallery/example_contour__02.png" width="400" alt="等高線のギャラリー"></a><br><code>example_contour.pl</code> — contour / contourf</td>
 </tr>
 <tr>
-<td><a href="examples/example_png.ja.pl"><img src="docs/gallery/example_png.ja__12.png" width="400" alt="統計ダッシュボード"></a><br><code>example_png.ja.pl</code> — 2×2 の統計ダッシュボード</td>
-<td><a href="examples/example_png.ja.pl"><img src="docs/gallery/example_png.ja__07.png" width="400" alt="imshow とカラーマップ"></a><br><code>example_png.ja.pl</code> — imshow とカラーマップ</td>
+<td><a href="examples/example_png.pl"><img src="docs/gallery/example_png__12.png" width="400" alt="統計ダッシュボード"></a><br><code>example_png.pl</code> — 2×2 の統計ダッシュボード</td>
+<td><a href="examples/example_png.pl"><img src="docs/gallery/example_png__07.png" width="400" alt="imshow とカラーマップ"></a><br><code>example_png.pl</code> — imshow とカラーマップ</td>
 </tr>
 <tr>
 <td><a href="examples/example_colormap.pl"><img src="docs/gallery/example_colormap__01.png" width="400" alt="ListedColormap の 5 クラス"></a><br><code>example_colormap.pl</code> — ListedColormap（5 クラス）</td>
@@ -27,7 +27,7 @@ PDL::Graphics::Cairo がレンダリングを担います。
 </tr>
 <tr>
 <td><a href="examples/example_show.pl"><img src="docs/gallery/example_show__04.png" width="400" alt="example_show の 4 枚目"></a><br><code>example_show.pl</code></td>
-<td></td>
+<td><a href="examples/example_stats.pl"><img src="docs/gallery/example_stats__04.png" width="400" alt="errorbar_stats・boxplot・violinplot"></a><br><code>example_stats.pl</code> — errorbar_stats / boxplot / violinplot</td>
 </tr>
 </table>
 
