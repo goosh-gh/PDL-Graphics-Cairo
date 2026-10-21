@@ -165,3 +165,11 @@ lib/PDL/Graphics/Cairo/LabelGeom.pm
 lib/PDL/Graphics/Cairo/Mesh3D.pm
 lib/PDL/Graphics/Cairo/SceneExport.pm
 examples/verify_text_ml.pl
+docs/gallery/specgram_demo__02.png
+docs/gallery/example_contour__02.png
+docs/gallery/example_png__12.png
+docs/gallery/example_png__07.png
+docs/gallery/example_colormap__01.png
+docs/gallery/example_colormap__04.png
+docs/gallery/example_show__04.png
+docs/gallery/example_stats__04.png
