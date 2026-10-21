@@ -1,14 +1,6 @@
 .gitignore
 Changes
 docs/gnuplot_compatibility.md
-docs/images/colormap_demo_listed.png
-docs/images/colormap_demo_lognorm.png
-docs/images/gridspec_demo_basic.png
-docs/images/gridspec_demo_mosaic.png
-docs/images/hexbin_demo_comparison.png
-docs/images/hexbin_demo_gaussian.png
-docs/images/specgram_demo_chirp.png
-docs/images/specgram_demo_eeg.png
 docs/matplotlib_comparison.md
 docs/PGC_API_issues.md
 docs/PGPLOT_compatibility_en.md
