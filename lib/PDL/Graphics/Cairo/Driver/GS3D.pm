@@ -57,6 +57,7 @@ package PDL::Graphics::Cairo::Driver::GS3D;
 use strict;
 use warnings;
 use parent 'PDL::Graphics::Cairo::Driver::GS';
+use Encode ();                    # label text -> UTF-8 bytes (_send_3d_frame)
 
 
 use PDL;
@@ -1103,7 +1104,15 @@ sub _send_3d_frame {
     my $n_labels = scalar @label_recs;
     $payload .= pack('S', $n_labels);
     for my $lb (@label_recs) {
-        my $text = $lb->{text};
+        # len is a byte count (u8). A character string (a label from `use utf8`
+        # source, e.g. Japanese) must go as its UTF-8 bytes: length() would
+        # count characters, and pack-ing it in would upgrade the whole payload,
+        # which _send_msg then encodes as UTF-8 - every byte >= 0x80 of the
+        # floats doubles and the frame is garbage. Cut at 255 bytes on a
+        # character boundary, as titles are (GS::_clip_utf8).
+        my $text = $lb->{text} // '';
+        $text = Encode::encode('UTF-8', $text) if utf8::is_utf8($text);
+        $text = PDL::Graphics::Cairo::Driver::GS::_clip_utf8($text, 255);
         my $len  = length($text);
         # 防御的チェック (2026-06-21追加): rgbが3要素(RGB)でなければ
         # pack('CCCC...')のスロット数とズレ、$len以降が破壊される
