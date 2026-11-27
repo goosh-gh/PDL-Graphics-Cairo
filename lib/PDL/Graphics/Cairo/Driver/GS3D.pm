@@ -91,6 +91,24 @@ use constant {
     GSP_MSG_PICK     => 0x19,   # クリック (fx,fy 画像比率, btn) → 頂点 pick に使う
     GSP_MSG_CURSOR   => 0x18,   # カーソル移動(未使用、将来のホバー表示用)
 
+    # 段階 B(giza-server viewer/gsp_3d.h が正本): メッシュを 1 回送り、以後は視点・色・
+    # 重ねものだけ。サーバが回し、描き、クリックとカーソルの下の頂点の番号を返す。
+    GSP_MSG_3D_MESH    => 0x29,   # → サーバ、ACK
+    GSP_MSG_3D_COLORS  => 0x2A,   # → サーバ、ACK
+    GSP_MSG_3D_VIEW    => 0x2B,   # → サーバ、ACK なし(33 バイト)
+    GSP_MSG_3D_OVERLAY => 0x2C,   # → サーバ、ACK
+    GSP_MSG_3D_POSE    => 0x2D,   # サーバ →(VIEW と同じ 33 バイト)
+    GSP_MSG_3D_PICKV   => 0x2E,   # サーバ →(14 バイト)
+    GSP_MSG_3D_HOVERV  => 0x2F,   # サーバ →(13 バイト)
+    GSP_CAP_3D_SCENE   => 0x01,   # 中身 u32 = 1 の PING への PONG の機能のビット
+    GSP_MESH_NORMALS   => 0x01,
+    GSP_MESH_WINDING_CW => 0x04,
+    GSP_NO_VERTEX      => 0xFFFFFFFF,
+    GSP_OVL_SCREEN     => 0x01,   # 3D_OVERLAY の flags: 画面の画素(投影しない)
+    GSP_OVL_ON_TOP     => 0x02,   #   メッシュに隠されない
+    GSP_OVL_ARROW      => 0x04,   #   線: p1 に矢じり
+    GSP_OVL_BAND       => 0x08,   #   線: 高さ width の帯(カラーバーの行)
+
     NEWWIN_FLAG_3D   => 0x01,   # NEWWINペイロードに乗せる3Dモードフラグ（TODO: クライアント側対応）
 
     AXIS_LEN         => 100,
@@ -136,6 +154,9 @@ use constant {
     # 回転の体感速度は coarse で、静止画の精細さは fine で決まる=グルグルの
     # 速度を落とさずに止めた瞬間だけ精緻化される。lod は new(lod=>{...}) で有効化。
     IDLE_SEC => 0.15,
+
+    # 段階 B の再生(play)でコマを進める間隔の上限(秒)。サーバの画面更新 120 Hz に合わせる。
+    PLAY_INTERVAL => 1.0 / 120,
 };
 
 # ============================================================
@@ -187,12 +208,25 @@ sub new {
     # 解する新版のときだけ面が出る。旧版なら面は出ないが破綻しない(後方互換)。
     $self->{render} = $args{render} // 'line';
 
+    # 段階: 'auto'(既定。サーバが段階 B に対応し、scene に mesh があれば B)| 'A' | 'B'。
+    # 環境変数 GS3D_STAGE=A は何を渡しても段階 A に固定する(比べるとき・切り分け用)。
+    # B を指定してもサーバが対応していなければ、警告して A で動く。
+    $self->{stage} = uc($args{stage} // 'auto');
+    die "Driver::GS3D: stage must be 'auto', 'A' or 'B'\n"
+        unless $self->{stage} =~ /\A(?:AUTO|A|B)\z/;
+
     # シーン中心(pivot): 位置回転時にここを原点へ移す=脳を画面中心に置き、回転軸も
     # 脳の中心にする。demo が mesh 重心を渡す。既定 undef=原点(従来動作)。[N,3] に
     # ブロードキャストするため [1,3] で保持。
     $self->{_pivot} = (defined $args{pivot} && ref $args{pivot})
         ? pdl($args{pivot})->dummy(0)     # [3] -> [1,3]
         : undef;
+
+    # 段階 B の重ねもの: 電極の点・ラベル、scene の lines、シードを、メッシュの裏に回ったら
+    # 隠す(overlay_depth => 0 で段階 A と同じく常に手前)。overlay_eps(mm)は、メッシュの
+    # 面からこの距離までの手前・奥を隠さない幅(頭皮にスナップした電極、頂点上のシード)。
+    $self->{overlay_depth} = $args{overlay_depth} // 1;
+    $self->{overlay_eps}   = $args{overlay_eps}   // 2.0;
 
     # --- adaptive LOD (progressive refinement) ---------------------------
     # lod => { coarse => \%mesh, fine => \%mesh } を渡すと、run() が
@@ -599,6 +633,13 @@ sub _hover_readout {
     my ($self, $px, $py) = @_;
     my $proj = $self->{_mesh_proj} or return;
     my ($idx, $dist) = _nearest_visible($proj, $px, $py);
+    $self->_readout_vertex($idx);
+}
+
+# readout の文字列を頂点の番号から作る(段階 A は最近傍の可視頂点、段階 B は 3D_HOVERV の番号)。
+# $idx < 0 なら readout を消す。
+sub _readout_vertex {
+    my ($self, $idx) = @_;
     if ($idx < 0) { $self->{readout} = undef; return; }
     my $verts = $self->{scene}{mesh}{verts};
     my ($x, $y, $z) = ($verts->at($idx,0), $verts->at($idx,1), $verts->at($idx,2));
@@ -620,7 +661,13 @@ sub _pick_at_screen {
     my $proj = $self->{_mesh_proj} or return;      # まだ 1 フレームも描いてない
     my ($idx, $dist) = _nearest_visible($proj, $px, $py);
     return if $idx < 0;                            # 可視頂点が無い
+    $self->_add_seed($idx, $dist);
+}
 
+# シードを 1 つ足す(on_pick を呼び、ラベルを決める)。段階 A は _pick_at_screen から、
+# 段階 B は 3D_PICKV の頂点の番号で呼ぶ。$dist は表示用(段階 B は undef)。
+sub _add_seed {
+    my ($self, $idx, $dist) = @_;
     my $verts = $self->{scene}{mesh}{verts};
     my ($x, $y, $z) = ($verts->at($idx,0), $verts->at($idx,1), $verts->at($idx,2));
 
@@ -632,8 +679,8 @@ sub _pick_at_screen {
 
     push @{ $self->{seeds} }, { index => $idx, x => $x, y => $y, z => $z, label => $label };
 
-    printf STDERR "[GS3D pick] seed %d: vertex %d @ (%.1f, %.1f, %.1f) mm  [%s]  (%.1f px)\n",
-        $n + 1, $idx, $x, $y, $z, $label, $dist;
+    printf STDERR "[GS3D pick] seed %d: vertex %d @ (%.1f, %.1f, %.1f) mm  [%s]%s\n",
+        $n + 1, $idx, $x, $y, $z, $label, defined $dist ? sprintf('  (%.1f px)', $dist) : '';
 }
 
 # ============================================================
@@ -739,18 +786,7 @@ sub _mesh_tris {
     my $rv = $self->_rotate_points($rot, $verts);
     my ($sx, $sy, $dz) = $self->_project($rv);
 
-    # 面の頂点番号(0 始まり、メッシュごとにキャッシュ)。(Nf) を 3 本
-    my $fi = $m->{_face_idx} //= do {
-        my $F = $faces->long;
-        $F = $F - 1 if detect_face_base($faces->min);
-        [ map { $F->slice(",($_)")->copy } 0 .. 2 ];
-    };
-
-    # winding 符号(外向き多数決, メッシュごとにキャッシュ)
-    my $wsign = $m->{_wsign} //= do {
-        my $wind = $m->{winding} // 'auto';
-        $wind eq 'ccw' ? +1 : $wind eq 'cw' ? -1 : _winding_sign($verts, $fi);
-    };
+    my ($fi, $wsign) = _mesh_faces_wsign($m);
 
     # 頂点法線(キャッシュ)→ view 空間 → Gouraud Lambert → 頂点色 u8
     my $vn  = $m->{_vnorm} //= _compute_vnormals($verts, $faces);   # [Nv,3] 外向き unit
@@ -793,6 +829,23 @@ sub _mesh_tris {
         $rgb->slice(":,($k),:") .= $ct->dice_axis(1, $v);
     }
     return { n => $n, xyz => $xyz, rgb => $rgb };
+}
+
+# 面の頂点番号(0 始まり、(Nf) を 3 本)と外向きの winding 符号(+1 / −1)。メッシュごとに
+# キャッシュする($m->{_face_idx}・$m->{_wsign})。_mesh_tris と段階 B の 3D_MESH が使う。
+sub _mesh_faces_wsign {
+    my ($m) = @_;
+    my $faces = $m->{faces} // die "scene.mesh.faces required\n";
+    my $fi = $m->{_face_idx} //= do {
+        my $F = $faces->long;
+        $F = $F - 1 if detect_face_base($faces->min);
+        [ map { $F->slice(",($_)")->copy } 0 .. 2 ];
+    };
+    my $wsign = $m->{_wsign} //= do {
+        my $wind = $m->{winding} // 'auto';
+        $wind eq 'ccw' ? +1 : $wind eq 'cw' ? -1 : _winding_sign($m->{verts}, $fi);
+    };
+    return ($fi, $wsign);
 }
 
 # 外向きの winding 符号: 面法線と(面の重心 − 全頂点の重心)の内積の符号の多数決。
@@ -1010,6 +1063,11 @@ sub _send_3d_frame {
         }
     }
 
+    # ---- 再生中の潜時(左下)----
+    if (defined(my $pl = $self->_play_label)) {
+        push @label_recs, { x => 12, y => $self->height - 14, rgb => [235, 235, 245], text => $pl };
+    }
+
     # ---- hover readout: カーソル下の x,y,z + area 名を隅に表示 ----
     if (defined $self->{readout}) {
         push @label_recs, {
@@ -1061,35 +1119,10 @@ sub _send_3d_frame {
     #                        title=>'...' }。座標は _project を通さない固定値なので回転しない。
     # 水平線を 1px 間隔で積んで勾配帯にする(thick_fill 有無に依らず連続)。ラベルは
     # point_idx=0xFFFF の絶対座標センチネルでそのまま画面座標に出る。giza-server 無改変。
-    if (my $cb = $scene->{colorbar}) {
-        my $W  = $self->width;  my $H = $self->height;
-        my $bw = 18;                                   # バー幅 px
-        my $bh = int($H * 0.42);  $bh = 220 if $bh > 220;  $bh = 80 if $bh < 80;
-        my $xl = $W - 96;  my $xr = $xl + $bw;         # 画面右(タイトル/数値が切れない余白を確保)
-        my $yt = int(($H - $bh) / 2);                  # 画面上原点(小y=上): t=1 が上端
-        my $yb = $yt + $bh;
-        my $cols = $cb->{colors} || [];
-        my $nc   = scalar(@$cols) || 1;
-        for my $py (0 .. $bh) {                        # 勾配(上端 t=1 → 下端 t=0)
-            my $t  = 1 - $py / ($bh || 1);
-            my $ci = int($t * ($nc - 1) + 0.5);  $ci = 0 if $ci < 0;  $ci = $nc-1 if $ci > $nc-1;
-            my $rgb = $cols->[$ci] || [200,200,200];
-            push @lines_data, { x0=>$xl, y0=>$yt+$py, x1=>$xr, y1=>$yt+$py,
-                                depth=>-1e9, w=>1, rgba=>[ @{$rgb}[0,1,2], 255 ] };
-        }
-        my $bd = [230,230,240,255];                    # 枠
-        for my $s ([$xl,$yt,$xr,$yt],[$xl,$yb,$xr,$yb],[$xl,$yt,$xl,$yb],[$xr,$yt,$xr,$yb]) {
-            push @lines_data, { x0=>$s->[0], y0=>$s->[1], x1=>$s->[2], y1=>$s->[3],
-                                depth=>-1e9, w=>1, rgba=>$bd };
-        }
-        for my $tk (@{ $cb->{ticks} || [] }) {         # 目盛り(frac 0=下,1=上)+数値
-            my ($frac,$txt) = @$tk;
-            my $y = int($yb - $frac * $bh);
-            push @lines_data, { x0=>$xr, y0=>$y, x1=>$xr+5, y1=>$y, depth=>-1e9, w=>1, rgba=>$bd };
-            push @label_recs, { x=>$xr+9, y=>$y+5, rgb=>[235,235,245], text=>$txt };  # +5=半文字ぶん下げ目盛り線と中心合わせ(cocoa は下端アンカー11pt)
-        }
-        push @label_recs, { x=>$xl-6, y=>$yt-16, rgb=>[235,235,245],
-                            text=>($cb->{title} // 'power (norm.)') };
+    if ($scene->{colorbar}) {
+        my ($cl, $cbl) = $self->_colorbar_items;
+        push @lines_data, @$cl;
+        push @label_recs, @$cbl;
     }
 
     # ---- ペイロードのパック ----
@@ -1180,6 +1213,44 @@ sub _send_3d_frame {
         $self->{_ix3d}{sock}, GSP_MSG_3D_FRAME, $payload, $self->{_ix3d}{seq}++);
 }
 
+# カラーバーの線とラベル(画面座標)。段階 A は 3D_FRAME の線・ラベルに、段階 B は
+# 3D_OVERLAY の帯・線・ラベルにする。返り値: (\@lines, \@labels)。線は
+# { x0,y0,x1,y1, depth, w, rgba, band }(band = 勾配の 1 行)、ラベルは { x, y, rgb, text }。
+sub _colorbar_items {
+    my ($self) = @_;
+    my $cb = $self->{scene}{colorbar} or return ([], []);
+    my (@lines, @labels);
+    my $W  = $self->width;  my $H = $self->height;
+    my $bw = 18;                                   # バー幅 px
+    my $bh = int($H * 0.42);  $bh = 220 if $bh > 220;  $bh = 80 if $bh < 80;
+    my $xl = $W - 96;  my $xr = $xl + $bw;         # 画面右(タイトル/数値が切れない余白を確保)
+    my $yt = int(($H - $bh) / 2);                  # 画面上原点(小y=上): t=1 が上端
+    my $yb = $yt + $bh;
+    my $cols = $cb->{colors} || [];
+    my $nc   = scalar(@$cols) || 1;
+    for my $py (0 .. $bh) {                        # 勾配(上端 t=1 → 下端 t=0)
+        my $t  = 1 - $py / ($bh || 1);
+        my $ci = int($t * ($nc - 1) + 0.5);  $ci = 0 if $ci < 0;  $ci = $nc-1 if $ci > $nc-1;
+        my $rgb = $cols->[$ci] || [200,200,200];
+        push @lines, { x0=>$xl, y0=>$yt+$py, x1=>$xr, y1=>$yt+$py,
+                       depth=>-1e9, w=>1, rgba=>[ @{$rgb}[0,1,2], 255 ], band=>1 };
+    }
+    my $bd = [230,230,240,255];                    # 枠
+    for my $s ([$xl,$yt,$xr,$yt],[$xl,$yb,$xr,$yb],[$xl,$yt,$xl,$yb],[$xr,$yt,$xr,$yb]) {
+        push @lines, { x0=>$s->[0], y0=>$s->[1], x1=>$s->[2], y1=>$s->[3],
+                       depth=>-1e9, w=>1, rgba=>$bd };
+    }
+    for my $tk (@{ $cb->{ticks} || [] }) {         # 目盛り(frac 0=下,1=上)+数値
+        my ($frac,$txt) = @$tk;
+        my $y = int($yb - $frac * $bh);
+        push @lines, { x0=>$xr, y0=>$y, x1=>$xr+5, y1=>$y, depth=>-1e9, w=>1, rgba=>$bd };
+        push @labels, { x=>$xr+9, y=>$y+5, rgb=>[235,235,245], text=>$txt };  # +5=半文字ぶん下げ目盛り線と中心合わせ(cocoa は下端アンカー11pt)
+    }
+    push @labels, { x=>$xl-6, y=>$yt-16, rgb=>[235,235,245],
+                    text=>($cb->{title} // 'power (norm.)') };
+    return (\@lines, \@labels);
+}
+
 # ============================================================
 # LOD 差し替え(progressive refinement)。$which = 'coarse'|'fine'。
 # scene->{mesh} を差し替えるだけ。次フレームの _send_3d_frame が新メッシュで
@@ -1211,6 +1282,12 @@ sub run {
     binmode($sock);
 
     my $seq = 0;
+    # 段階 B に対応しているかを、窓を開く前に中身 u32 = 1 の PING で問う
+    # (段階 B のサーバは中身 4 バイトの PONG、古いサーバは 0 バイトの PONG)。
+    my $caps  = $self->_query_caps($sock, $seq++);
+    my $stage = $self->_choose_stage($caps);
+    $self->{_stage} = $stage;
+
     # NEWWINペイロードに3Dモードフラグをのせる案。
     # TODO: Cocoa/Xlib側のNEWWINハンドラがこのフラグを見て描画モードを
     # 切り替える実装がまだない。現状はクライアントが2Dモード前提のまま
@@ -1225,6 +1302,13 @@ sub run {
 
     $self->{_ix3d} = { sock => $sock, seq => $seq };
 
+    if ($stage eq 'B') {
+        $self->_run_stage_b;
+        delete $self->{_ix3d};
+        $sock->close;
+        return;
+    }
+
     # REVIEW NOTE: $last_frame_time はループの直前で初期化し、各イテレー
     # ション末尾で更新する。フレーム送信そのものより前に経過時間を測る
     # ことで、_send_3d_frame自体の処理時間も含めた実際のフレーム間隔を
@@ -1233,6 +1317,7 @@ sub run {
     my $last_frame_time = time();
 
     while (1) {
+        $self->_play_tick if $self->_play_running;   # 再生中: 今のコマの頂点の色にする
         $self->_send_3d_frame();
         my $input = $self->_recv_ack_3d($sock);
 
@@ -1284,17 +1369,8 @@ sub run {
                     $self->{qrot} = [ 0, 0, 0, 1 ];
                     $self->{rot}  = _q_to_rot(@{$self->{qrot}});
                     $self->{zoom} = DEFAULT_ZOOM;
-                } elsif ($inp->{key} == ord('c') || $inp->{key} == ord('C')) {
-                    # シードを全消去(multi-seed のやり直し)。
-                    $self->{seeds} = [];
-                    print STDERR "[GS3D pick] seeds cleared\n";
-                    $self->{on_seeds_cleared}->() if $self->{on_seeds_cleared};
-                } elsif ($inp->{key} == ord('u') || $inp->{key} == ord('U')) {
-                    # 直前のシードを取り消す(誤クリックの undo)。
-                    if (@{ $self->{seeds} }) {
-                        my $s = pop @{ $self->{seeds} };
-                        printf STDERR "[GS3D pick] undo seed (was vertex %d)\n", $s->{index};
-                    }
+                } else {
+                    $self->_client_key($inp->{key});
                 }
             }
         }
@@ -1355,6 +1431,31 @@ sub run {
     }
     delete $self->{_ix3d};
     $sock->close;
+}
+
+# 姿勢に関わらないキー(段階 A・B 共通。B ではサーバが 3D_INPUT で転送してくる)。
+#   c: シードを全部消す   u: 最後のシードを取り消す
+# 処理したら 1 を返す。
+sub _client_key {
+    my ($self, $key) = @_;
+    if ($key == ord('c') || $key == ord('C')) {
+        $self->{seeds} = [];
+        print STDERR "[GS3D pick] seeds cleared\n";
+        $self->{on_seeds_cleared}->() if $self->{on_seeds_cleared};
+        return 1;
+    }
+    if ($key == ord(' ') && $self->{_play}) {
+        $self->pause(!$self->{_play}{paused});
+        return 1;
+    }
+    if ($key == ord('u') || $key == ord('U')) {
+        if (@{ $self->{seeds} }) {
+            my $s = pop @{ $self->{seeds} };
+            printf STDERR "[GS3D pick] undo seed (was vertex %d)\n", $s->{index};
+        }
+        return 1;
+    }
+    return 0;
 }
 
 # ============================================================
@@ -1456,6 +1557,603 @@ sub _recv_ack_3d {
         }
         # 想定外の型は読み捨ててループ継続（ACKを待ち続ける）
     }
+}
+
+# ============================================================
+# 段階 B(メッシュを 1 回送り、以後は視点・色・重ねものだけ)
+#
+# サーバ(giza-server の viewer/gsp_scene3d.c)がメッシュを持ち、ドラッグ・ホイール・
+# p・r で回して描き、姿勢を 3D_POSE で知らせる。Perl はその写しを $self->{qrot}・
+# {rot}・{zoom}・{perspective} に持つ(右クリックで近いシードを消す・書き出しが使う)。
+# クリックとカーソルの下の頂点の番号は 3D_PICKV・3D_HOVERV で届き、シード・on_pick・
+# on_hover は段階 A と同じ関数(_add_seed・_unpick_at_screen・_readout_vertex)で扱う。
+# c・u などのキーはサーバが 3D_INPUT で転送する。
+# 段階 B では LOD を使わない(fine を送る)。光と ambient はサーバの既定(GS3D の既定と
+# 同じ (0.3,0.4,1.0)・0.25)で、mesh の light・ambient は効かない。
+# ============================================================
+
+# 中身 u32 = 1 の PING を送り、PONG の機能のビットを返す(0 バイトの PONG なら 0)。
+sub _query_caps {
+    my ($self, $sock, $seq) = @_;
+    PDL::Graphics::Cairo::Driver::GS::_send_msg(
+        $sock, PDL::Graphics::Cairo::Driver::GS::GSP_MSG_PING, pack('V', 1), $seq);
+    while (1) {
+        my $hdr = $self->_sysread_exact($sock, 16)
+            // die "Driver::GS3D: connection closed waiting for PONG\n";
+        my ($magic, $ver, $type, $flags, $len) = unpack('L C C S L', $hdr);
+        die "Driver::GS3D: bad magic\n"
+            unless $magic == PDL::Graphics::Cairo::Driver::GS::GSP_MAGIC();
+        my $payload = $len ? $self->_sysread_exact($sock, $len) : '';
+        die "Driver::GS3D: connection closed waiting for PONG\n" unless defined $payload;
+        next unless $type == PDL::Graphics::Cairo::Driver::GS::GSP_MSG_PONG();
+        return length($payload) >= 4 ? unpack('V', $payload) : 0;
+    }
+}
+
+# 段階 'A' か 'B' を決める。GS3D_STAGE(A|B)が stage より優先。
+sub _choose_stage {
+    my ($self, $caps) = @_;
+    my $want = $self->{stage};
+    my $env  = uc($ENV{GS3D_STAGE} // '');
+    $want = $env if $env eq 'A' || $env eq 'B';
+    return 'A' if $want eq 'A';
+    my $can  = ($caps // 0) & GSP_CAP_3D_SCENE;
+    my $mesh = $self->_fine_mesh;
+    if ($want eq 'B') {
+        warn "Driver::GS3D: the giza-server does not speak stage B; using stage A.\n" unless $can;
+        warn "Driver::GS3D: stage B needs scene->{mesh}; using stage A.\n" if $can && !$mesh;
+    }
+    return ($can && $mesh) ? 'B' : 'A';
+}
+
+sub _fine_mesh {
+    my ($self) = @_;
+    return $self->{_lod} ? $self->{_lod}{fine} : $self->{scene}{mesh};
+}
+
+sub _stage_b_live {
+    my ($self) = @_;
+    return $self->{_ix3d} && ($self->{_stage} // '') eq 'B';
+}
+
+# PDL → リトルエンディアンのバイト列(f32・u32)。dim 0 が速く回る順。
+sub _f32_bytes {
+    my $c = $_[0]->float->copy;
+    $c->bswap4 if pack('L', 1) ne pack('V', 1);
+    return ${ $c->get_dataref };
+}
+sub _u32_bytes {
+    my $c = $_[0]->ulong->copy;
+    $c->bswap4 if pack('L', 1) ne pack('V', 1);
+    return ${ $c->get_dataref };
+}
+
+# 陰影を掛けない頂点の色 (4 [r,g,b,a], Nv) byte。vcolors(Nv,3)、無ければ面の色 colors(Nf,3)を
+# 頂点ごとに平均、どちらも無ければ color。アルファは mesh の alpha(既定 255)。
+sub _mesh_rgba {
+    my ($m) = @_;
+    my $nv  = $m->{verts}->dim(0);
+    my $rgb;
+    if (defined $m->{vcolors}) {
+        $rgb = $m->{vcolors};
+    } elsif (ref $m->{colors} && $m->{colors}->isa('PDL')) {
+        my ($fi) = _mesh_faces_wsign($m);
+        my $fc  = $m->{colors};
+        my $cnt = zeroes($nv);
+        indadd(ones($fi->[0]->nelem), $_, $cnt) for @$fi;
+        my @ch;
+        for my $k (0 .. 2) {
+            my ($acc, $fk) = (zeroes($nv), $fc->slice(",($k)")->sever);
+            indadd($fk, $_, $acc) for @$fi;
+            push @ch, $acc / ($cnt + ($cnt == 0));
+        }
+        $rgb = cat(@ch);                                           # (Nv,3)
+    } else {
+        $rgb = pdl($m->{color} // [0.85, 0.78, 0.70])->dummy(0, $nv);
+    }
+    my $out = zeroes(byte, 4, $nv);
+    $out->slice('0:2') .= ($rgb->clip(0, 1) * 255 + 0.5)->byte->transpose;
+    $out->slice('(3)') .= $m->{alpha} // 255;
+    return $out;
+}
+
+# 3D_MESH の中身: mesh_id flags nv nf、頂点 f32×3×nv、法線 f32×3×nv、色 u8×4×nv、面 u32×3×nf。
+sub _mesh_payload {
+    my ($m, $id) = @_;
+    my $verts = $m->{verts} // die "scene.mesh.verts required\n";
+    my ($fi, $wsign) = _mesh_faces_wsign($m);
+    my $vn    = $m->{_vnorm} //= _compute_vnormals($verts, $m->{faces});
+    my $flags = GSP_MESH_NORMALS | ($wsign < 0 ? GSP_MESH_WINDING_CW : 0);
+    return pack('C C V V', $id // 0, $flags, $verts->dim(0), $fi->[0]->nelem)
+         . _f32_bytes($verts->transpose) . _f32_bytes($vn->transpose)
+         . ${ _mesh_rgba($m)->get_dataref }
+         . _u32_bytes(cat(@$fi)->transpose);
+}
+
+# 3D_VIEW(と 3D_POSE)の 33 バイト: q(w,x,y,z) zoom pivot(x,y,z) perspective。
+sub _view_payload {
+    my ($self) = @_;
+    my @pv = defined $self->{_pivot} ? $self->{_pivot}->flat->list : (0, 0, 0);
+    return pack('f<4 f< f<3 C', @{ $self->{qrot} }, $self->{zoom}, @pv,
+                $self->{perspective} ? 1 : 0);
+}
+
+# 段階 B の送信。$ack なら ACK まで読み、途中に届いたメッセージは _b_queue に積む
+# (run のループが順に処理する)。接続が切れていたら 0。
+sub _send_b {
+    my ($self, $type, $payload, $ack) = @_;
+    my $ix = $self->{_ix3d} or return 0;
+    return 0 if $self->{_b_eof};
+    PDL::Graphics::Cairo::Driver::GS::_send_msg($ix->{sock}, $type, $payload, $ix->{seq}++);
+    return 1 unless $ack;
+    while (defined(my $msg = $self->_read_msg_b)) {
+        return 1 if $msg->[0] == PDL::Graphics::Cairo::Driver::GS::GSP_MSG_ACK();
+        if ($msg->[0] == PDL::Graphics::Cairo::Driver::GS::GSP_MSG_ERR()) {
+            warn "Driver::GS3D: server error: $msg->[1]\n";
+            return 1;
+        }
+        push @{ $self->{_b_queue} }, $msg;
+    }
+    return 0;
+}
+
+# 1 メッセージ [type, payload]。EOF なら undef(_b_eof を立てる)。
+sub _read_msg_b {
+    my ($self) = @_;
+    return undef if $self->{_b_eof};
+    my $sock = $self->{_ix3d}{sock};
+    my $hdr  = $self->_sysread_exact($sock, 16);
+    unless (defined $hdr) { $self->{_b_eof} = 1; return undef }
+    my ($magic, $ver, $type, $flags, $len) = unpack('L C C S L', $hdr);
+    die "Driver::GS3D: bad magic\n"
+        unless $magic == PDL::Graphics::Cairo::Driver::GS::GSP_MAGIC();
+    my $payload = $len ? $self->_sysread_exact($sock, $len) : '';
+    unless (defined $payload) { $self->{_b_eof} = 1; return undef }
+    return [ $type, $payload ];
+}
+
+# 積んであるもの、無ければ 1 つ届くまで待ち、そのあとすでに届いている分も取る。
+sub _recv_batch_b {
+    my ($self, $timeout) = @_;      # $timeout(秒): その間に何も届かなければ空で返す(再生中)
+    my @out = splice @{ $self->{_b_queue} };
+    my $sel = IO::Select->new($self->{_ix3d}{sock});
+    unless (@out) {
+        return if defined $timeout && !$sel->can_read($timeout);
+        my $m = $self->_read_msg_b // return;
+        push @out, $m;
+    }
+    while (!$self->{_b_eof} && $sel->can_read(0)) {
+        my $m = $self->_read_msg_b // last;
+        push @out, $m;
+    }
+    return @out;
+}
+
+sub _run_stage_b {
+    my ($self) = @_;
+    require IO::Select;
+    $self->{_b_queue} = [];
+    $self->{_b_eof}   = 0;
+    $self->_lod_set('fine') if $self->{_lod};
+    my $m = $self->_fine_mesh;
+    printf STDERR "[GS3D] stage B: mesh %d vertices, %d faces\n",
+        $m->{verts}->dim(0), $m->{faces}->dim(0) if $self->verbose;
+    $self->_send_b(GSP_MSG_3D_MESH, _mesh_payload($m, 0), 1) or return;
+    $self->_send_b(GSP_MSG_3D_VIEW, $self->_view_payload);
+    delete $self->{_b_ovl_sent};
+    $self->_send_overlay_b;
+    while (1) {
+        my @msgs;
+        if ($self->_play_running) {
+            $self->_play_tick;                 # コマが進んでいれば 3D_COLORS
+            $self->_send_overlay_b;            # 潜時の文字
+            @msgs = $self->_recv_batch_b(PLAY_INTERVAL);
+        } else {
+            @msgs = $self->_recv_batch_b or last;
+        }
+        $self->_handle_b_msgs(@msgs) if @msgs;
+        $self->_send_overlay_b;           # シード・readout・窓の大きさが変わっていれば送り直す
+        last if $self->{_b_eof} && !@{ $self->{_b_queue} };
+    }
+}
+
+# 重ねものを作り、前に送ったものと違えば 3D_OVERLAY を送る(ACK を待つ)。
+sub _send_overlay_b {
+    my ($self) = @_;
+    return unless $self->_stage_b_live;
+    my $p = $self->_overlay_payload;
+    return if defined $self->{_b_ovl_sent} && $self->{_b_ovl_sent} eq $p;
+    $self->{_b_ovl_sent} = $p if $self->_send_b(GSP_MSG_3D_OVERLAY, $p, 1);
+}
+
+# float の (k, n) と byte の (m, n) を、1 件 4k + m バイトのレコード n 件のバイト列にする。
+sub _pack_records {
+    my ($f, $b) = @_;
+    my $n = $f->dim(1);
+    return '' unless $n;
+    my ($k, $m) = ($f->dim(0), $b->dim(0));
+    my $fb = zeroes(byte, 4 * $k, $n);
+    ${ $fb->get_dataref } = _f32_bytes($f);
+    $fb->upd_data;
+    my $rec = zeroes(byte, 4 * $k + $m, $n);
+    $rec->slice('0:' . (4 * $k - 1)) .= $fb;
+    $rec->slice((4 * $k) . ':')      .= $b;
+    return ${ $rec->get_dataref };
+}
+
+# 3D_OVERLAY の中身(giza-server viewer/gsp_3d.h)。段階 A の _send_3d_frame と同じものを、
+# 画面座標ではなくモデル座標で送る(投影と深度での隠しはサーバ)。
+#   軸: 原点から先端への線(矢じり)と X・Y・Z の文字。常に手前。
+#   scene の lines、points とその labels、シード: 深度で隠す(overlay_depth => 0 なら常に手前)。
+#   点の半径は zoom 1 の画素(サーバが zoom を掛ける): 電極 4、シード 7(段階 A と同じ)。
+#   readout とカラーバー: 画面座標。
+sub _overlay_payload {
+    my ($self) = @_;
+    my $scene = $self->{scene};
+    my $df    = $self->{overlay_depth} ? 0 : GSP_OVL_ON_TOP;
+    my (@pts, @lns, @lab);   # [float (k,n), byte (m,n)] の組、ラベルは [x,y,z,dx,dy,r,g,b,flags,text]
+
+    # 軸(3 本)
+    my @acol = ([255,80,80,255], [80,255,80,255], [80,160,255,255]);
+    my $tips = $self->{axes}->slice('1:3')->transpose;            # (3 xyz, 3 本)
+    push @lns, [ zeroes(3, 3)->glue(0, $tips)->glue(0, ones(1, 3)),
+                 pdl(byte, [ map { [ @$_, GSP_OVL_ON_TOP | GSP_OVL_ARROW ] } @acol ]) ];
+    push @lab, map { [ ($tips->slice(":,($_)") * 1.12)->list, 0, 0, @{ $acol[$_] }[0 .. 2],
+                       GSP_OVL_ON_TOP, (qw(X Y Z))[$_] ] } 0 .. 2;
+
+    # scene の lines (M,9): x0 y0 z0 x1 y1 z1 r g b(0..1)、アルファ 200
+    if (defined $scene->{lines} && $scene->{lines}->dim(0)) {
+        my $L = $scene->{lines};
+        my $M = $L->dim(0);
+        my $b = zeroes(byte, 5, $M);
+        $b->slice('0:2') .= ($L->slice(':,6:8') * 255)->long->transpose;
+        $b->slice('(3)') .= 200;
+        $b->slice('(4)') .= $df;
+        push @lns, [ $L->slice(':,0:5')->transpose->glue(0, ones(1, $M)), $b ];
+    }
+
+    # 点 (N,3) と色、ラベル
+    if (defined $scene->{points} && $scene->{points}->dim(0)) {
+        my $P = $scene->{points};
+        my $N = $P->dim(0);
+        my $b = zeroes(byte, 5, $N);
+        $b->slice('0:2') .= ($scene->{colors} * 255)->long->transpose if defined $scene->{colors};
+        $b->slice('0:2') .= 255 unless defined $scene->{colors};
+        $b->slice('(3)') .= 255;
+        $b->slice('(4)') .= $df;
+        push @pts, [ $P->transpose->glue(0, ones(1, $N) * 4), $b ];
+        my $labels = $scene->{labels} || [];
+        my $xyz = $P->transpose;                                    # (3, N)
+        push @lab, map { [ $xyz->slice(":,($_)")->list, 6, -6, 255, 255, 200, $df, $labels->[$_] ] }
+                   grep { $_ < $N } 0 .. $#$labels;
+    }
+
+    # シード(段階 A と同じ配色を循環)
+    my @pal = ([80,255,120],[255,170,40],[80,220,255],[255,90,220],[240,240,80],[160,120,255]);
+    my $si = 0;
+    for my $sd (@{ $self->{seeds} }) {
+        my $c = $pal[$si % @pal];
+        push @pts, [ pdl([[ $sd->{x}, $sd->{y}, $sd->{z}, 7 ]]), pdl(byte, [[ @$c, 255, $df ]]) ];
+        push @lab, [ $sd->{x}, $sd->{y}, $sd->{z}, 8, 8, (map { int(($_ + 255) / 2) } @$c), $df,
+                     sprintf('%d:%s', $si + 1, $sd->{label}) ];
+        $si++;
+    }
+
+    # hover の読み取り(左上)とカラーバー: 画面座標
+    push @lab, [ 12, 20, 0, 0, 0, 235, 235, 245, GSP_OVL_SCREEN, $self->{readout} ]
+        if defined $self->{readout};
+    if (defined(my $pl = $self->_play_label)) {
+        push @lab, [ 12, $self->height - 14, 0, 0, 0, 235, 235, 245, GSP_OVL_SCREEN, $pl ];
+    }
+    if ($scene->{colorbar}) {
+        my ($cl, $cbl) = $self->_colorbar_items;
+        if (@$cl) {
+            push @lns, [ pdl([ map { [ $_->{x0}, $_->{y0}, 0, $_->{x1}, $_->{y1}, 0, $_->{w} // 1 ] } @$cl ]),
+                         pdl(byte, [ map { [ @{ $_->{rgba} }, GSP_OVL_SCREEN | ($_->{band} ? GSP_OVL_BAND : 0) ] } @$cl ]) ];
+        }
+        push @lab, map { [ $_->{x}, $_->{y}, 0, 0, 0, @{ $_->{rgb} }, GSP_OVL_SCREEN, $_->{text} ] } @$cbl;
+    }
+
+    my $block = sub {
+        my ($list) = @_;
+        return (0, '') unless @$list;
+        my ($f, $b) = @{ $list->[0] };
+        if (@$list > 1) {
+            $f = $f->glue(1, map { $_->[0] } @$list[1 .. $#$list]);
+            $b = $b->glue(1, map { $_->[1] } @$list[1 .. $#$list]);
+        }
+        return ($f->dim(1), _pack_records($f, $b));
+    };
+    my ($np, $pbytes) = $block->(\@pts);
+    my ($nl, $lbytes) = $block->(\@lns);
+    my $out = pack('f< V', $self->{overlay_eps}, $np) . $pbytes . pack('V', $nl) . $lbytes
+            . pack('V', scalar @lab);
+    for my $l (@lab) {
+        my $text = $l->[9] // '';
+        $text = Encode::encode('UTF-8', $text) if utf8::is_utf8($text);
+        $text = PDL::Graphics::Cairo::Driver::GS::_clip_utf8($text, 255);
+        $out .= pack('f<5 C3 C C', @$l[0 .. 8], length $text) . $text;
+    }
+    return $out;
+}
+
+# サーバからのメッセージを順に処理する。HOVERV はまとめて届いた中の最後の 1 つだけ使う。
+sub _handle_b_msgs {
+    my ($self, @msgs) = @_;
+    my ($last_hover) = grep { $msgs[$_][0] == GSP_MSG_3D_HOVERV } reverse 0 .. $#msgs;
+    my $nv = $self->_fine_mesh->{verts}->dim(0);
+    for my $i (0 .. $#msgs) {
+        my ($type, $p) = @{ $msgs[$i] };
+        if ($type == GSP_MSG_3D_POSE && length($p) >= 33) {
+            my @v = unpack('f<4 f< f<3 C', $p);
+            $self->{qrot}        = [ @v[0 .. 3] ];
+            $self->{rot}         = _q_to_rot(@v[0 .. 3]);
+            $self->{zoom}        = $v[4];
+            $self->{perspective} = $v[8] ? 1 : 0;
+        }
+        elsif ($type == GSP_MSG_3D_PICKV && length($p) >= 14) {
+            my ($mid, $vtx, $btn, $fx, $fy) = unpack('C V C f< f<', $p);
+            next if $mid != 0;
+            if (($btn & 0x0F) == 2) {
+                $self->_unpick_at_screen($fx * $self->width, $fy * $self->height);
+            } elsif ($vtx != GSP_NO_VERTEX && $vtx < $nv) {
+                $self->_add_seed($vtx);
+            }
+        }
+        elsif ($type == GSP_MSG_3D_HOVERV && length($p) >= 13) {
+            next unless $i == $last_hover;
+            my ($mid, $vtx) = unpack('C V', $p);
+            next if $mid != 0;
+            $self->_readout_vertex(($vtx != GSP_NO_VERTEX && $vtx < $nv) ? $vtx : -1);
+        }
+        elsif ($type == GSP_MSG_3D_INPUT && length($p) >= 14) {
+            my ($dx, $dy, $dz, $itype, $key) = unpack('f< f< f< C C', $p);
+            $self->_client_key($key) if $itype == 2;
+        }
+        elsif ($type == GSP_MSG_RESIZE && length($p) >= 8) {
+            my ($w, $h) = unpack('L L', $p);
+            $self->width($w)  if $w;
+            $self->height($h) if $h;
+        }
+        elsif ($type == GSP_MSG_3D_EXPORT && length $p) {
+            $self->_export_scene(unpack('C', $p), length($p) > 1 ? substr($p, 1) : '');
+        }
+        elsif ($type == PDL::Graphics::Cairo::Driver::GS::GSP_MSG_ERR()) {
+            warn "Driver::GS3D: server error: $p\n";
+        }
+    }
+}
+
+# ============================================================
+# 視点の API(段階 A でも B でも同じに動く。B で窓が開いていれば 3D_VIEW を送る)
+#
+#   $drv->view(elev => 30, azim => -90);   # 度。elev 90 = 頭頂の上から(既定の姿勢)
+#   $drv->view('left');                    # top bottom front back left right
+#   $drv->view(look_at => [x, y, z]);      # 回転の中心(pivot)を移す
+#   $drv->view(toward => 'O1');            # ラベルの付いた点(または [x,y,z])を正面に
+#   $drv->view('front', zoom => 2);
+#
+# 目の向き(pivot から見る人へ)は e = (cos elev·sin azim, −cos elev·cos azim, sin elev):
+# azim 0 は後ろ(−Y)、90 は右(+X)、−90 は左、180 は前(+Y、鼻)。画面の上は e を elev で
+# 微分した向き(elev < 90 なら頭頂の側、elev = 90・azim = 0 なら鼻が上 = qrot (0,0,0,1))。
+# ============================================================
+my %NAMED_VIEW = (
+    top   => [ 90,   0], bottom => [-90,   0],
+    back  => [  0,   0], front  => [  0, 180],
+    left  => [  0, -90], right  => [  0,  90],
+);
+
+# (elev, azim) 度 → qrot (w,x,y,z)。行列の行は −(画面の右)、−(画面の上)、目の向き。
+sub _view_quat {
+    my ($elev, $azim) = @_;
+    my $d2r = atan2(1, 1) / 45;
+    my ($el, $az) = ($elev * $d2r, $azim * $d2r);
+    my @e = (cos($el) * sin($az), -cos($el) * cos($az), sin($el));
+    my @u = (-sin($el) * sin($az), sin($el) * cos($az), cos($el));
+    my @r = ($u[1] * $e[2] - $u[2] * $e[1], $u[2] * $e[0] - $u[0] * $e[2], $u[0] * $e[1] - $u[1] * $e[0]);
+    my $R = PDL->pdl([ [ map { -$_ } @r ], [ map { -$_ } @u ], [@e] ]);
+    my @q = _mat_to_quat($R);
+    @q = map { -$_ } @q if $q[0] < 0 || ($q[0] == 0 && $q[3] < 0);   # 符号をそろえる
+    return @q;
+}
+
+sub view {
+    my ($self, @a) = @_;
+    my %o = @a % 2 ? (name => @a) : @a;
+    if (defined $o{look_at}) {
+        my $p = pdl($o{look_at});
+        die "Driver::GS3D: view(look_at => [x, y, z])\n" unless $p->nelem == 3;
+        $self->{_pivot} = $p->flat->dummy(0);                       # (1,3)
+    }
+    $self->{zoom} = $o{zoom} if defined $o{zoom};
+    my ($elev, $azim);
+    if (defined $o{name}) {
+        my $nv = $NAMED_VIEW{ lc $o{name} }
+            or die "Driver::GS3D: unknown view '$o{name}' (" . join(' ', sort keys %NAMED_VIEW) . ")\n";
+        ($elev, $azim) = @$nv;
+    }
+    if (defined $o{toward}) {
+        my $p   = $self->_point_named($o{toward});
+        my @pv  = defined $self->{_pivot} ? $self->{_pivot}->flat->list : (0, 0, 0);
+        my @d   = map { $p->[$_] - $pv[$_] } 0 .. 2;
+        my $len = sqrt($d[0]**2 + $d[1]**2 + $d[2]**2);
+        die "Driver::GS3D: view(toward => ...) is at the pivot\n" unless $len > 1e-9;
+        my $r2d = 45 / atan2(1, 1);
+        $elev = $r2d * atan2($d[2], sqrt($d[0]**2 + $d[1]**2));
+        $azim = $r2d * atan2($d[0], -$d[1]);
+    }
+    $elev = $o{elev} if defined $o{elev};
+    $azim = $o{azim} if defined $o{azim};
+    if (defined $elev || defined $azim) {
+        $self->{qrot} = [ _view_quat($elev // 90, $azim // 0) ];
+        $self->{rot}  = _q_to_rot(@{ $self->{qrot} });
+    }
+    $self->_send_b(GSP_MSG_3D_VIEW, $self->_view_payload) if $self->_stage_b_live;
+    return $self;
+}
+
+# scene の labels・points から名前で点を引く([x,y,z] はそのまま)。
+sub _point_named {
+    my ($self, $what) = @_;
+    return [ @$what ] if ref $what eq 'ARRAY';
+    my $labels = $self->{scene}{labels} || [];
+    my ($i) = grep { lc($labels->[$_] // '') eq lc $what } 0 .. $#$labels;
+    die "Driver::GS3D: no point labelled '$what' in scene->{labels}\n"
+        unless defined $i && defined $self->{scene}{points};
+    return [ $self->{scene}{points}->slice("($i),:")->list ];
+}
+
+# 'ortho' | 'perspective'。引数が無ければ今のものを返す。
+sub projection {
+    my ($self, $p) = @_;
+    return $self->{perspective} ? 'perspective' : 'ortho' unless defined $p;
+    my $persp = $p =~ /\Apersp/i ? 1 : $p =~ /\Aortho/i ? 0
+              : die "Driver::GS3D: projection('ortho' | 'perspective')\n";
+    $self->{perspective} = $persp;
+    $self->_send_b(GSP_MSG_3D_VIEW, $self->_view_payload) if $self->_stage_b_live;
+    return $self;
+}
+
+# 今の姿勢(段階 B では最後の 3D_POSE の写し)。
+sub pose {
+    my ($self) = @_;
+    return (
+        qrot       => [ @{ $self->{qrot} } ],
+        zoom       => $self->{zoom},
+        pivot      => [ defined $self->{_pivot} ? $self->{_pivot}->flat->list : (0, 0, 0) ],
+        projection => $self->projection,
+    );
+}
+
+# 頂点の色 (Nv,3) 0..1 を差し替える。段階 B で窓が開いていれば 3D_COLORS(ACK を待つ)、
+# 段階 A は次のコマから(zbuffer で描くときの vcolors)。LOD のときは fine に入れる。
+sub set_vertex_colors {
+    my ($self, $rgb) = @_;
+    my $m  = $self->_fine_mesh or die "Driver::GS3D: set_vertex_colors needs scene->{mesh}\n";
+    my $nv = $m->{verts}->dim(0);
+    die sprintf("Driver::GS3D: set_vertex_colors wants (%d,3), got (%s)\n", $nv, join(',', $rgb->dims))
+        unless $rgb->ndims == 2 && $rgb->dim(0) == $nv && $rgb->dim(1) == 3;
+    $m->{vcolors} = $rgb;
+    $self->_send_b(GSP_MSG_3D_COLORS, pack('C V', 0, $nv) . ${ _mesh_rgba($m)->get_dataref }, 1)
+        if $self->_stage_b_live;
+    return $self;
+}
+
+# ============================================================
+# 頂点の色の時間変化を窓の中で再生する(源パワーの潜時をなめる)。
+#
+#   $drv->play(times  => $t,          # 潜時(ms)の列 (n)。昇順
+#              colors => $rgb,        # (Nv, 3, n) 0..1、またはコード ($i, $t_ms) -> (Nv, 3)
+#              speed  => 1,           # 実時間の何倍か(1 = 潜時 1 ms を 1 ms で流す)
+#              loop   => 1);          # 最後まで行ったら先頭に戻る(0 なら最後で止まる)
+#   $drv->run;                        # 窓を開いて時刻ゼロ(times の先頭)から再生
+#
+# 経過した時間に合う潜時のコマを描き、描き切れないコマは飛ばす。スペースで一時停止と
+# 再開、$drv->pause(1|0) でも同じ。窓の左下に今の潜時を出す。段階 B は 3D_COLORS で
+# 色だけを送り(陰影・回転はサーバ)、段階 A は頂点の色 vcolors を差し替えて 3D_FRAME で
+# 描き直す(render => 'zbuffer' のときだけ色が出る)。run の前でも、on_pick などの
+# コールバックの中からでも呼べる。
+# ============================================================
+sub play {
+    my ($self, %o) = @_;
+    my $m  = $self->_fine_mesh or die "Driver::GS3D: play needs scene->{mesh}\n";
+    my $nv = $m->{verts}->dim(0);
+    my $t  = ref $o{times} eq 'ARRAY' ? pdl($o{times}) : $o{times};
+    die "Driver::GS3D: play(times => ...) is required\n" unless ref $t && $t->isa('PDL') && $t->nelem;
+    $t = $t->flat->double;
+    my $n = $t->nelem;
+    die "Driver::GS3D: play(times => ...) must be ascending\n"
+        if $n > 1 && (($t->slice('1:-1') - $t->slice('0:-2'))->min < 0);
+    my $c = $o{colors} // die "Driver::GS3D: play(colors => ...) is required\n";
+    if (ref $c eq 'CODE') {
+        # 1 コマ目で形を確かめる
+    } elsif (ref $c && $c->isa('PDL')) {
+        die sprintf("Driver::GS3D: play colors want (%d,3,%d), got (%s)\n", $nv, $n, join(',', $c->dims))
+            unless $c->ndims == 3 && $c->dim(0) == $nv && $c->dim(1) == 3 && $c->dim(2) == $n;
+    } else {
+        die "Driver::GS3D: play(colors => ...) wants a (Nv,3,n) PDL or a code ref\n";
+    }
+    my $speed = $o{speed} // 1;
+    die "Driver::GS3D: play(speed => ...) must be > 0\n" unless $speed > 0;
+    warn "Driver::GS3D: play in stage A shows the colours only with render => 'zbuffer'\n"
+        if ($self->{render} // 'line') ne 'zbuffer' && ($self->{stage} eq 'A');
+    $self->{_play} = {
+        times => $t, list => [ $t->list ], colors => $c, speed => $speed,
+        loop => $o{loop} // 1, paused => 0, start => undef, index => -1,
+    };
+    return $self;
+}
+
+# 一時停止(1)・再開(0)。引数が無ければ今の状態を返す。
+sub pause {
+    my ($self, $on) = @_;
+    my $p = $self->{_play} or return;
+    return $p->{paused} unless defined $on;
+    my $now = time();
+    if ($on && !$p->{paused}) {
+        $p->{paused} = 1;
+        $p->{paused_at} = $now;
+    } elsif (!$on && $p->{paused}) {
+        $p->{paused} = 0;
+        $p->{start} += $now - $p->{paused_at} if defined $p->{start};
+    }
+    return $self;
+}
+
+sub _play_running {
+    my ($self) = @_;
+    my $p = $self->{_play} or return 0;
+    return !$p->{paused} && !$p->{done};
+}
+
+# 今の時刻のコマ: 経過時間 × speed を先頭の潜時に足し、それ以下の最後のコマ。
+sub _play_index {
+    my ($self, $now) = @_;
+    my $p = $self->{_play};
+    my $L = $p->{list};
+    $p->{start} //= $now;
+    my $span = $L->[-1] - $L->[0];
+    # 1e-6 ms: a time exactly on a sample (in decimal) lands on it despite rounding
+    my $lat  = $L->[0] + ($now - $p->{start}) * 1000 * $p->{speed} + 1e-6;
+    if ($lat > $L->[-1]) {
+        if ($p->{loop} && $span > 0) {
+            my $step = @$L > 1 ? ($span / (@$L - 1)) : 1;   # 最後のコマも 1 コマ分見せてから戻る
+            my $period = $span + $step;
+            $lat = $L->[0] + ($lat - $L->[0]) - $period * int(($lat - $L->[0]) / $period);
+            $lat = $L->[-1] if $lat > $L->[-1];
+        } else {
+            $p->{done} = 1;
+            return $#$L;
+        }
+    }
+    # 二分探索: times[i] <= lat の最大の i
+    my ($lo, $hi) = (0, $#$L);
+    while ($lo < $hi) {
+        my $mid = int(($lo + $hi + 1) / 2);
+        if ($L->[$mid] <= $lat) { $lo = $mid } else { $hi = $mid - 1 }
+    }
+    return $lo;
+}
+
+# コマが変わっていれば頂点の色を差し替える(段階 B は 3D_COLORS)。変わったら 1。
+sub _play_tick {
+    my ($self) = @_;
+    my $p = $self->{_play} or return 0;
+    my $i = $self->_play_index(time());
+    return 0 if $i == $p->{index};
+    $p->{index} = $i;
+    my $c = $p->{colors};
+    my $rgb = ref $c eq 'CODE' ? $c->($i, $p->{list}[$i]) : $c->slice(":,:,($i)");
+    $self->set_vertex_colors($rgb);
+    return 1;
+}
+
+# 窓の左下に出す文字(再生していなければ undef)。
+sub _play_label {
+    my ($self) = @_;
+    my $p = $self->{_play} or return undef;
+    return undef if $p->{index} < 0;
+    return sprintf('t = %g ms%s', $p->{list}[ $p->{index} ], $p->{paused} ? '  (paused)' : '');
 }
 
 # ============================================================
