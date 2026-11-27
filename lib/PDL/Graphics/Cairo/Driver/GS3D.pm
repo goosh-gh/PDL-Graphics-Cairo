@@ -534,8 +534,8 @@ sub _mesh_lines {
 
         push @front, [ $depth, $fsx, $fsy, $rgba ];
     }
-    # pick(クリック)用に投影と可視マスクを保存。次フレームまで有効。
-    $self->{_mesh_proj} = { sx => \@SX, sy => \@SY, vis => \@vis };
+    # pick(クリック)用に投影と可視マスクを保存(piddle。_nearest_visible が読む)。次フレームまで有効。
+    $self->{_mesh_proj} = { sx => $sxp, sy => $syp, vis => pdl(byte, \@vis) };
     return [] unless @front;
 
     # 画家ソート: depth 昇順(奥→手前)
@@ -598,7 +598,7 @@ sub _mesh_lines {
 sub _hover_readout {
     my ($self, $px, $py) = @_;
     my $proj = $self->{_mesh_proj} or return;
-    my ($idx, $dist) = nearest_index_2d($proj->{sx}, $proj->{sy}, $px, $py, $proj->{vis});
+    my ($idx, $dist) = _nearest_visible($proj, $px, $py);
     if ($idx < 0) { $self->{readout} = undef; return; }
     my $verts = $self->{scene}{mesh}{verts};
     my ($x, $y, $z) = ($verts->at($idx,0), $verts->at($idx,1), $verts->at($idx,2));
@@ -618,7 +618,7 @@ sub _hover_readout {
 sub _pick_at_screen {
     my ($self, $px, $py) = @_;
     my $proj = $self->{_mesh_proj} or return;      # まだ 1 フレームも描いてない
-    my ($idx, $dist) = nearest_index_2d($proj->{sx}, $proj->{sy}, $px, $py, $proj->{vis});
+    my ($idx, $dist) = _nearest_visible($proj, $px, $py);
     return if $idx < 0;                            # 可視頂点が無い
 
     my $verts = $self->{scene}{mesh}{verts};
@@ -719,13 +719,15 @@ sub _compute_vnormals {
 # z バッファで正確、(2)頂点法線 Gouraud で襞が滑らか、(3)線分でないので横縞が
 # 原理的に出ない。頂点色 = 頂点法線を view 空間へ回転 → Lambert(I=ambient+
 # (1-ambient)*max(0,N.L)) → albedo(mesh->{vcolors} があれば頂点ごと, 無ければ
-# base 単色) × I。返り値 = [ [ [x,y,z,r,g,b]×3 ], ... ](z 大きいほど手前)。
+# base 単色) × I。返り値 = { n => 三角形の数, xyz => (3 [x,y,z], 3 頂点, n) double,
+# rgb => (3 [r,g,b], 3 頂点, n) byte }(z 大きいほど手前。n が 0 なら xyz・rgb は無い)。
+# _pack_tris_pdl がこれを詰める。すべて PDL の演算で、面ごとの Perl のループは無い。
 # backface/viewport カリングは _mesh_lines と同じ(閉曲面なので安全, z バッファが
-# 残りの重なりを正しく解決)。pick 用に _mesh_proj も同じ形で保存。
+# 残りの重なりを正しく解決)。pick 用に _mesh_proj(sx・sy・vis の piddle)も保存。
 # ============================================================
 sub _mesh_tris {
     my ($self, $rot) = @_;
-    my $m = $self->{scene}{mesh} or return [];
+    my $m = $self->{scene}{mesh} or return { n => 0 };
     my $verts = $m->{verts} // die "scene.mesh.verts required\n";
     my $faces = $m->{faces} // die "scene.mesh.faces required\n";
 
@@ -735,39 +737,20 @@ sub _mesh_tris {
     my $vcolors  = $m->{vcolors};                        # 頂点ごと albedo [Nv,3] or undef
 
     my $rv = $self->_rotate_points($rot, $verts);
-    my ($sxp, $syp, $dzp) = $self->_project($rv);
-    my @SX = $sxp->list; my @SY = $syp->list; my @DZ = $dzp->list;
-    my @RX = $rv->slice(',(0)')->list;
-    my @RY = $rv->slice(',(1)')->list;
-    my @RZ = $rv->slice(',(2)')->list;
+    my ($sx, $sy, $dz) = $self->_project($rv);
 
-    my @I0 = $faces->slice(',(0)')->list;
-    my @I1 = $faces->slice(',(1)')->list;
-    my @I2 = $faces->slice(',(2)')->list;
-    my $nf = scalar @I0;
-    my $fbase = detect_face_base($faces->min);
-    if ($fbase) { $_-- for (@I0, @I1, @I2); }
+    # 面の頂点番号(0 始まり、メッシュごとにキャッシュ)。(Nf) を 3 本
+    my $fi = $m->{_face_idx} //= do {
+        my $F = $faces->long;
+        $F = $F - 1 if detect_face_base($faces->min);
+        [ map { $F->slice(",($_)")->copy } 0 .. 2 ];
+    };
 
     # winding 符号(外向き多数決, メッシュごとにキャッシュ)
-    my $wsign = $m->{_wsign};
-    unless (defined $wsign) {
+    my $wsign = $m->{_wsign} //= do {
         my $wind = $m->{winding} // 'auto';
-        if    ($wind eq 'ccw') { $wsign = +1 }
-        elsif ($wind eq 'cw')  { $wsign = -1 }
-        else {
-            my @VX=$verts->slice(',(0)')->list; my @VY=$verts->slice(',(1)')->list; my @VZ=$verts->slice(',(2)')->list;
-            my $nv=scalar @VX; my ($cgx,$cgy,$cgz)=(0,0,0);
-            $cgx+=$_ for @VX; $cgy+=$_ for @VY; $cgz+=$_ for @VZ; $cgx/=$nv;$cgy/=$nv;$cgz/=$nv;
-            my $acc=0;
-            for my $f (0..$nf-1){ my($a,$b,$c)=($I0[$f],$I1[$f],$I2[$f]);
-                my($nx,$ny,$nz)=face_normal([$VX[$a],$VY[$a],$VZ[$a]],[$VX[$b],$VY[$b],$VZ[$b]],[$VX[$c],$VY[$c],$VZ[$c]]);
-                my($fx,$fy,$fz)=(($VX[$a]+$VX[$b]+$VX[$c])/3-$cgx,($VY[$a]+$VY[$b]+$VY[$c])/3-$cgy,($VZ[$a]+$VZ[$b]+$VZ[$c])/3-$cgz);
-                $acc += (($nx*$fx+$ny*$fy+$nz*$fz)>=0 ? 1 : -1);
-            }
-            $wsign = ($acc>=0)?+1:-1;
-        }
-        $m->{_wsign} = $wsign;
-    }
+        $wind eq 'ccw' ? +1 : $wind eq 'cw' ? -1 : _winding_sign($verts, $fi);
+    };
 
     # 頂点法線(キャッシュ)→ view 空間 → Gouraud Lambert → 頂点色 u8
     my $vn  = $m->{_vnorm} //= _compute_vnormals($verts, $faces);   # [Nv,3] 外向き unit
@@ -777,54 +760,106 @@ sub _mesh_tris {
     my $I   = $ambient + (1-$ambient) * $nl->clip(0,1);             # [Nv]
     my $alb = defined $vcolors ? $vcolors : pdl($base_rgb)->dummy(0);
     my $col = (($I->dummy(1) * $alb)->clip(0,1) * 255)->byte;       # [Nv,3]
-    my @CR = $col->slice(',(0)')->list;
-    my @CG = $col->slice(',(1)')->list;
-    my @CB = $col->slice(',(2)')->list;
 
-    # 面ごと: backface/viewport カリング → 三角レコード
-    my $W = $self->width; my $H = $self->height;
-    my @vis = (0) x scalar(@SX);
-    my @tris;
-    for my $f (0 .. $nf-1) {
-        my ($a,$b,$c) = ($I0[$f],$I1[$f],$I2[$f]);
-        my ($nx,$ny,$nz) = face_normal(
-            [$RX[$a],$RY[$a],$RZ[$a]],[$RX[$b],$RY[$b],$RZ[$b]],[$RX[$c],$RY[$c],$RZ[$c]]);
-        next unless $nz * $wsign > 0;
-        my $fsx = [$SX[$a],$SX[$b],$SX[$c]]; my $fsy = [$SY[$a],$SY[$b],$SY[$c]];
-        next if bbox_offscreen($fsx, $fsy, $W, $H);
-        $vis[$a]=$vis[$b]=$vis[$c]=1;
-        push @tris, [
-            [ $SX[$a],$SY[$a],$DZ[$a], $CR[$a],$CG[$a],$CB[$a] ],
-            [ $SX[$b],$SY[$b],$DZ[$b], $CR[$b],$CG[$b],$CB[$b] ],
-            [ $SX[$c],$SY[$c],$DZ[$c], $CR[$c],$CG[$c],$CB[$c] ],
-        ];
+    # 面ごと: backface/viewport カリング。面法線は回転後の z 成分だけ要る
+    # (Mesh3D::face_normal の z と同じ式)。画面外は 3 頂点の外接矩形で判定
+    # (Mesh3D::bbox_offscreen と同じ)。
+    my ($rx, $ry) = ($rv->slice(',(0)'), $rv->slice(',(1)'));
+    my @fx = map { $rx->index($_) } @$fi;
+    my @fy = map { $ry->index($_) } @$fi;
+    my $nz = ($fx[1] - $fx[0]) * ($fy[2] - $fy[0]) - ($fy[1] - $fy[0]) * ($fx[2] - $fx[0]);
+    my $fsx = cat(map { $sx->index($_) } @$fi)->mv(1, 0);          # (3,Nf)
+    my $fsy = cat(map { $sy->index($_) } @$fi)->mv(1, 0);
+    my ($W, $H) = ($self->width, $self->height);
+    my $off = ($fsx->maximum < 0) | ($fsx->minimum > $W) | ($fsy->maximum < 0) | ($fsy->minimum > $H);
+    my $sel = which(($nz * $wsign > 0) & !$off);                   # 残る面の番号(昇順)
+    my @vi  = map { $_->index($sel) } @$fi;                        # 残る面の頂点 (n) ×3
+
+    # pick / hover 用: 投影と可視頂点の印(残った面の頂点)。次フレームまで有効
+    my $vis = zeroes(byte, $sx->nelem);
+    $vis->index($_) .= 1 for @vi;
+    $self->{_mesh_proj} = { sx => $sx, sy => $sy, vis => $vis };
+
+    my $n = $sel->nelem;
+    return { n => 0 } unless $n;
+    # 三角形の頂点: 座標 (3 [x,y,z], 3 頂点, n) と色 (3 [r,g,b], 3 頂点, n)。
+    # 頂点ごとに 1 枚ずつ代入する(内側の次元を mv で並べ替えるより速い。pdl-perl.md)
+    my $xyz = zeroes(double, 3, 3, $n);
+    my $rgb = zeroes(byte, 3, 3, $n);
+    my $ct  = $col->transpose;                                     # (3,Nv)
+    for my $k (0 .. 2) {                                           # 三角形の 3 頂点(外側のループ)
+        my $v = $vi[$k];
+        $xyz->slice(":,($k),:") .= cat($sx->index($v), $sy->index($v), $dz->index($v))->transpose;
+        $rgb->slice(":,($k),:") .= $ct->dice_axis(1, $v);
     }
-    $self->{_mesh_proj} = { sx => \@SX, sy => \@SY, vis => \@vis };
-    return \@tris;
+    return { n => $n, xyz => $xyz, rgb => $rgb };
+}
+
+# 外向きの winding 符号: 面法線と(面の重心 − 全頂点の重心)の内積の符号の多数決。
+# $fi は面の頂点番号(0 始まり)の (Nf) ×3。
+sub _winding_sign {
+    my ($verts, $fi) = @_;
+    my @p  = map { $verts->dice_axis(0, $_) } @$fi;                # (Nf,3) ×3
+    my ($u, $w) = ($p[1] - $p[0], $p[2] - $p[0]);
+    my @n = map {
+        my ($i, $j) = (($_ + 1) % 3, ($_ + 2) % 3);
+        $u->slice(",($i)") * $w->slice(",($j)") - $u->slice(",($j)") * $w->slice(",($i)")
+    } 0 .. 2;
+    my $cg  = $verts->average;                                     # (3) 全頂点の重心
+    my $fc  = ($p[0] + $p[1] + $p[2]) / 3 - $cg->dummy(0);         # (Nf,3)
+    my $dot = $n[0] * $fc->slice(',(0)') + $n[1] * $fc->slice(',(1)') + $n[2] * $fc->slice(',(2)');
+    my $acc = (($dot >= 0) * 2 - 1)->sum;
+    return $acc >= 0 ? +1 : -1;
+}
+
+# 直近フレームの投影 _mesh_proj に対し、(px,py) に最も近い可視頂点を返す: ($index, $dist)。
+# 可視頂点が無ければ (-1, undef)。距離が同じなら番号の小さい方(Mesh3D::nearest_index_2d と同じ)。
+sub _nearest_visible {
+    my ($proj, $px, $py) = @_;
+    my $cand = which($proj->{vis});
+    return (-1, undef) unless $cand->nelem;
+    my $d2 = ($proj->{sx}->index($cand) - $px)**2 + ($proj->{sy}->index($cand) - $py)**2;
+    my $k  = $d2->minimum_ind->sclr;
+    return ($cand->at($k), sqrt($d2->at($k)));
 }
 
 # 三角セクションのバイト列: n_tris(u16) と三角形(頂点 x,y,z(f32) r,g,b(u8) × 3)。
 # n_tris は u16 なので、65535 を超えたら奥の三角形から捨てて 65535 にする(1 回警告)。
 # 深度は大きいほど手前。捨てるのは 3 頂点の深度の和が小さいもの(手前の面に隠れて
 # いることが多い)。超えたまま送ると数が折り返し、サーバが三角形を読み違える。
+# _pack_tris は三角形の配列([ [x,y,z,r,g,b]×3 ], ...)を受け、_pack_tris_pdl に渡す。
 my $_warned_tris;
 sub _pack_tris {
     my ($tris) = @_;
-    my @t = @$tris;
-    if (@t > 65535) {
+    return pack('S', 0) unless @$tris;
+    my $p = pdl(double, $tris);                                    # (6, 3, n)
+    return _pack_tris_pdl($p->slice('0:2'), $p->slice('3:5')->byte);
+}
+
+# $xyz: (3 [x,y,z], 3 頂点, n)、$rgb: (3 [r,g,b], 3 頂点, n) byte。
+# 1 頂点 15 バイト(f32 ×3 + u8 ×3)の (15, 3, n) の byte の piddle に詰めて、一度に取り出す。
+sub _pack_tris_pdl {
+    my ($xyz, $rgb) = @_;
+    my $n = $xyz->dim(2);
+    if ($n > 65535) {
         warn sprintf("Driver::GS3D: %d triangles exceed the u16 count; drawing the 65535 nearest.\n",
-                     scalar @t) unless $_warned_tris++;
-        my @depth = map { $_->[0][2] + $_->[1][2] + $_->[2][2] } @t;
-        my @keep  = (sort { $depth[$b] <=> $depth[$a] || $a <=> $b } 0 .. $#t)[0 .. 65534];
-        @t = @t[ sort { $a <=> $b } @keep ];    # 元の順序のまま
+                     $n) unless $_warned_tris++;
+        # 深度の和の大きい順、同じなら番号の小さい順で 65535 個を選び、元の順に戻す
+        my $depth = $xyz->slice('(2),:,:')->double->sumover;       # (n)
+        my $ord   = qsortveci(cat(-$depth, sequence(double, $n))->transpose);
+        my $keep  = $ord->slice('0:65534')->qsort;
+        ($xyz, $rgb, $n) = ($xyz->dice_axis(2, $keep), $rgb->dice_axis(2, $keep), 65535);
     }
-    my $out = pack('S', scalar @t);
-    for my $tr (@t) {
-        $out .= pack('f<f<f<CCC', @{$tr->[0]})
-              . pack('f<f<f<CCC', @{$tr->[1]})
-              . pack('f<f<f<CCC', @{$tr->[2]});
-    }
-    return $out;
+    return pack('S', 0) unless $n;
+    my $xf = $xyz->float->copy;                                    # (3,3,n) f32、実体
+    $xf->bswap4 if pack('L', 1) ne pack('V', 1);                   # ワイヤはリトルエンディアン
+    my $fb = zeroes(byte, 12, 3, $n);                              # f32 の中身をそのままバイトに
+    ${ $fb->get_dataref } = ${ $xf->get_dataref };
+    $fb->upd_data;
+    my $rec = zeroes(byte, 15, 3, $n);
+    $rec->slice('0:11')  .= $fb;
+    $rec->slice('12:14') .= $rgb;
+    return pack('S', $n) . ${ $rec->get_dataref };
 }
 
 sub _send_3d_frame {
@@ -1012,10 +1047,10 @@ sub _send_3d_frame {
     # line モード: 面塗り線分を @lines_data 先頭へ unshift(軸・点より奥に描画)。
     # zbuffer モード: 面は三角セクションで送る(ラベルの後に付与)。どちらの経路も
     # _mesh_lines/_mesh_tris が pick 用の _mesh_proj を設定する。
-    my @tris;
+    my $tris = { n => 0 };
     if (exists $scene->{mesh}) {
         if (($self->{render} // 'line') eq 'zbuffer') {
-            @tris = @{ $self->_mesh_tris($rot) };
+            $tris = $self->_mesh_tris($rot);
         } else {
             unshift @lines_data, @{ $self->_mesh_lines($rot) };
         }
@@ -1071,7 +1106,7 @@ sub _send_3d_frame {
     my $np  = scalar @points_data;
     my $cx  = $self->width / 2;
     my $cy  = $self->height / 2;
-    my $flags = 0x03 | ($self->{thick_fill} ? 0x04 : 0) | (@tris ? 0x08 : 0);   # 0x04:fill帯 0x08:三角
+    my $flags = 0x03 | ($self->{thick_fill} ? 0x04 : 0) | ($tris->{n} ? 0x08 : 0);   # 0x04:fill帯 0x08:三角
     my $payload = pack('S S C f< f<', $nl, $np, $flags, $cx, $cy);
 
     # 線分レコード: x0 y0 x1 y1 depth r g b a (f32×5 + u8×4 = 24 bytes)
@@ -1139,7 +1174,7 @@ sub _send_3d_frame {
     # 面は描かれないが破綻しない(後方互換)。頂点レコード(15 bytes):
     #   x,y(f32 スクリーン座標) z(f32 深度, 大きいほど手前) r,g,b(u8 Gouraud色)
     # 三角 = 頂点×3 = 45 bytes。n_tris(u16) が先頭。
-    $payload .= _pack_tris(\@tris) if @tris;
+    $payload .= _pack_tris_pdl($tris->{xyz}, $tris->{rgb}) if $tris->{n};
 
     PDL::Graphics::Cairo::Driver::GS::_send_msg(
         $self->{_ix3d}{sock}, GSP_MSG_3D_FRAME, $payload, $self->{_ix3d}{seq}++);
