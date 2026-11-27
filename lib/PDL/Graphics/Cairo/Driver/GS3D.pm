@@ -1287,6 +1287,13 @@ sub run {
     my $caps  = $self->_query_caps($sock, $seq++);
     my $stage = $self->_choose_stage($caps);
     $self->{_stage} = $stage;
+    if ($stage eq 'A' && $self->verbose) {      # 段階 B は _run_stage_b がメッシュの大きさと出す
+        my $why = ($ENV{GS3D_STAGE} // '') =~ /\AA\z/i ? 'GS3D_STAGE=A'
+                : $self->{stage} eq 'A'                  ? "stage => 'A'"
+                : !(($caps // 0) & GSP_CAP_3D_SCENE)      ? 'the server does not speak stage B'
+                :                                           'no scene->{mesh}';
+        print STDERR "[GS3D] stage A ($why)\n";
+    }
 
     # NEWWINペイロードに3Dモードフラグをのせる案。
     # TODO: Cocoa/Xlib側のNEWWINハンドラがこのフラグを見て描画モードを
